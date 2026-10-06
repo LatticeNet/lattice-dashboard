@@ -7,7 +7,7 @@
  * action files a plan; nothing changes on a node until the approval is
  * decided, which is the product's rule for every privileged change.
  */
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { OctagonAlert, Pencil, Plus, Radar, RefreshCw, Trash2, TriangleAlert } from "lucide-vue-next";
@@ -18,12 +18,14 @@ import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   barkChannels,
+  isWitnessHealthURL,
   witnessConfigState,
   witnessFormDefaults,
   witnessFormProblems,
   witnessLine,
   witnessPlanRequest,
   witnessPushLine,
+  witnessWatch,
   type WitnessForm,
   type WitnessFormProblem,
   type WitnessLine,
@@ -91,6 +93,12 @@ function pushText(node: WitnessNodeView): string {
   return push.pushes > 0 ? `${text} · ${t("platform.notifications.witness.push.count", { n: push.pushes }, push.pushes)}` : text;
 }
 
+/** What a node's witness watches, named only for a witness that was applied or reports. */
+function watchOf(node: WitnessNodeView) {
+  if (!node.configured && !node.report) return undefined;
+  return witnessWatch(node, props.status?.health_url);
+}
+
 function pushFailed(node: WitnessNodeView): boolean {
   const push = witnessPushLine(node.report);
   return !!push && push.key !== "none" && !push.ok;
@@ -122,7 +130,7 @@ const TONE_TEXT = { muted: "text-muted-foreground", warning: "text-warning-text"
 
 const formOpen = ref(false);
 const changing = ref<WitnessNodeView | undefined>();
-const form = ref<WitnessForm>({ nodeId: "", channelId: "", barkUrl: "", barkLevel: "critical", references: "", interval: "30", hold: "180", recover: "60" });
+const form = ref<WitnessForm>({ nodeId: "", channelId: "", barkUrl: "", healthUrl: "", barkLevel: "critical", references: "", interval: "30", hold: "180", recover: "60" });
 const touched = ref(false);
 const filing = ref(false);
 
@@ -135,14 +143,42 @@ const nodeChoices = computed(() => {
   if (current && !list.some((n) => n.node_id === current.node_id)) list.push({ node_id: current.node_id, node_name: current.node_name, online: false });
   return list;
 });
-const problems = computed(() => witnessFormProblems(form.value));
-const blocked = computed(() => !props.status?.health_url || problems.value.length > 0);
+const problems = computed(() => witnessFormProblems(form.value, props.status?.health_url));
+/** Without a public URL the server has no default, but takes the operator's watch URL: the form asks for one (healthUrlRequired). */
+const blocked = computed(() => problems.value.length > 0);
+
+/** The URL this plan would watch: a valid one typed in, else the server's default. */
+const formWatches = computed(() => {
+  const typed = form.value.healthUrl.trim();
+  return typed && isWitnessHealthURL(typed) ? { url: typed, custom: typed !== props.status?.health_url } : { url: props.status?.health_url, custom: false };
+});
+
+/**
+ * The advanced section opens for a change that starts from an operator's watch
+ * URL and for its own problems on a refused submit, and then stays open: bound
+ * straight to the problems, it shut under the operator's cursor the moment the
+ * value they were fixing became valid.
+ */
+const ADVANCED_PROBLEMS = new Set<WitnessFormProblem>(["healthUrl", "healthUrlRequired", "references", "interval", "hold", "recover"]);
+const advancedOpen = ref(false);
+watch(
+  () => touched.value && problems.value.some((problem) => ADVANCED_PROBLEMS.has(problem)),
+  (show) => {
+    if (show) advancedOpen.value = true;
+  },
+);
+
+function onAdvancedToggle(event: Event): void {
+  advancedOpen.value = (event.target as HTMLDetailsElement).open;
+}
 
 function openForm(node?: WitnessNodeView): void {
   if (!props.canManage || !props.status) return;
   changing.value = node;
   form.value = witnessFormDefaults(props.status, props.channels, node);
   touched.value = false;
+  // Open where the watch URL is: a change that keeps an override, or a server with no default to watch.
+  advancedOpen.value = !!form.value.healthUrl || !props.status.health_url;
   formOpen.value = true;
 }
 
@@ -169,6 +205,8 @@ const PROBLEM_FIELD: Record<WitnessFormProblem, string> = {
   channel: "witness-channel",
   barkUrl: "witness-bark-url",
   barkUrlLoopback: "witness-bark-url",
+  healthUrl: "witness-health-url",
+  healthUrlRequired: "witness-health-url",
   references: "witness-refs",
   interval: "witness-interval",
   hold: "witness-hold",
@@ -268,7 +306,7 @@ defineExpose({ openForm });
           <p class="text-sm font-medium">{{ $t('platform.notifications.witness.emptyTitle') }}</p>
           <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('platform.notifications.witness.emptyBody') }}</p>
         </div>
-        <Button v-if="canManage" size="sm" class="shrink-0 self-start sm:self-center" :disabled="!status.health_url" @click="openForm()">
+        <Button v-if="canManage" size="sm" class="shrink-0 self-start sm:self-center" @click="openForm()">
           <Plus aria-hidden="true" class="size-4" />
           {{ $t('platform.notifications.witness.setup') }}
         </Button>
@@ -288,6 +326,12 @@ defineExpose({ openForm });
             <RowMenu v-if="canManage" :name="node.node_name" :items="menu(node)" />
           </div>
           <dl class="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-[max-content_minmax(0,1fr)]">
+            <template v-if="watchOf(node)">
+              <dt class="text-muted-foreground">{{ $t('platform.notifications.witness.watchUrl.label') }}</dt>
+              <dd class="break-all max-sm:mb-1" data-testid="witness-watch-url">
+                <span class="font-mono">{{ watchOf(node)?.url }}</span><span v-if="watchOf(node)?.custom" class="text-muted-foreground"> · {{ $t('platform.notifications.witness.watchUrl.custom') }}</span>
+              </dd>
+            </template>
             <template v-if="node.report">
               <dt class="text-muted-foreground">{{ $t('platform.notifications.witness.push.label') }}</dt>
               <dd :class="cn('break-words max-sm:mb-1', pushFailed(node) ? 'text-warning-text' : 'text-foreground')">{{ pushText(node) }}</dd>
@@ -327,10 +371,13 @@ defineExpose({ openForm });
       </DialogHeader>
 
       <form class="space-y-4" data-testid="witness-form" @submit.prevent="submit">
-        <div class="grid gap-1">
+        <!-- Hidden only while an invalid watch URL is typed on a server with no default: the field's own error says why. -->
+        <div v-if="formWatches.url || !form.healthUrl.trim()" class="grid gap-1">
           <p class="text-xs font-medium text-muted-foreground">{{ $t('platform.notifications.witness.form.watches') }}</p>
-          <p v-if="status?.health_url" class="break-all font-mono text-xs">{{ status.health_url }}</p>
-          <p v-else class="text-xs text-warning-text">{{ $t('platform.notifications.witness.noPublicUrl') }}</p>
+          <p v-if="formWatches.url" class="break-all text-xs" data-testid="witness-form-watches">
+            <span class="font-mono">{{ formWatches.url }}</span><span v-if="formWatches.custom" class="text-muted-foreground"> · {{ $t('platform.notifications.witness.watchUrl.custom') }}</span>
+          </p>
+          <p v-else class="text-xs text-warning-text" data-testid="witness-form-no-public-url">{{ $t('platform.notifications.witness.noPublicUrl') }}</p>
         </div>
 
         <div class="grid min-w-0 gap-2">
@@ -387,11 +434,31 @@ defineExpose({ openForm });
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.levelHint') }}</p>
         </div>
 
-        <details class="group rounded-md border border-border" :open="touched && (problems.includes('references') || problems.includes('interval') || problems.includes('hold') || problems.includes('recover'))">
+        <details class="group rounded-md border border-border" :open="advancedOpen" data-testid="witness-advanced" @toggle="onAdvancedToggle">
           <summary class="cursor-pointer select-none rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:py-3">
             {{ $t('platform.notifications.witness.form.timing') }}
           </summary>
           <div class="space-y-3 border-t border-border p-3">
+            <div class="grid min-w-0 gap-2">
+              <Label for="witness-health-url">{{ $t('platform.notifications.witness.form.healthUrl') }}</Label>
+              <Input
+                id="witness-health-url"
+                v-model="form.healthUrl"
+                class="font-mono pointer-coarse:h-11"
+                :placeholder="status?.health_url ?? ''"
+                autocomplete="off"
+                inputmode="url"
+                spellcheck="false"
+                data-testid="witness-health-url"
+                v-bind="invalid('witness-health-url', 'healthUrl', 'healthUrlRequired')"
+              />
+              <p class="text-xs text-muted-foreground">
+                {{ status?.health_url ? $t('platform.notifications.witness.form.healthUrlHint') : $t('platform.notifications.witness.form.healthUrlHintNoDefault') }}
+              </p>
+              <p v-if="touched && (problems.includes('healthUrl') || problems.includes('healthUrlRequired'))" id="witness-health-url-error" class="text-xs text-destructive">
+                {{ problemText(problems.includes('healthUrl') ? 'healthUrl' : 'healthUrlRequired') }}
+              </p>
+            </div>
             <div class="grid gap-2">
               <Label for="witness-refs">{{ $t('platform.notifications.witness.form.references') }}</Label>
               <textarea
@@ -419,7 +486,7 @@ defineExpose({ openForm });
           <DialogClose as-child>
             <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
-          <Button type="submit" :disabled="filing || !status?.health_url || (touched && problems.length > 0)" data-testid="witness-submit">
+          <Button type="submit" :disabled="filing || (touched && problems.length > 0)" data-testid="witness-submit">
             <RefreshCw v-if="filing" aria-hidden="true" class="size-4 animate-spin" />
             <Radar v-else aria-hidden="true" class="size-4" />
             {{ $t('platform.notifications.witness.form.submit') }}

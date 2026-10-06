@@ -12,6 +12,7 @@
  *   nourl      the server has no public URL, so there is nothing to watch
  *   pending    a configure plan waits for approval
  *   watching   applied, watching, the last recovery push accepted
+ *   override   applied and watching a URL the operator set (a CDN-proxied name)
  *   failing    the control plane has not answered for three checks
  *   down       the witness pushed the unreachable alert
  *   network    the node's own network is down
@@ -30,6 +31,8 @@ import { HOUR, MINUTE, flags, iso } from "./netplatFixture";
 const NODE_ID = "node_pulse_nano";
 const NODE_NAME = "[cd]-gomami-jpn-pulse-nano";
 const SHA = "5cf6a9092bf77ef14b5cf503ff412e41982a54105b074dda8dc7eb3da285d63e";
+const PUBLIC_READYZ = "https://lattice.example.org/readyz";
+const PROXIED_READYZ = "https://lattice-ready.example.org/readyz";
 
 const applied = {
   approval_id: "approval_witness_applied",
@@ -41,6 +44,7 @@ const applied = {
   key_sha256_prefix: "41b88fb74e0a",
   created_at: iso(-3 * HOUR),
   updated_at: iso(-3 * HOUR + 2 * MINUTE),
+  health_url: PUBLIC_READYZ,
 };
 
 function report(over: Partial<WitnessReport> = {}): WitnessReport {
@@ -49,7 +53,7 @@ function report(over: Partial<WitnessReport> = {}): WitnessReport {
     config_sha256: SHA,
     started_at: iso(-3 * HOUR),
     phase: "watching",
-    health_url: "https://lattice.example.org/readyz",
+    health_url: PUBLIC_READYZ,
     reference_count: 2,
     interval_seconds: 30,
     hold_seconds: 180,
@@ -88,6 +92,8 @@ function nodesFor(): WitnessNodeView[] {
       return [node({ configured: undefined, report: undefined, report_fresh: false, config_matches: false, pending: { ...applied, approval_id: "approval_witness_pending", status: "pending", created_at: iso(-4 * MINUTE) } })];
     case "watching":
       return [node()];
+    case "override":
+      return [node({ configured: { ...applied, health_url: PROXIED_READYZ }, report: report({ health_url: PROXIED_READYZ }) })];
     case "failing":
       return [node({ report: report({ phase: "failing", last_check_ok: false, last_check_detail: "http 502", failing_since: iso(-95_000), consecutive_failures: 3, last_ok_at: iso(-125_000) }) })];
     case "down":
@@ -112,7 +118,7 @@ function nodesFor(): WitnessNodeView[] {
 }
 
 const state: WitnessStatusResponse = {
-  health_url: mode === "nourl" ? undefined : "https://lattice.example.org/readyz",
+  health_url: mode === "nourl" ? undefined : PUBLIC_READYZ,
   health_url_error: mode === "nourl" ? "this server has no public URL (LATTICE_PUBLIC_URL)" : undefined,
   nodes: nodesFor(),
   capable_nodes: mode === "nocapable" ? [] : [{ node_id: NODE_ID, node_name: NODE_NAME, online: true }],
@@ -146,6 +152,7 @@ export function planWitness(input: WitnessPlanRequest): { approval: ApprovalView
     channel_id: input.channel_id,
     channel_name: input.channel_id === "ch_bark_urgent" ? "Bark urgent" : input.channel_id,
     created_at: iso(0),
+    health_url: remove ? undefined : (input.health_url ?? state.health_url),
   };
   const existing = state.nodes.find((n) => n.node_id === input.node_id);
   if (existing) existing.pending = view;
