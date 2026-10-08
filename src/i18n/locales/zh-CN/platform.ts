@@ -1727,6 +1727,23 @@ export default {
         memoryChart: "范围内进程内存",
         cpuChart: "范围内进程 CPU",
       },
+      probe: {
+        title: "出站探测",
+        available: "可用",
+        unavailable: "不可用",
+        version: "lattice-probe {version}",
+        engine: "引擎",
+        engineDetail: "执行每次测试的内核",
+        uptime: "已运行",
+        inflight: "进行中的测试",
+        inflightDetail: "最多同时 {max} 个，超出时新的测试会被拒绝",
+        inflightFull: "所有槽位已占满，在有测试结束前新的测试会被拒绝",
+        targets: "测试目标",
+        targetsDetail: "一次测试可选用的测试 URL",
+        noReason: "服务器没有给出原因。",
+        unavailableBody:
+          "探测服务应答之前，vpn-core 的探测页面无法运行测试。它以 lattice-probe 容器的形式运行在服务器旁边，服务器通过 LATTICE_PROBE_SOCKET 指定的 socket 与它通信。",
+      },
       files: {
         title: "数据文件",
         noChange: "暂无历史",

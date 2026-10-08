@@ -180,4 +180,25 @@ export interface SystemHealth {
   plugins: SystemEventRow[];
   plugin_processes: SystemPluginProcessRow[];
   metrics_store: SystemMetricsStore;
+  /** The outbound probe as the server reached it over its socket. Absent on a server that predates the probe. */
+  probe?: SystemProbeHealth;
+}
+
+/**
+ * lattice-probe, the sidecar that tests pasted outbounds (design 27). When it
+ * answers, the server passes its /v1/health through; when it does not, it
+ * says why in one line. Fields beyond `available` are optional because they
+ * are the probe's own, not the server's.
+ */
+export interface SystemProbeHealth {
+  available: boolean;
+  /** Why the probe is not answering, one line. Set only when available is false. */
+  reason?: string;
+  probe_version?: string;
+  engine?: string;
+  core_version?: string;
+  uptime_s?: number;
+  inflight?: number;
+  max_inflight?: number;
+  targets?: number;
 }

@@ -1855,6 +1855,23 @@ export default {
         memoryChart: "Process memory over the range",
         cpuChart: "Process CPU over the range",
       },
+      probe: {
+        title: "Outbound probe",
+        available: "available",
+        unavailable: "unavailable",
+        version: "lattice-probe {version}",
+        engine: "Engine",
+        engineDetail: "the core that runs each test",
+        uptime: "Up",
+        inflight: "Tests running",
+        inflightDetail: "at most {max} at once; past that a run is refused",
+        inflightFull: "every slot is taken; the next run is refused until one finishes",
+        targets: "Targets",
+        targetsDetail: "test URLs a run may name",
+        noReason: "The server gave no reason.",
+        unavailableBody:
+          "vpn-core's Probe page cannot run a test until the probe answers. It runs as the lattice-probe container beside the server, which reaches it over the socket named by LATTICE_PROBE_SOCKET.",
+      },
       files: {
         title: "Data files",
         noChange: "no history yet",

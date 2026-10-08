@@ -23,6 +23,7 @@
  *   ?scopes=a,b       the session holds exactly these scopes (Access layers by scope)
  *   ?users=slow       the account list answers after 1.5 s
  *   ?system=...       the System page's fixture (dev/systemFixture.ts lists its modes)
+ *   ?probe=...        the outbound probe on the System page (same file)
  *
  * Page fixtures carry their own switches (netplatPolicyFixture,
  * netplatPluginsFixture, ...); each file's header lists them.
@@ -53,7 +54,7 @@ import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./net
 import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 import { SUBSCRIPTION_SHARES, VPN_USERS } from "./netplatPaletteFixture";
-import { systemHealth, systemSeries } from "./systemFixture";
+import { probeHealth, systemHealth, systemSeries } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
 
 export * from "@/lib/api/index";
@@ -111,7 +112,8 @@ export const api = {
     me: () => delay(principal),
   },
   system: {
-    health: (range: MetricsRange) => systemRead(() => systemHealth(range, flags.get("system"))),
+    health: (range: MetricsRange) =>
+      systemRead(() => ({ ...systemHealth(range, flags.get("system")), probe: probeHealth(flags.get("probe")) })),
     series: (owner: string, series: string[], range: MetricsRange, points = 360) =>
       systemRead(() => systemSeries(owner, series, range, points, flags.get("system"))),
   },
