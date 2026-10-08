@@ -2,7 +2,8 @@ export type ExprResult = { ok: boolean; value: boolean; error?: string };
 
 export type TokenMatcher = (token: string) => boolean;
 
-const TOKEN_ALIASES: Record<string, string> = {
+/** Words operators type for a value the agent spells differently. Shared with src/lib/query. */
+export const TOKEN_ALIASES: Readonly<Record<string, string>> = {
   macos: "darwin",
   mac: "darwin",
   drawin: "darwin",
