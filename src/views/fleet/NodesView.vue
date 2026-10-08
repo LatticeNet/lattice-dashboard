@@ -926,8 +926,8 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         :expression-filter="false"
         :external-sort="query.sorted.value"
         :external-sort-mark="sortMark"
-        :class="query.invalid.value && 'opacity-50'"
-        :inert="query.invalid.value || undefined"
+        :class="query.staleRows.value && 'opacity-50'"
+        :inert="query.staleRows.value || undefined"
         :show-summary="false"
         :group-key="groupKeyFn"
         :group-order="groupOrder"
@@ -1076,7 +1076,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             </Button>
           </div>
         </EmptyState>
-        <div v-else :class="cn('space-y-5', query.invalid.value && 'opacity-50')" :inert="query.invalid.value || undefined">
+        <div v-else :class="cn('space-y-5', query.staleRows.value && 'opacity-50')" :inert="query.staleRows.value || undefined">
           <section v-for="group in cardGroups" :key="group.key" class="space-y-2" :aria-label="groupBy === 'none' ? undefined : groupLabel(group.key)">
             <h3 v-if="groupBy !== 'none'" class="flex flex-wrap items-baseline gap-x-2 text-sm">
               <span class="font-medium">{{ groupLabel(group.key) }}</span>

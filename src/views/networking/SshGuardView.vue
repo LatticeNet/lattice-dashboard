@@ -1504,8 +1504,8 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
            the node column pinned; the page stays the only vertical scroller. -->
       <div
         v-else
-        :class="cn('relative overflow-x-auto rounded-md border border-border', query.invalid.value && 'opacity-50')"
-        :inert="query.invalid.value || undefined"
+        :class="cn('relative overflow-x-auto rounded-md border border-border', query.staleRows.value && 'opacity-50')"
+        :inert="query.staleRows.value || undefined"
       >
         <table class="w-full border-collapse text-sm">
           <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">

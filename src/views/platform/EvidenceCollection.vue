@@ -487,8 +487,8 @@ async function startFiltered(): Promise<void> {
         <div
           v-if="shownPolicies.length"
           ref="policyTable"
-          :class="['relative overflow-x-auto rounded-md border border-border', query.invalid.value && 'opacity-50']"
-          :inert="query.invalid.value || undefined"
+          :class="['relative overflow-x-auto rounded-md border border-border', query.staleRows.value && 'opacity-50']"
+          :inert="query.staleRows.value || undefined"
         >
           <table class="w-full text-sm" :class="readinessShown ? 'min-w-[960px]' : 'min-w-[720px]'">
             <thead>

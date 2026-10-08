@@ -1404,8 +1404,8 @@ async function sendReminders(): Promise<void> {
       :row-click="(machine, el) => sheet.open(sheetId(machine), el)"
       :active-row-id="openMachine ? machineKey(openMachine) : null"
       :external-sort="query.sorted.value"
-      :class="query.invalid.value && 'opacity-50'"
-      :inert="query.invalid.value || undefined"
+      :class="query.staleRows.value && 'opacity-50'"
+      :inert="query.staleRows.value || undefined"
       @retry="machinesQuery.refresh"
       @sort="queryText = withoutSorts(queryText)"
     >
