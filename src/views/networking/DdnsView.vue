@@ -538,8 +538,11 @@ const savedSnapshot = ref("");
 const warningsPanel = ref<HTMLElement | null>(null);
 /** The last published addresses of the profile being edited, for #old_ip#. */
 const editingPublished = ref({ v4: "", v6: "" });
-/** The CNAME target field shows its problem once it has been left, not while it is typed. */
+/** The CNAME target field shows its problem once it has been left, and not again while it has focus. */
 const targetTouched = ref(false);
+const targetFocused = ref(false);
+/** The record type the profile being edited was saved with; undefined while creating. */
+const editingRecordType = ref<DdnsRecordType | undefined>();
 
 function resetForm() {
   editingId.value = undefined;
@@ -548,6 +551,8 @@ function resetForm() {
   savedSnapshot.value = "";
   editingPublished.value = { v4: "", v6: "" };
   targetTouched.value = false;
+  targetFocused.value = false;
+  editingRecordType.value = undefined;
   form.comment_mode = "default";
   form.record_comment = "";
   form.record_type = "address";
@@ -601,6 +606,7 @@ function openEdit(profile: DDNSView) {
   form.comment_mode = ddnsCommentMode(profile.comment_mode);
   form.record_comment = profile.record_comment ?? "";
   form.record_type = ddnsRecordType(profile.record_type);
+  editingRecordType.value = form.record_type;
   form.cname_target = profile.cname_target ?? "";
   editingPublished.value = { v4: profile.last_ipv4 ?? "", v6: profile.last_ipv6 ?? "" };
   formOpen.value = true;
@@ -701,10 +707,25 @@ const targetProblemText = computed(() => {
   }
 });
 
-/** A loop is a conflict with the domains above, so it shows at once; the rest wait for the field to be left. */
-const targetProblemShown = computed(
-  () => !!targetProblem.value && targetProblem.value.kind !== "empty" && (targetTouched.value || targetProblem.value.kind === "loop"),
-);
+/**
+ * A loop is a conflict with the domains above, so it shows at once. The rest
+ * wait until the field is left, and hide again while it is being typed in.
+ */
+const targetProblemShown = computed(() => {
+  const problem = targetProblem.value;
+  if (!problem) return false;
+  return problem.kind === "loop" || (targetTouched.value && !targetFocused.value);
+});
+
+/**
+ * Switching an existing profile's record type leaves what it wrote before:
+ * Lattice never deletes a record, and a CNAME cannot share its name, so the
+ * old records have to be removed in Cloudflare before the new type can land.
+ */
+const recordTypeSwitchNote = computed(() => {
+  if (!editingRecordType.value || editingRecordType.value === form.record_type) return "";
+  return t(isCnameForm.value ? "networking.ddns.recordType.switchToCname" : "networking.ddns.recordType.switchToAddress");
+});
 
 /** The server refuses a CNAME through a webhook. */
 const providerBlocksCname = computed(() => isCnameForm.value && form.provider === "webhook");
@@ -1284,17 +1305,18 @@ async function confirmRun() {
                 v-for="type in DDNS_RECORD_TYPES"
                 :key="type"
                 :class="cn(
-                  'flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm transition-colors',
+                  'flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
                   form.record_type === type ? 'border-primary/60 bg-primary/5' : 'border-border hover:bg-muted/40',
                 )"
               >
-                <input v-model="form.record_type" type="radio" name="ddns-record-type" :value="type" class="mt-0.5 size-4 shrink-0 accent-primary" />
+                <input v-model="form.record_type" type="radio" name="ddns-record-type" :value="type" class="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-none" />
                 <span class="min-w-0">
                   <span class="block font-medium">{{ $t(`networking.ddns.recordType.${type}`) }}</span>
                   <span class="mt-0.5 block text-xs text-muted-foreground">{{ $t(`networking.ddns.recordType.${type}Hint`) }}</span>
                 </span>
               </label>
             </div>
+            <p v-if="recordTypeSwitchNote" class="text-xs text-warning-text" aria-live="polite">{{ recordTypeSwitchNote }}</p>
             <div v-if="isCnameForm" class="mt-1 grid gap-2">
               <Label for="ddns-cname-target">{{ $t('networking.ddns.recordType.targetLabel') }}</Label>
               <Input
@@ -1304,10 +1326,11 @@ async function confirmRun() {
                 autocomplete="off"
                 autocapitalize="off"
                 spellcheck="false"
-                placeholder="nat-us-28tz.aproxy.top"
+                placeholder="inbound.provider.example"
                 :aria-invalid="targetProblemShown ? true : undefined"
                 aria-describedby="ddns-cname-target-help"
-                @blur="targetTouched = true"
+                @focus="targetFocused = true"
+                @blur="targetFocused = false; targetTouched = true"
               />
               <p
                 v-if="targetProblemShown"

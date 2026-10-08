@@ -1071,6 +1071,8 @@ export default {
         targetLabel: "CNAME target",
         targetHint: "The inbound hostname the provider gives this machine. A CNAME already on a name is adopted, and Lattice never deletes a record.",
         webhook: "A CNAME needs the Cloudflare provider; a webhook only receives the node's addresses.",
+        switchToCname: "Lattice never deletes a record. The A and AAAA records this profile wrote stay on these names and keep the CNAME off them, so remove them in Cloudflare first.",
+        switchToAddress: "Lattice never deletes a record. The CNAME on these names stays and keeps A and AAAA records off them, so remove it in Cloudflare first.",
         problem: {
           empty: "Enter the provider's hostname.",
           ip: "Enter a hostname, not an IP address. To publish an IP, choose the address type.",

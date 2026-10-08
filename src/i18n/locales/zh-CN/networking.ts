@@ -1031,6 +1031,8 @@ export default {
         targetLabel: "CNAME 目标",
         targetHint: "服务商给这台机器分配的入站主机名。域名上已有的 CNAME 会被直接接管，Lattice 从不删除记录。",
         webhook: "CNAME 只能通过 Cloudflare 写入，webhook 只会收到节点地址。",
+        switchToCname: "Lattice 从不删除记录。这个配置之前写的 A 和 AAAA 记录会留在这些域名上，挡住 CNAME，请先在 Cloudflare 里删掉。",
+        switchToAddress: "Lattice 从不删除记录。这些域名上的 CNAME 会留着，挡住 A 和 AAAA 记录，请先在 Cloudflare 里删掉。",
         problem: {
           empty: "请填写服务商的主机名。",
           ip: "这里要填主机名，不是 IP。要发布 IP，请选地址类型。",
