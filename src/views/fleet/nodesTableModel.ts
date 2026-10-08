@@ -330,6 +330,15 @@ export function searchScore(node: Node, query: string): number {
   return best;
 }
 
+/** Queries the search field's help offers; each key names the sentence that says what it finds. */
+export const NODE_QUERY_EXAMPLES = [
+  { key: "busy", query: "tag:edge cpu>80 sort:-cpu" },
+  { key: "older", query: "agent<0.3.10 is:reporting" },
+  { key: "silent", query: "last_seen>1d sort:last_seen" },
+  { key: "root", query: "cap:root -cap:stream" },
+  { key: "either", query: "region:hk OR region:sg" },
+] as const;
+
 /* ------------------------------------------------------------------ */
 /* Address keys                                                        */
 /* ------------------------------------------------------------------ */

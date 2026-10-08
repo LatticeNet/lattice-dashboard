@@ -3,6 +3,35 @@
 export default {
   networking: {
     sshGuard: {
+      query: {
+        label: "搜索、筛选和排序 SSH Guard 表格",
+        placeholder: "搜索，或 posture:password_open port:22 sort:name",
+        conflict: "筛选标签与搜索同时生效，没有节点全部满足。",
+        showAllChips: "标签全部显示",
+        staleActions: "表格显示的是之前搜索的结果，请先修正搜索。",
+        examples: {
+          password: "仍允许密码登录的节点，按名称排序",
+          legacy: "sshd 在 22 端口且没有敲门门控",
+          stale: "快照超过一小时的节点，最旧的在前",
+          trouble: "加固失败或正在回滚的节点",
+          ready: "现在可以写加固计划的 edge 节点",
+        },
+        fields: {
+          posture: "节点自身 sshd 的状态：password_open、partial、unknown、secured",
+          state: "覆盖筛选：reverting、armPending、failed、open、excluded、confirmed",
+          stage: "加固与确认计划所处阶段",
+          scope: "enrolled、undecided 或 excluded",
+          port: "节点报告中 sshd 监听的端口",
+          password: "sshd -T 显示的密码登录已开启",
+          knock: "控制面持有的敲门信息：installed、planned、no_knock、unknown",
+          observed: "节点报告的采集时间",
+          gate: "节点上已启用敲门门控",
+          reverting: "回滚计时器正在运行",
+          stale: "报告已过期",
+          legacy: "sshd 只在 22 端口",
+          armable: "现在可以写加固计划",
+        },
+      },
       proof: {
         observed: "{age} 前观测",
         notObserved: "还没有任何 reality 快照",

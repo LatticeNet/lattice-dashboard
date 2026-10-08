@@ -39,6 +39,10 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
+import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQuery";
+import { withoutSorts } from "@/lib/query/syntax";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
@@ -674,6 +678,27 @@ const listedMonitors = computed(() => {
   );
 });
 
+/*
+ * The query field over the monitor list (src/lib/query). It lives at
+ * ?monitors.q=, where the table's own search box kept its text, because the
+ * incidents layer on this same address already owns ?q=.
+ */
+const querySchema = monitoringQuerySchema({
+  health: (monitor) => healthOf(monitor),
+  allNodeNames: () => nodes.value.map((node) => node.name || node.id),
+  nodeName: (id) => nodeName(id),
+  serverEvaluated: (monitor) => isServerEvaluated(monitor.type),
+});
+const storedQuery = bindQueryParam<string>(owned, "monitors.q", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value) => (value.trim() ? value : undefined),
+});
+const queryText = useQueryText(storedQuery);
+const query = useListQuery(listedMonitors, querySchema, queryText);
+const queryExamples = computed(() =>
+  MONITORING_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`fleet.monitoring.query.examples.${example.key}`) })),
+);
+
 const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
   {
     value: "incidents",
@@ -865,21 +890,36 @@ const deleteImpact = computed(() => {
       <span class="tabular">{{ $t('fleet.monitoring.nodeFilter.showing', { shown: listedMonitors.length, total: monitors.length }) }}</span>
     </div>
 
+    <ListQueryBar
+      v-if="canReadMonitors && monitors.length"
+      v-model="queryText"
+      class="max-w-3xl"
+      storage-key="monitors"
+      testid="monitors-query"
+      :query="query"
+      :count="query.filtering.value ? { shown: query.rows.value.length, total: listedMonitors.length } : undefined"
+      :label="$t('fleet.monitoring.query.label')"
+      :placeholder="$t('fleet.monitoring.query.placeholder')"
+      :examples="queryExamples"
+    />
+
     <DataTable
       v-if="canReadMonitors && !(monitorsQuery.data.value !== undefined && monitors.length === 0)"
       state-key="monitors"
       :columns="columns"
-      :rows="listedMonitors"
+      :rows="query.rows.value"
       :row-key="(monitor) => monitor.id"
       :loading="monitorsQuery.loading.value"
       :error="monitorsQuery.error.value ?? null"
       :has-data="monitorsQuery.data.value !== undefined"
-      searchable
       :expression-filter="false"
-      :search-placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')"
+      :external-sort="query.sorted.value"
+      :class="query.invalid.value && 'opacity-50'"
+      :inert="query.invalid.value || undefined"
       :row-click="(monitor, el) => sheet.open(monitor.id, el)"
       :active-row-id="sheet.openId.value"
       @retry="monitorsQuery.refresh"
+      @sort="queryText = withoutSorts(queryText)"
     >
       <template #cell-name="{ row }">
         <span class="flex min-w-0 items-center gap-2">

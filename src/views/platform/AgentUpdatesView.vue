@@ -47,6 +47,9 @@ import { useLayer } from "@/composables/useLayer";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useProof } from "@/composables/useProof";
 import { useRouteOpen } from "@/composables/useRouteOpen";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import { provideNodeDirectory } from "@/composables/useNodeDirectory";
 import { proofReason } from "@/components/common/proofModel";
 import {
@@ -65,6 +68,9 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
+import { AGENT_UPDATES_QUERY_EXAMPLES, agentUpdatesQuerySchema } from "./agentUpdatesQuery";
+import { withoutSorts } from "@/lib/query/syntax";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
@@ -594,6 +600,37 @@ const fleetRows = computed<FleetRow[]>(() => {
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 });
 
+/*
+ * The query field (src/lib/query) over the fleet table: the shared node
+ * fields plus standing, policy, target and when the policy last planned. It
+ * lives at ?q=; the table's own search box lived at ?nodes.q=, and an old
+ * link that carries one is read once into the field.
+ */
+const owned = useOwnedRoute();
+{
+  const current = owned.query();
+  const legacy = current["nodes.q"];
+  if (typeof legacy === "string" && legacy.trim() && current.q === undefined) {
+    const { ["nodes.q"]: _moved, ...rest } = current;
+    owned.replace({ ...rest, q: legacy });
+  }
+}
+const storedQuery = bindQueryParam<string>(owned, "q", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value) => (value.trim() ? value : undefined),
+});
+const nodesById = computed(() => new Map(nodes.value.map((node) => [node.id, node] as const)));
+const querySchema = agentUpdatesQuerySchema<FleetRow>({
+  nodeOf: (row) => nodesById.value.get(row.nodeId),
+  target: (row) => (row.policy ? targetLabel(row.policy) : ""),
+  staleApprovals: (row) => staleApprovalCount(row.nodeId),
+});
+const queryText = useQueryText(storedQuery);
+const query = useListQuery(fleetRows, querySchema, queryText);
+const queryExamples = computed(() =>
+  AGENT_UPDATES_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`platform.agentUpdatesPage.query.examples.${example.key}`) })),
+);
+
 const standingCounts = computed(() => {
   const out: Record<AgentStanding, number> = { current: 0, behind: 0, ahead: 0, unknown: 0 };
   for (const row of fleetRows.value) if (nodes.value.some((node) => node.id === row.nodeId)) out[row.standing] += 1;
@@ -910,26 +947,41 @@ const deleteImpact = computed(() => {
         </ul>
       </section>
 
+      <ListQueryBar
+        v-if="fleetRows.length || queryText"
+        v-model="queryText"
+        class="max-w-3xl"
+        storage-key="agent-updates"
+        testid="agent-updates-query"
+        :query="query"
+        :count="query.filtering.value ? { shown: query.rows.value.length, total: fleetRows.length } : undefined"
+        :label="$t('platform.agentUpdatesPage.query.label')"
+        :placeholder="$t('platform.agentUpdatesPage.query.placeholder')"
+        :examples="queryExamples"
+      />
+
       <DataTable
         state-key="nodes"
         :columns="columns"
-        :rows="fleetRows"
+        :rows="query.rows.value"
         :row-key="(row) => row.nodeId"
         :loading="nodesQuery.loading.value && policiesQuery.loading.value"
         :error="tableError"
         :has-data="nodesRead || policiesRead"
         :page-size="50"
-        searchable
         :expression-filter="false"
-        :search-placeholder="$t('platform.shared.searchNodes')"
+        :external-sort="query.sorted.value"
+        :class="query.invalid.value && 'opacity-50'"
+        :inert="query.invalid.value || undefined"
         :row-click="(row, el) => sheet.open(row.nodeId, el)"
         :active-row-id="sheet.openId.value"
         :show-summary="false"
-        :empty-title="$t('platform.agentUpdates.emptyTitle')"
-        :empty-description="$t('platform.agentUpdates.emptyDescription')"
+        :empty-title="query.filtering.value && fleetRows.length ? $t('platform.shared.noMatchesTitle') : $t('platform.agentUpdates.emptyTitle')"
+        :empty-description="query.filtering.value && fleetRows.length ? $t('platform.shared.noMatchesDescription') : $t('platform.agentUpdates.emptyDescription')"
         :no-match-title="$t('platform.shared.noMatchesTitle')"
         :no-match-description="$t('platform.shared.noMatchesDescription')"
         @retry="refreshAll"
+        @sort="queryText = withoutSorts(queryText)"
       >
         <template #cell-name="{ row }">
           <span v-if="nodesRead" class="font-medium">{{ row.name }}</span>

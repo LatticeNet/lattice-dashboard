@@ -710,6 +710,30 @@ export default {
         missingDescription: "链接指向的连接已经不在存储里，或者不在你能看到的节点范围内。",
       },
       collection: {
+        query: {
+          label: "搜索、筛选和排序采集策略",
+          placeholder: "搜索，或 readiness:not_ready -is:trace sort:name",
+          noMatch: "没有节点的策略符合此查询。",
+          examples: {
+            notReady: "无法记录或已失联的采集器，按名称排序",
+            capturing: "正在被抓取覆盖的节点",
+            heavy: "保存超过 100,000 行的节点，最多的在前",
+            untraced: "关闭了 trace 采集的 edge 节点",
+          },
+          fields: {
+            trace: "trace 采集已开启",
+            level: "trace 级别：info、debug、trace",
+            budget: "Agent 每秒可发送的行数；0 表示默认值",
+            readiness: "采集器状态：ready、not_ready、pending、waiting、stale、off",
+            capturing: "有正在运行的抓取覆盖该节点",
+            captures: "覆盖该节点的运行中抓取数",
+            sources: "节点上报的原始日志源数",
+            held: "节点各日志源保存的行数",
+            raw: "原始 sing-box 日志在流动",
+            quiet: "没有采集、抓取或保存任何内容",
+            edited: "该行有未保存的修改",
+          },
+        },
         everyNode: "所有节点：{value}",
         neverChanged: "从未改动",
         policyHint: "开启策略的节点会在日志行预算内一直拼连接记录。平时可以关着，需要时再抓取。",
@@ -1912,6 +1936,25 @@ export default {
       goToApprovals: "前往审批",
     },
     agentUpdatesPage: {
+      query: {
+        label: "搜索、筛选和排序 Agent 更新",
+        placeholder: "搜索，或 is:behind policy:none sort:name",
+        examples: {
+          behind: "落后于最新版本且未自动计划的节点",
+          none: "没有更新策略的节点",
+          failed: "上次计划失败的策略，最新的在前",
+          quiet: "超过一周没有计划过的节点",
+        },
+        fields: {
+          standing: "相对最新版本：behind、current、ahead、unknown",
+          policy: "更新策略：none、manual、auto、disabled",
+          target: "策略指定的目标版本",
+          planned: "策略上次计划更新的时间",
+          behind: "运行的 Agent 低于最新版本",
+          failed: "策略上次计划失败",
+          stale: "有已不适用的更新审批",
+        },
+      },
       layersLabel: "Agent 更新分层",
       layers: { nodes: "节点", distribution: "分发" },
       proof: {

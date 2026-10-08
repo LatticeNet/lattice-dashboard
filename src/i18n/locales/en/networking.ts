@@ -4,6 +4,35 @@
 export default {
   networking: {
     sshGuard: {
+      query: {
+        label: "Search, filter and sort the SSH Guard table",
+        placeholder: "Search, or posture:password_open port:22 sort:name",
+        conflict: "The chips and the search both apply, and no node meets them all.",
+        showAllChips: "Show all chips",
+        staleActions: "The table shows rows for an earlier search; fix the search first.",
+        examples: {
+          password: "Password login still on, by name",
+          legacy: "sshd on port 22 with no knock gate",
+          stale: "Snapshots older than an hour, oldest first",
+          trouble: "Arms that failed or are reverting now",
+          ready: "Edge nodes an arm plan can be written for",
+        },
+        fields: {
+          posture: "What the node's own sshd says: password_open, partial, unknown, secured",
+          state: "The coverage chip: reverting, armPending, failed, open, excluded, confirmed",
+          stage: "Where the arm and confirm plans stand",
+          scope: "enrolled, undecided or excluded",
+          port: "Ports sshd listens on, from the node's report",
+          password: "Password login on, as sshd -T printed it",
+          knock: "What the control plane holds for the knock: installed, planned, no_knock, unknown",
+          observed: "When the node's report was collected",
+          gate: "The knock gate is on the box",
+          reverting: "A revert timer is running",
+          stale: "The report is past its freshness",
+          legacy: "sshd only on port 22",
+          armable: "An arm plan can be written for it now",
+        },
+      },
       proof: {
         observed: "observed {age} ago",
         notObserved: "no reality snapshot yet",

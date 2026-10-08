@@ -99,6 +99,10 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
+import { INVENTORY_QUERY_EXAMPLES, inventoryQuerySchema } from "./inventoryQuery";
+import { withoutSorts } from "@/lib/query/syntax";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -340,15 +344,24 @@ const spendByCurrency = computed<CurrencySpend[]>(() => aggregateSpend(machines.
 const freeCount = computed(() => machines.value.filter((m) => billingCategory(m) === "free").length);
 
 // ── Search + grouping ─────────────────────────────────────────────────────────
-const filteredMachines = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  if (!q) return machines.value;
-  return machines.value.filter((m) =>
-    [m.label, m.node_name, m.node_id, m.vendor, m.region, m.host_facts?.hostname]
-      .filter(Boolean)
-      .some((field) => String(field).toLowerCase().includes(q)),
-  );
+/*
+ * The search field speaks the list query (src/lib/query): bare words search
+ * the name, node, vendor, region and host as before, and field terms reach
+ * price, billing, renewal and the shared node fields. A sort: replaces the
+ * order each group would otherwise take.
+ */
+const nodesById = computed(() => new Map(nodes.value.map((node) => [node.id, node] as const)));
+const querySchema = inventoryQuerySchema({
+  nodeOf: (machine) => nodesById.value.get(machine.node_id),
+  nameOf: (machine) => displayName(machine),
+  vendorOf: (machine) => machine.vendor ?? "",
 });
+const queryText = useQueryText(search);
+const query = useListQuery(machines, querySchema, queryText);
+const filteredMachines = query.rows;
+const queryExamples = computed(() =>
+  INVENTORY_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`fleet.inventory.query.examples.${example.key}`) })),
+);
 
 type MachineGroup = {
   key: string;
@@ -367,7 +380,7 @@ const groups = computed<MachineGroup[]>(() => {
   const build = (key: string, labelText: string, items: MachineView[]): MachineGroup => ({
     key,
     label: labelText,
-    machines: orderMachines(items, order, displayName, (machine) => !!renewalDate(machine)),
+    machines: query.sorted.value ? items : orderMachines(items, order, displayName, (machine) => !!renewalDate(machine)),
     spend: aggregateSpend(items),
   });
 
@@ -1346,17 +1359,18 @@ async function sendReminders(): Promise<void> {
     <AttentionList :items="attention" />
 
     <!-- What the list shows: search and grouping, both in the address. -->
-    <div v-if="machines.length > 0 || search" class="flex flex-wrap items-center gap-2">
-      <div class="relative min-w-0 flex-[1_1_16rem]">
-        <Search class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input
-          v-model="search"
-          type="search"
-          class="ps-9"
-          :placeholder="$t('fleet.inventory.search.placeholder')"
-          :aria-label="$t('fleet.inventory.search.placeholder')"
-        />
-      </div>
+    <div v-if="machines.length > 0 || queryText" class="flex flex-wrap items-start gap-2">
+      <ListQueryBar
+        v-model="queryText"
+        class="flex-[1_1_16rem] max-lg:basis-full"
+        storage-key="inventory"
+        testid="inventory-query"
+        :query="query"
+        :count="query.filtering.value ? { shown: filteredMachines.length, total: machines.length } : undefined"
+        :label="$t('fleet.inventory.query.label')"
+        :placeholder="$t('fleet.inventory.query.placeholder')"
+        :examples="queryExamples"
+      />
       <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-input bg-background p-0.5" role="group" :aria-label="$t('fleet.inventory.group.by')">
         <button
           v-for="option in groupOptions"
@@ -1389,11 +1403,15 @@ async function sendReminders(): Promise<void> {
       :group-order="groupOrderKeys"
       :row-click="(machine, el) => sheet.open(sheetId(machine), el)"
       :active-row-id="openMachine ? machineKey(openMachine) : null"
+      :external-sort="query.sorted.value"
+      :class="query.invalid.value && 'opacity-50'"
+      :inert="query.invalid.value || undefined"
       @retry="machinesQuery.refresh"
+      @sort="queryText = withoutSorts(queryText)"
     >
       <template #empty>
         <EmptyState
-          v-if="search"
+          v-if="query.filtering.value"
           :icon="Search"
           :title="$t('fleet.inventory.list.noMatchTitle')"
           :description="$t('fleet.inventory.list.noMatchDescription')"
