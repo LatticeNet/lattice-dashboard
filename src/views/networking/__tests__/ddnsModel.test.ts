@@ -3,12 +3,16 @@ import { test } from "node:test";
 
 import {
   assessDdns,
+  ddnsCnameInSync,
   ddnsCommentMode,
   ddnsCounts,
   ddnsErrorText,
   ddnsInterval,
   ddnsMatchesShow,
+  ddnsNormalizeHost,
+  ddnsRecordType,
   ddnsRunPreview,
+  ddnsTargetProblem,
   ddnsTemplateProblem,
   ddnsTime,
   DDNS_COMMENT_MAX_CHARS,
@@ -133,6 +137,7 @@ const VARS: DdnsCommentVars = {
   type: "AAAA",
   ip: "2001:db8::2",
   old_ip: "2001:db8::1",
+  target: "e.net",
   lattice: "lat.io",
   now: Date.parse("2026-10-08T17:30:45+08:00"),
 };
@@ -149,7 +154,7 @@ test("the preview fills every placeholder the way the server does, in UTC", () =
   const tmpl = DDNS_COMMENT_PLACEHOLDERS.join("|");
   assert.equal(
     renderDdnsComment(tmpl, VARS).text,
-    "tokyo-1|node_7|home|a.io|AAAA|2001:db8::2|2001:db8::1|2026-10-08 09:30Z|2026-10-08|lat.io",
+    "tokyo-1|node_7|home|a.io|AAAA|2001:db8::2|2001:db8::1|e.net|2026-10-08 09:30Z|2026-10-08|lat.io",
   );
   assert.equal(renderDdnsComment(DDNS_DEFAULT_COMMENT_TEMPLATE, VARS).text, "Lattice DDNS for tokyo-1, 2026-10-08 09:30Z");
   // An unknown token next to a known one leaves the known one working.
@@ -199,4 +204,87 @@ test("a run error reads as sentences, not as Cloudflare's JSON", () => {
     ddnsErrorText('A x: cloudflare: api error (status 403): [{"code":10000,"message":"Authentication error"}]', (status, said) => `拒绝 ${status} ${said}`),
     "A x: 拒绝 403 Authentication error (code 10000)",
   );
+});
+
+/* Record type: a CNAME to a provider's hostname */
+
+const FRONTIER = "frontier.nat.aaitr.roobli.org";
+const TARGET = "nat-us-28tz.aproxy.top";
+
+function cname(over: Partial<DdnsProfileInput> = {}): DdnsProfileInput {
+  return profile({
+    record_type: "cname",
+    cname_target: TARGET,
+    last_target: TARGET,
+    enable_ipv4: true,
+    last_ipv4: undefined,
+    last_run_at: new Date(NOW - 2 * MIN).toISOString(),
+    ...over,
+  });
+}
+
+test("a profile saved before record types existed is an address profile", () => {
+  assert.equal(ddnsRecordType(undefined), "address");
+  assert.equal(ddnsRecordType(""), "address");
+  assert.equal(ddnsRecordType("mx"), "address");
+  assert.equal(ddnsRecordType("cname"), "cname");
+  // An address profile is still judged by the node's address.
+  assert.equal(assessDdns(profile({ record_type: "" }), { public_ip: "203.0.113.44", down: false }, NOW).state, "stale");
+});
+
+test("a CNAME the server confirmed is current, whatever the node's address or status", () => {
+  const moved = { public_ip: "47.148.162.51", down: true };
+  const result = assessDdns(cname(), moved, NOW);
+  assert.equal(result.state, "current");
+  assert.deepEqual(result.moved, []);
+  assert.equal(result.noAddress, false);
+  // Its record does not follow the node, so an offline node is not its problem.
+  assert.equal(result.nodeDown, false);
+  // Unread node list: still checkable, and a trailing dot or case is the same target.
+  assert.equal(assessDdns(cname({ last_target: "NAT-us-28tz.aproxy.top." }), undefined, NOW).state, "current");
+  assert.ok(ddnsCnameInSync({ cname_target: TARGET, last_target: TARGET }));
+  assert.ok(!ddnsCnameInSync({ cname_target: "", last_target: "" }));
+});
+
+test("a CNAME not yet confirmed waits for the next check, then is stale; a failure outranks both", () => {
+  const edited = cname({ cname_target: "nat-us-29tz.aproxy.top" });
+  assert.equal(assessDdns(edited, up, NOW).state, "waiting");
+  const old = cname({ last_target: "", last_run_at: undefined, created_at: new Date(NOW - 11 * MIN).toISOString() });
+  assert.equal(assessDdns(old, up, NOW).state, "stale");
+  assert.equal(assessDdns(cname({ last_error: "x already has an A record (1.2.3.4)" }), up, NOW).state, "failing");
+});
+
+test("the run preview of a CNAME profile lists one CNAME per domain", () => {
+  const preview = ddnsRunPreview({ ...cname({ last_target: "old.aproxy.top", cname_target: "NAT-us-28tz.aproxy.top." }), domains: [FRONTIER, "b.roobli.org"] }, up);
+  assert.deepEqual(preview, [
+    { domain: FRONTIER, type: "CNAME", value: TARGET, previous: "old.aproxy.top" },
+    { domain: "b.roobli.org", type: "CNAME", value: TARGET, previous: "old.aproxy.top" },
+  ]);
+});
+
+test("a CNAME target is checked the way the server checks it", () => {
+  const own = [FRONTIER];
+  assert.equal(ddnsTargetProblem(TARGET, own), null);
+  assert.equal(ddnsTargetProblem(" NAT-us-28tz.aproxy.top. ", own), null);
+  assert.equal(ddnsTargetProblem("other.nat.aaitr.roobli.org", own), null);
+  assert.equal(ddnsTargetProblem("_acme.aproxy.top", own), null);
+  assert.equal(ddnsNormalizeHost(" NAT-us-28tz.aproxy.top. "), TARGET);
+  assert.deepEqual(ddnsTargetProblem(" ", own), { kind: "empty" });
+  assert.deepEqual(ddnsTargetProblem("40.160.254.9", own), { kind: "ip" });
+  assert.deepEqual(ddnsTargetProblem("2001:db8::1", own), { kind: "ip" });
+  assert.deepEqual(ddnsTargetProblem(`${"a".repeat(60)}.`.repeat(5) + "top", own), { kind: "tooLong", bytes: 308 });
+  assert.deepEqual(ddnsTargetProblem("localhost", own), { kind: "singleLabel" });
+  assert.deepEqual(ddnsTargetProblem("a..aproxy.top", own), { kind: "emptyLabel" });
+  assert.deepEqual(ddnsTargetProblem(`${"a".repeat(64)}.aproxy.top`, own), { kind: "labelTooLong" });
+  assert.deepEqual(ddnsTargetProblem("-nat.aproxy.top", own), { kind: "hyphen" });
+  assert.deepEqual(ddnsTargetProblem("nat us.aproxy.top", own), { kind: "character" });
+  assert.deepEqual(ddnsTargetProblem("Frontier.nat.aaitr.roobli.org.", own), { kind: "loop", domain: FRONTIER });
+  assert.deepEqual(ddnsTargetProblem(`edge.${FRONTIER}`, own), { kind: "loop", domain: FRONTIER });
+});
+
+test("a CNAME comment fills #target# and leaves #ip# empty, as the server does", () => {
+  assert.ok(DDNS_COMMENT_PLACEHOLDERS.includes("#target#"));
+  assert.equal(ddnsTemplateProblem("Lattice #node# via #target#"), null);
+  const out = renderDdnsComment("#node# #type# to #target# ip=[#ip#]", { ...VARS, type: "CNAME", ip: "", old_ip: "", target: TARGET });
+  assert.equal(out.text, `tokyo-1 CNAME to ${TARGET} ip=[]`);
 });

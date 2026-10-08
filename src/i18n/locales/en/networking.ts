@@ -1018,6 +1018,7 @@ export default {
         downClaim: "{node} is {status}; its profile cannot follow its address | {node} is {status}; its {n} profiles cannot follow its address",
         downClaimSince: "{node} has been {status} for {age}; its profile cannot follow its address | {node} has been {status} for {age}; its {n} profiles cannot follow its address",
         downProof: "{names} · DNS keeps what they last wrote",
+        staleCname: "the CNAME to {target} is not confirmed · last check {age}, every {interval}",
       },
       showLabel: "Show",
       show: {
@@ -1049,6 +1050,7 @@ export default {
         stale: "Stale",
         waiting: "Waiting",
         unchecked: "Not checked",
+        inSync: "In sync",
       },
       stateLine: {
         current: "DNS holds the address the node reports.",
@@ -1057,7 +1059,35 @@ export default {
         waiting: "the node reports a new address. The sweep writes it once {interval} have passed since the last run.",
         waitingFirst: "nothing is written yet. The sweep writes the first records within a minute or two.",
         unchecked: "the node's address was not read, so this page cannot say whether the records are right.",
+        cnameCurrent: "every name is a CNAME to {target}. The server checks it every {interval} and puts it back if someone changes it by hand.",
+        cnameWaiting: "the CNAME to {target} is not confirmed yet. The next check, within {interval}, writes or confirms it.",
       },
+      recordType: {
+        label: "Record type",
+        address: "Address from the node's IP",
+        addressHint: "A and AAAA records that follow the address the node reports.",
+        cname: "CNAME to a provider hostname",
+        cnameHint: "For a node behind NAT that is reached through its provider's hostname. The record does not follow the node's address.",
+        targetLabel: "CNAME target",
+        targetHint: "The inbound hostname the provider gives this machine. A CNAME already on a name is adopted, and Lattice never deletes a record.",
+        webhook: "A CNAME needs the Cloudflare provider; a webhook only receives the node's addresses.",
+        switchToCname: "Lattice never deletes a record. The A and AAAA records this profile wrote stay on these names and keep the CNAME off them, so remove them in Cloudflare first.",
+        switchToAddress: "Lattice never deletes a record. The CNAME on these names stays and keeps A and AAAA records off them, so remove it in Cloudflare first.",
+        problem: {
+          empty: "Enter the provider's hostname.",
+          ip: "Enter a hostname, not an IP address. To publish an IP, choose the address type.",
+          tooLong: "The hostname is {bytes} bytes; the limit is {max}.",
+          singleLabel: "Enter a full hostname, such as nat-us-28tz.aproxy.top.",
+          emptyLabel: "The hostname has an empty part (two dots in a row).",
+          labelTooLong: "Each part of the hostname is at most 63 characters.",
+          hyphen: "A part of the hostname cannot start or end with a hyphen.",
+          character: "Use only letters, digits, hyphens and underscores.",
+          loop: "{domain} is one of this profile's own names. Pointing at it, or at a name under it, would loop.",
+        },
+      },
+      cnameArrow: "CNAME → {target}",
+      notConfirmed: "not confirmed yet",
+      lastConfirmed: "last confirmed {target}",
       goneTitle: "This profile no longer exists",
       goneDescription: "It was deleted, or it is bound to a node this session cannot see.",
       sheet: {
@@ -1120,6 +1150,8 @@ export default {
       deleteImpactFollow: "{domains} stop following {node}'s address.",
       deleteImpactKept: "The records keep {ip} until someone changes them.",
       deleteImpactNever: "Nothing was ever written, so no record is left behind.",
+      deleteImpactCnameFollow: "{domains} stop being checked against {target}.",
+      deleteImpactCnameKept: "The CNAME records stay in Cloudflare as they are. Lattice never deletes a record.",
       newProfileTitle: "New DDNS profile",
       dialogDescription:
         "Bind a node to a DNS publishing backend. Credentials are write-only and never returned.",
@@ -1129,6 +1161,7 @@ export default {
       domains: "Domains",
       domainsHint:
         "Comma-separated. Each name gets a record for every address family this node actually has an IP for.",
+      domainsHintCname: "Comma-separated. Each name becomes a CNAME to the target.",
       provider: "Provider",
       ttlSeconds: "TTL (seconds)",
       maxRetries: "Max retries",
@@ -1156,6 +1189,7 @@ export default {
       toastDeleteFailed: "Delete failed",
       toastRunSuccess:
         "Run finished with no provider errors. Only the address families this node has an IP for were written.",
+      toastRunSuccessCname: "Run finished with no provider errors. Every name is a CNAME to {target}.",
       toastRunBadGateway:
         "The update did not complete. The server answered 502, so either the DNS provider failed or the request never reached Lattice.",
       toastRunFailed: "Run failed",

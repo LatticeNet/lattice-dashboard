@@ -60,23 +60,30 @@ import {
 
 import {
   assessDdns,
+  ddnsCnameInSync,
   ddnsCommentMode,
   ddnsCounts,
   ddnsErrorText,
   ddnsMatchesShow,
+  ddnsNormalizeHost,
+  ddnsRecordType,
   ddnsRunPreview,
+  ddnsTargetProblem,
   ddnsTemplateProblem,
   DDNS_COMMENT_MAX_CHARS,
   DDNS_COMMENT_MODES,
   DDNS_COMMENT_PLACEHOLDERS,
   DDNS_COMMENT_TEMPLATE_MAX_BYTES,
   DDNS_DEFAULT_COMMENT_TEMPLATE,
+  DDNS_HOSTNAME_MAX_BYTES,
+  DDNS_RECORD_TYPES,
   DDNS_SHOWS,
   insertDdnsPlaceholder,
   parseDdnsShow,
   renderDdnsComment,
   type DdnsAssessment,
   type DdnsCommentMode,
+  type DdnsRecordType,
   type DdnsShow,
   type DdnsState,
 } from "./ddnsModel";
@@ -128,6 +135,19 @@ const counts = computed(() => ddnsCounts([...assessments.value.values()]));
 
 function nameOf(profile: DDNSView): string {
   return profile.name || profile.id;
+}
+
+function isCname(profile: DDNSView): boolean {
+  return ddnsRecordType(profile.record_type) === "cname";
+}
+
+function targetOf(profile: DDNSView): string {
+  return ddnsNormalizeHost(profile.cname_target ?? "");
+}
+
+/** A CNAME profile that is current reads "In sync": it is checked, not written. */
+function stateLabel(profile: DDNSView, state: DdnsState): string {
+  return isCname(profile) && state === "current" ? t("networking.ddns.state.inSync") : t(`networking.ddns.state.${state}`);
 }
 
 function nodeNameOf(id: string): string {
@@ -204,6 +224,13 @@ function firstLine(text: string): string {
 }
 
 function staleProof(profile: DDNSView, assessment: DdnsAssessment): string {
+  if (isCname(profile)) {
+    return t("networking.ddns.attention.staleCname", {
+      target: targetOf(profile),
+      age: assessment.lastRunMs === null ? t("networking.ddns.neverRun") : t("networking.ddns.ago", { age: ageSince(assessment.lastRunMs) }),
+      interval: intervalText(assessment.intervalS),
+    });
+  }
   const move = assessment.moved[0];
   if (move) {
     return t("networking.ddns.attention.staleMoved", {
@@ -312,7 +339,7 @@ const columns = computed<DataTableColumn<DDNSView>[]>(() => {
       key: "published",
       label: t("networking.ddns.colPublished"),
       searchable: true,
-      value: (p) => [p.last_ipv4, p.last_ipv6].filter(Boolean).join(" "),
+      value: (p) => (isCname(p) ? ["CNAME", p.cname_target, p.last_target] : [p.last_ipv4, p.last_ipv6]).filter(Boolean).join(" "),
     },
     { key: "last_run", label: t("networking.ddns.colLastRun"), sortable: true, value: (p) => assessmentOf(p).lastRunMs ?? 0 },
   ];
@@ -380,6 +407,8 @@ const sheetState = computed(() => {
 
 function stateSentence(profile: DDNSView, assessment: DdnsAssessment): string {
   const interval = intervalText(assessment.intervalS);
+  if (isCname(profile) && assessment.state === "current") return t("networking.ddns.stateLine.cnameCurrent", { target: targetOf(profile), interval });
+  if (isCname(profile) && assessment.state === "waiting") return t("networking.ddns.stateLine.cnameWaiting", { target: targetOf(profile), interval });
   switch (assessment.state) {
     case "failing":
       return t("networking.ddns.stateLine.failing", {
@@ -401,16 +430,31 @@ function stateSentence(profile: DDNSView, assessment: DdnsAssessment): string {
 
 interface RecordLine {
   domain: string;
-  type: "A" | "AAAA";
+  type: "A" | "AAAA" | "CNAME";
   value: string;
   current: string;
+  /** For a CNAME not confirmed at its target: what the server last confirmed, or that it has not. */
+  note?: string;
 }
 
-/** What each name holds, as far as this profile last wrote it, beside what the node reports now. */
+/**
+ * What each name holds, as far as this profile last wrote it, beside what the
+ * node reports now. A CNAME shows its target, and when the server has not
+ * confirmed that target, what it last did confirm.
+ */
 const openRecords = computed<RecordLine[]>(() => {
   const profile = openProfile.value;
   if (!profile) return [];
   const out: RecordLine[] = [];
+  if (isCname(profile)) {
+    const note = ddnsCnameInSync(profile)
+      ? undefined
+      : profile.last_target
+        ? t("networking.ddns.lastConfirmed", { target: profile.last_target })
+        : t("networking.ddns.notConfirmed");
+    for (const domain of profile.domains ?? []) out.push({ domain, type: "CNAME", value: targetOf(profile), current: "", note });
+    return out;
+  }
   for (const domain of profile.domains ?? []) {
     if (profile.enable_ipv4) out.push({ domain, type: "A", value: profile.last_ipv4 ?? "", current: openNode.value?.public_ip ?? "" });
     if (profile.enable_ipv6) out.push({ domain, type: "AAAA", value: profile.last_ipv6 ?? "", current: openNode.value?.public_ipv6 ?? "" });
@@ -475,6 +519,8 @@ const form = reactive({
   cf_api_token: "",
   comment_mode: "default" as DdnsCommentMode,
   record_comment: "",
+  record_type: "address" as DdnsRecordType,
+  cname_target: "",
   webhook_url: "",
   webhook_method: "POST",
   webhook_body: "",
@@ -492,6 +538,11 @@ const savedSnapshot = ref("");
 const warningsPanel = ref<HTMLElement | null>(null);
 /** The last published addresses of the profile being edited, for #old_ip#. */
 const editingPublished = ref({ v4: "", v6: "" });
+/** The CNAME target field shows its problem once it has been left, and not again while it has focus. */
+const targetTouched = ref(false);
+const targetFocused = ref(false);
+/** The record type the profile being edited was saved with; undefined while creating. */
+const editingRecordType = ref<DdnsRecordType | undefined>();
 
 function resetForm() {
   editingId.value = undefined;
@@ -499,8 +550,13 @@ function resetForm() {
   saveWarnings.value = [];
   savedSnapshot.value = "";
   editingPublished.value = { v4: "", v6: "" };
+  targetTouched.value = false;
+  targetFocused.value = false;
+  editingRecordType.value = undefined;
   form.comment_mode = "default";
   form.record_comment = "";
+  form.record_type = "address";
+  form.cname_target = "";
   form.name = "";
   form.node_id = "";
   form.provider = "cloudflare";
@@ -549,6 +605,9 @@ function openEdit(profile: DDNSView) {
   form.webhook_method = profile.webhook_method || "POST";
   form.comment_mode = ddnsCommentMode(profile.comment_mode);
   form.record_comment = profile.record_comment ?? "";
+  form.record_type = ddnsRecordType(profile.record_type);
+  editingRecordType.value = form.record_type;
+  form.cname_target = profile.cname_target ?? "";
   editingPublished.value = { v4: profile.last_ipv4 ?? "", v6: profile.last_ipv6 ?? "" };
   formOpen.value = true;
 }
@@ -568,6 +627,8 @@ const isDirty = computed(() => {
     !!form.cf_api_token.trim() ||
     form.comment_mode !== "default" ||
     !!form.record_comment.trim() ||
+    form.record_type !== "address" ||
+    !!form.cname_target.trim() ||
     !!form.webhook_url.trim() ||
     !!form.webhook_body.trim() ||
     !!form.webhook_headers.trim()
@@ -627,6 +688,48 @@ const parsedDomains = computed(() =>
     .filter(Boolean),
 );
 
+/* ── Record type ───────────────────────────────────────────────────── */
+
+const isCnameForm = computed(() => form.record_type === "cname");
+
+const targetProblem = computed(() => (isCnameForm.value ? ddnsTargetProblem(form.cname_target, parsedDomains.value) : null));
+
+const targetProblemText = computed(() => {
+  const problem = targetProblem.value;
+  if (!problem) return "";
+  switch (problem.kind) {
+    case "tooLong":
+      return t("networking.ddns.recordType.problem.tooLong", { bytes: problem.bytes, max: DDNS_HOSTNAME_MAX_BYTES });
+    case "loop":
+      return t("networking.ddns.recordType.problem.loop", { domain: problem.domain });
+    default:
+      return t(`networking.ddns.recordType.problem.${problem.kind}`);
+  }
+});
+
+/**
+ * A loop is a conflict with the domains above, so it shows at once. The rest
+ * wait until the field is left, and hide again while it is being typed in.
+ */
+const targetProblemShown = computed(() => {
+  const problem = targetProblem.value;
+  if (!problem) return false;
+  return problem.kind === "loop" || (targetTouched.value && !targetFocused.value);
+});
+
+/**
+ * Switching an existing profile's record type leaves what it wrote before:
+ * Lattice never deletes a record, and a CNAME cannot share its name, so the
+ * old records have to be removed in Cloudflare before the new type can land.
+ */
+const recordTypeSwitchNote = computed(() => {
+  if (!editingRecordType.value || editingRecordType.value === form.record_type) return "";
+  return t(isCnameForm.value ? "networking.ddns.recordType.switchToCname" : "networking.ddns.recordType.switchToAddress");
+});
+
+/** The server refuses a CNAME through a webhook. */
+const providerBlocksCname = computed(() => isCnameForm.value && form.provider === "webhook");
+
 /* ── Record comment ────────────────────────────────────────────────── */
 
 const COMMENT_INPUT_ID = "ddns-comment-template";
@@ -672,14 +775,17 @@ const commentPreview = computed(() => {
   const node = nodeById.value.get(form.node_id);
   const v4 = form.enable_ipv4 || !form.enable_ipv6;
   const ip = (v4 ? node?.public_ip : node?.public_ipv6) ?? "";
+  // A CNAME has no address, so #ip# and #old_ip# render empty, as the server renders them.
+  const cnameRecord = isCnameForm.value;
   return renderDdnsComment(commentTemplate.value, {
     node: node?.name || form.node_id || "#node#",
     node_id: form.node_id || "#node_id#",
     profile: form.name.trim() || "#profile#",
     domain: parsedDomains.value[0] ?? "#domain#",
-    type: v4 ? "A" : "AAAA",
-    ip: ip || "#ip#",
-    old_ip: v4 ? editingPublished.value.v4 : editingPublished.value.v6,
+    type: cnameRecord ? "CNAME" : v4 ? "A" : "AAAA",
+    ip: cnameRecord ? "" : ip || "#ip#",
+    old_ip: cnameRecord ? "" : v4 ? editingPublished.value.v4 : editingPublished.value.v6,
+    target: cnameRecord ? ddnsNormalizeHost(form.cname_target) || "#target#" : "",
     lattice: typeof window === "undefined" ? "" : window.location.hostname,
     now: now.value.getTime(),
   });
@@ -710,6 +816,7 @@ function commentSummary(profile: DDNSView): string {
 const canSubmit = computed(() => {
   if (!form.name.trim() || !form.node_id || parsedDomains.value.length === 0) return false;
   if (templateProblem.value) return false;
+  if (targetProblem.value || providerBlocksCname.value) return false;
   // A blank credential is only acceptable when editing a profile that already
   // has one stored, because the client is never given the value to send back.
   const credentialKept = isEditing.value && editingHasCredential.value;
@@ -735,6 +842,10 @@ async function submitForm() {
       // keeps the stored setting; the webhook provider ignores them.
       comment_mode: form.comment_mode,
       record_comment: form.record_comment,
+      // The target is sent with the address type too, so switching back
+      // and forth keeps it, as the comment template is kept.
+      record_type: form.record_type,
+      cname_target: form.cname_target.trim(),
     };
     if (editingId.value) req.id = editingId.value;
     if (form.provider === "cloudflare") {
@@ -784,12 +895,14 @@ const deleting = ref(false);
 const deleteImpact = computed(() => {
   const profile = deleteTarget.value;
   if (!profile) return [];
-  const lines = [
-    t("networking.ddns.deleteImpactFollow", {
-      domains: (profile.domains ?? []).join(", ") || t("common.misc.none"),
-      node: nodeNameOf(profile.node_id),
-    }),
-  ];
+  const domains = (profile.domains ?? []).join(", ") || t("common.misc.none");
+  if (isCname(profile)) {
+    return [
+      t("networking.ddns.deleteImpactCnameFollow", { domains, target: targetOf(profile) }),
+      t("networking.ddns.deleteImpactCnameKept"),
+    ];
+  }
+  const lines = [t("networking.ddns.deleteImpactFollow", { domains, node: nodeNameOf(profile.node_id) })];
   const kept = [profile.last_ipv4, profile.last_ipv6].filter(Boolean).join(", ");
   lines.push(kept ? t("networking.ddns.deleteImpactKept", { ip: kept }) : t("networking.ddns.deleteImpactNever"));
   return lines;
@@ -837,7 +950,7 @@ async function confirmRun() {
   try {
     await api.ddns.run(profile.id);
     runTarget.value = undefined;
-    toast.success(t("networking.ddns.toastRunSuccess"));
+    toast.success(isCname(profile) ? t("networking.ddns.toastRunSuccessCname", { target: targetOf(profile) }) : t("networking.ddns.toastRunSuccess"));
     void profilesQuery.refresh();
   } catch (error) {
     if (error instanceof ApiError && error.status === 502) {
@@ -980,7 +1093,7 @@ async function confirmRun() {
       </template>
       <template #cell-state="{ row: profile }">
         <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[assessmentOf(profile).state])">
-          {{ $t(`networking.ddns.state.${assessmentOf(profile).state}`) }}
+          {{ stateLabel(profile, assessmentOf(profile).state) }}
         </span>
       </template>
       <!-- Why a write failed, on a line of its own under the row: in a column
@@ -1001,7 +1114,13 @@ async function confirmRun() {
         </div>
       </template>
       <template #cell-published="{ row: profile }">
-        <div class="flex flex-col font-mono text-xs text-muted-foreground">
+        <div v-if="isCname(profile)" class="flex flex-col font-mono text-xs text-muted-foreground">
+          <span class="whitespace-nowrap text-foreground">{{ $t('networking.ddns.cnameArrow', { target: targetOf(profile) }) }}</span>
+          <span v-if="!ddnsCnameInSync(profile)" class="whitespace-nowrap font-sans text-warning-text">
+            {{ profile.last_target ? $t('networking.ddns.lastConfirmed', { target: profile.last_target }) : $t('networking.ddns.notConfirmed') }}
+          </span>
+        </div>
+        <div v-else class="flex flex-col font-mono text-xs text-muted-foreground">
           <span v-if="profile.enable_ipv4" class="whitespace-nowrap">{{ profile.last_ipv4 || $t('networking.ddns.nothingWritten') }}</span>
           <span v-if="profile.enable_ipv6" class="whitespace-nowrap">{{ profile.last_ipv6 || $t('networking.ddns.nothingWritten') }}</span>
           <span
@@ -1041,7 +1160,7 @@ async function confirmRun() {
     >
       <div v-if="openProfile && openAssessment" class="space-y-5 text-sm">
         <p :class="cn('font-medium', STATE_TONE[openAssessment.state] === 'text-muted-foreground' ? 'text-foreground' : STATE_TONE[openAssessment.state])">
-          {{ $t(`networking.ddns.state.${openAssessment.state}`) }}:
+          {{ stateLabel(openProfile, openAssessment.state) }}:
           <span class="font-normal">{{ stateSentence(openProfile, openAssessment) }}</span>
         </p>
 
@@ -1064,6 +1183,7 @@ async function confirmRun() {
               <span v-if="record.current && record.current !== record.value" class="text-warning-text">
                 {{ $t('networking.ddns.nodeNow', { ip: record.current }) }}
               </span>
+              <span v-if="record.note" class="font-sans text-warning-text">{{ record.note }}</span>
             </li>
           </ul>
         </section>
@@ -1173,8 +1293,54 @@ async function confirmRun() {
           <div class="grid gap-2">
             <Label for="ddns-domains">{{ $t('networking.ddns.domains') }}</Label>
             <Input id="ddns-domains" v-model="form.domains" required placeholder="a.example.com, b.example.com" />
-            <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.domainsHint') }}</p>
+            <p class="text-xs text-muted-foreground">{{ isCnameForm ? $t('networking.ddns.domainsHintCname') : $t('networking.ddns.domainsHint') }}</p>
           </div>
+
+          <!-- What each name becomes: the node's addresses, or a CNAME to the
+               hostname a NAT provider gives the machine for inbound traffic. -->
+          <fieldset class="grid min-w-0 gap-2">
+            <legend class="mb-2 text-sm font-medium">{{ $t('networking.ddns.recordType.label') }}</legend>
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label
+                v-for="type in DDNS_RECORD_TYPES"
+                :key="type"
+                :class="cn(
+                  'flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                  form.record_type === type ? 'border-primary/60 bg-primary/5' : 'border-border hover:bg-muted/40',
+                )"
+              >
+                <input v-model="form.record_type" type="radio" name="ddns-record-type" :value="type" class="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-none" />
+                <span class="min-w-0">
+                  <span class="block font-medium">{{ $t(`networking.ddns.recordType.${type}`) }}</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">{{ $t(`networking.ddns.recordType.${type}Hint`) }}</span>
+                </span>
+              </label>
+            </div>
+            <p v-if="recordTypeSwitchNote" class="text-xs text-warning-text" aria-live="polite">{{ recordTypeSwitchNote }}</p>
+            <div v-if="isCnameForm" class="mt-1 grid gap-2">
+              <Label for="ddns-cname-target">{{ $t('networking.ddns.recordType.targetLabel') }}</Label>
+              <Input
+                id="ddns-cname-target"
+                v-model="form.cname_target"
+                class="font-mono text-sm"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="inbound.provider.example"
+                :aria-invalid="targetProblemShown ? true : undefined"
+                aria-describedby="ddns-cname-target-help"
+                @focus="targetFocused = true"
+                @blur="targetFocused = false; targetTouched = true"
+              />
+              <p
+                v-if="targetProblemShown"
+                id="ddns-cname-target-help"
+                class="text-xs text-destructive"
+                aria-live="polite"
+              >{{ targetProblemText }}</p>
+              <p v-else id="ddns-cname-target-help" class="text-xs text-muted-foreground">{{ $t('networking.ddns.recordType.targetHint') }}</p>
+            </div>
+          </fieldset>
 
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
@@ -1183,11 +1349,12 @@ async function confirmRun() {
                 <SelectTrigger id="ddns-provider" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="cloudflare">Cloudflare</SelectItem>
-                  <SelectItem value="webhook">Webhook</SelectItem>
+                  <SelectItem value="webhook" :disabled="isCnameForm">Webhook</SelectItem>
                 </SelectContent>
               </Select>
+              <p v-if="providerBlocksCname" class="text-xs text-destructive" aria-live="polite">{{ $t('networking.ddns.recordType.webhook') }}</p>
             </div>
-            <div class="flex flex-wrap items-end gap-4 pb-1">
+            <div v-if="!isCnameForm" class="flex flex-wrap items-end gap-4 pb-1">
               <label class="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox v-model="form.enable_ipv4" />
                 IPv4 (A)
