@@ -212,14 +212,6 @@ export function storeFreshness(store: Pick<SystemMetricsStore, "last_write_at" |
 }
 
 /**
- * Why a self-monitoring read has nothing to show, when that is an answer
- * rather than a failure: the principal is not a full administrator (403), the
- * server runs without a data directory (503 metrics_disabled), or its
- * metrics.db could not be opened at start (503 metrics_unavailable). These do
- * not change by asking again, so the page stops polling. Anything else, a
- * proxy's 503 during a restart included, is a failure the page retries.
- */
-/**
  * The outbound probe as the System page states it. Absent means the server
  * does not report one (it predates the probe), which the page leaves out
  * rather than calling a fault.
@@ -263,6 +255,14 @@ export function probeState(probe: SystemProbeHealth | undefined): ProbeState {
   };
 }
 
+/**
+ * Why a self-monitoring read has nothing to show, when that is an answer
+ * rather than a failure: the principal is not a full administrator (403), the
+ * server runs without a data directory (503 metrics_disabled), or its
+ * metrics.db could not be opened at start (503 metrics_unavailable). These do
+ * not change by asking again, so the page stops polling. Anything else, a
+ * proxy's 503 during a restart included, is a failure the page retries.
+ */
 export type MetricsBlock = "forbidden" | "disabled" | "unavailable";
 
 export function metricsBlock(err: { status: number; code: string; forbidden?: boolean } | undefined): MetricsBlock | null {

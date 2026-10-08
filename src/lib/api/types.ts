@@ -2040,16 +2040,6 @@ export interface PluginInterfaceMethod {
   effect: "read" | "write" | "plan" | string;
   scopes?: string[];
   operator_target_fields?: string[];
-  /** The signed invoke budget, present when the manifest declares one for this method. */
-  budget?: PluginInvokeBudget;
-}
-
-/** A method's signed runtime budget. The server caps timeout_ms at 30000. */
-export interface PluginInvokeBudget {
-  timeout_ms: number;
-  stdout_bytes: number;
-  stderr_bytes: number;
-  host_calls: number;
 }
 
 export interface PluginUIRuntime {
@@ -2085,6 +2075,12 @@ export interface PluginView {
   /** UI contributions. Present ONLY when the plugin is active (server nils it otherwise). */
   ui?: PluginManifestUI;
   interfaces?: PluginInterfaceContract[];
+  /**
+   * The server's gateway deadline in milliseconds, by service and method, for
+   * each callable method whose deadline is not the 15 s default. Contributions
+   * view only; the plugin bridge waits this long (plus a grace) for the call.
+   */
+  call_timeouts_ms?: Record<string, Record<string, number>>;
   /** Derived active-only metadata; never includes server filesystem paths. */
   ui_runtime?: PluginUIRuntime;
 }

@@ -242,40 +242,34 @@ test("bridge times out calls even when they ignore abort", async () => {
   assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
 });
 
-// The server stops a budgeted method at its signed timeout_ms (capped at 30 s)
-// and every other method at 15 s. The bridge used to stop every call at 15 s,
-// so a method the server allowed 30 s was abandoned halfway.
-test("a call waits its method's budget, capped as the server caps it", () => {
-  const contract = {
-    service: "test.plugin/probe",
-    methods: [
-      { name: "run", effect: "read", budget: { timeout_ms: 30_000 } },
-      { name: "slow", effect: "read", budget: { timeout_ms: 120_000 } },
-      { name: "quick", effect: "read", budget: { timeout_ms: 1_000 } },
-      { name: "broken", effect: "read", budget: { timeout_ms: Number.NaN } },
-      { name: "health", effect: "read" },
-      "legacy",
-    ],
-  };
-  assert.equal(methodCallTimeoutMs(contract, "run", 15_000), 32_000);
-  assert.equal(methodCallTimeoutMs(contract, "slow", 15_000), 32_000, "a budget past the host maximum is capped");
-  assert.equal(methodCallTimeoutMs(contract, "quick", 15_000), 15_000, "a short budget never waits less than the default");
-  assert.equal(methodCallTimeoutMs(contract, "broken", 15_000), 15_000);
-  assert.equal(methodCallTimeoutMs(contract, "health", 15_000), 15_000);
-  assert.equal(methodCallTimeoutMs(contract, "legacy", 15_000), 15_000);
-  assert.equal(methodCallTimeoutMs(undefined, "run", 15_000), 15_000);
+// The server publishes each callable method's gateway deadline that is not the
+// 15 s default as call_timeouts_ms (a signed budget, or a long core method like
+// vpn-core's probe run at 36 s). The bridge used to stop every call at 15 s, so
+// a call the server was still prepared to answer was abandoned halfway.
+test("a call waits the server's published deadline plus the grace, else the default", () => {
+  const timeouts = { "latticenet.vpn-core/probe": { run: 36_000 }, "test.plugin/items": { quick: 5_000, broken: Number.NaN, zero: 0 } };
+  assert.equal(methodCallTimeoutMs(timeouts, "latticenet.vpn-core/probe", "run", 15_000), 38_000);
+  assert.equal(methodCallTimeoutMs(timeouts, "test.plugin/items", "quick", 15_000), 7_000, "a shorter deadline is the server's, so it is honoured");
+  assert.equal(methodCallTimeoutMs(timeouts, "test.plugin/items", "broken", 15_000), 15_000);
+  assert.equal(methodCallTimeoutMs(timeouts, "test.plugin/items", "zero", 15_000), 15_000);
+  assert.equal(methodCallTimeoutMs(timeouts, "latticenet.vpn-core/probe", "health", 15_000), 15_000, "a method with no published deadline keeps the default");
+  assert.equal(methodCallTimeoutMs(timeouts, "latticenet.vpn-core/other", "run", 15_000), 15_000, "the deadline is per service");
+  assert.equal(methodCallTimeoutMs(timeouts, "test.plugin/items", "constructor", 15_000), 15_000, "inherited keys are not deadlines");
+  assert.equal(methodCallTimeoutMs(undefined, "latticenet.vpn-core/probe", "run", 15_000), 15_000, "an older server publishes none");
+  assert.equal(methodCallTimeoutMs(timeouts, "latticenet.vpn-core/probe", "run", 15_000, 500), 36_500);
 });
 
-function budgetSession(call: (method: string) => Promise<unknown>) {
+const PROBE_SERVICE = "test.plugin/probe";
+
+function deadlineSession(call: (method: string) => Promise<unknown>) {
   return makeSession({
     timeoutMs: 20,
-    hostMaxMethodTimeoutMs: 120,
-    methodBudgetSlackMs: 0,
+    callTimeoutGraceMs: 0,
+    callTimeoutsMs: { [PROBE_SERVICE]: { run: 80 } },
     interfaces: [{
-      service: "test.plugin/probe",
+      service: PROBE_SERVICE,
       methods: [
-        { name: "run", effect: "read", budget: { timeout_ms: 80 } },
-        { name: "huge", effect: "read", budget: { timeout_ms: 60_000 } },
+        { name: "run", effect: "read" },
         { name: "health", effect: "read" },
       ],
     }],
@@ -284,45 +278,54 @@ function budgetSession(call: (method: string) => Promise<unknown>) {
 }
 
 async function timedCall(method: string, call: (method: string) => Promise<unknown>) {
-  const { session, source, posted } = budgetSession(call);
+  const { session, source, posted } = deadlineSession(call);
   const started = performance.now();
   await session.handle({ source, data: {
     type: "lattice.plugin.call", nonce: "nonce-123", id: method,
-    service: "test.plugin/probe", method, payload: {},
+    service: PROBE_SERVICE, method, payload: {},
   } });
   return { posted, elapsed: performance.now() - started };
 }
 
-test("a budgeted method outlives the default wait and answers", async () => {
+test("a method with a published deadline outlives the default wait and answers", async () => {
   const { posted } = await timedCall("run", () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 50)));
   assert.equal(posted.at(-1)?.type, "lattice.host.result");
 });
 
-test("a budgeted method times out at its own budget, not the default", async () => {
+test("a method with a published deadline times out at that deadline, not the default", async () => {
   const { posted, elapsed } = await timedCall("run", () => new Promise(() => {}));
   assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
-  assert.ok(elapsed >= 75, `timed out after ${elapsed} ms, before the 80 ms budget`);
+  assert.ok(elapsed >= 75, `timed out after ${elapsed} ms, before the 80 ms deadline`);
 });
 
-test("a method without a budget keeps the default wait", async () => {
+test("a method without a published deadline keeps the default wait", async () => {
   const { posted, elapsed } = await timedCall("health", () => new Promise(() => {}));
   assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
   assert.ok(elapsed < 75, `waited ${elapsed} ms, past the 20 ms default`);
 });
 
-test("a budget above the host maximum waits only the maximum", async () => {
-  const { posted, elapsed } = await timedCall("huge", () => new Promise(() => {}));
-  assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
-  assert.ok(elapsed >= 115 && elapsed < 1_000, `waited ${elapsed} ms for a budget capped at 120 ms`);
+test("the grace is added to the published deadline", async () => {
+  const { session, source, posted } = makeSession({
+    timeoutMs: 20,
+    callTimeoutGraceMs: 60,
+    callTimeoutsMs: { [PROBE_SERVICE]: { run: 40 } },
+    interfaces: [{ service: PROBE_SERVICE, methods: [{ name: "run", effect: "read" }] }],
+    call: () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 70)),
+  });
+  await session.handle({ source, data: {
+    type: "lattice.plugin.call", nonce: "nonce-123", id: "graced",
+    service: PROBE_SERVICE, method: "run", payload: {},
+  } });
+  assert.equal(posted.at(-1)?.type, "lattice.host.result", "an answer after the deadline but inside the grace still reaches the frame");
 });
 
-test("the repeat after step-up gets the method's budget again", async () => {
+test("the repeat after step-up gets the published deadline again", async () => {
   let calls = 0;
   const { session, source, posted } = makeSession({
     timeoutMs: 20,
-    hostMaxMethodTimeoutMs: 120,
-    methodBudgetSlackMs: 0,
-    interfaces: [{ service: "test.plugin/users", methods: [{ name: "reveal", effect: "read", budget: { timeout_ms: 80 } }] }],
+    callTimeoutGraceMs: 0,
+    callTimeoutsMs: { "test.plugin/users": { reveal: 80 } },
+    interfaces: [{ service: "test.plugin/users", methods: [{ name: "reveal", effect: "read" }] }],
     call: async (_service, _method, payload) => {
       calls += 1;
       if (!(payload as { step_up_grant?: string }).step_up_grant) throw new FakeApiError(403, "step_up_required", "step-up");
@@ -332,7 +335,7 @@ test("the repeat after step-up gets the method's budget again", async () => {
     stepUp: async () => "grant",
   });
   await session.handle({ source, data: {
-    type: "lattice.plugin.call", nonce: "nonce-123", id: "reveal-budget",
+    type: "lattice.plugin.call", nonce: "nonce-123", id: "reveal-deadline",
     service: "test.plugin/users", method: "reveal", payload: { user_id: "vu_a" },
   } });
   assert.equal(calls, 2);

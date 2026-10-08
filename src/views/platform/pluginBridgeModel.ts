@@ -4,8 +4,6 @@ export interface BridgeInterfaceMethod {
   name: string;
   effect: "read" | "write" | "plan" | string;
   scopes?: string[];
-  /** The method's signed invoke budget, when its manifest declares one. */
-  budget?: { timeout_ms?: number };
 }
 
 export interface BridgeInterfaceContract {
@@ -411,12 +409,12 @@ interface PluginBridgeOptions {
   maxResizesPerMinute?: number;
   maxClipboardPerMinute?: number;
   maxStatesPerMinute?: number;
-  /** The wait for a method whose manifest declares no budget. */
+  /** The wait for a method the server publishes no deadline for. */
   timeoutMs?: number;
-  /** The server's cap on a method budget; tests shrink it. */
-  hostMaxMethodTimeoutMs?: number;
-  /** Slack added to a budgeted method's wait; tests shrink it. */
-  methodBudgetSlackMs?: number;
+  /** The contributions view's call_timeouts_ms: the server's deadline per service and method, where it is not the default. */
+  callTimeoutsMs?: BridgeCallTimeouts;
+  /** Added to a published deadline; tests shrink it. */
+  callTimeoutGraceMs?: number;
   now?: () => number;
 }
 
@@ -467,38 +465,38 @@ export function bridgeInterfaceFingerprint(interfaces: BridgeInterfaceContract[]
   })));
 }
 
-/** The server's ceiling on a signed method budget (plugin.HostMaxInvokeTimeoutMS). */
-export const HOST_MAX_METHOD_TIMEOUT_MS = 30_000;
+/** The server's gateway deadline per service and method, in milliseconds. */
+export type BridgeCallTimeouts = Record<string, Record<string, number>>;
 
 /**
- * Added to a budgeted method's timeout so the server's own timeout answer,
- * which says what ran out, reaches the frame before the bridge gives up.
+ * Added to a published deadline so the server's own timeout answer, which
+ * says what ran out, reaches the frame before the bridge gives up.
  */
-export const METHOD_BUDGET_SLACK_MS = 2_000;
+export const CALL_TIMEOUT_GRACE_MS = 2_000;
 
 /**
  * How long the bridge waits for one call.
  *
- * The server stops a call at the method's signed budget (capped at its host
- * maximum) and at 15 s for a method that declares none, so a fixed 15 s here
- * cut every budgeted method short: a vpn-core probe run allowed 30 s on the
- * server was abandoned by the console at 15. A budgeted method now waits its
- * own budget, capped the way the server caps it, plus the slack; it never
- * waits less than the default.
+ * The server gives each call a deadline: 15 s by default, a method's signed
+ * budget when it declares one, and longer for a core method whose work takes
+ * longer (vpn-core's probe run). It publishes every deadline that is not the
+ * default as call_timeouts_ms in the contributions view. A fixed 15 s here
+ * abandoned those calls while the server was still prepared to answer, so a
+ * published deadline is waited out plus the grace, and anything else keeps
+ * the default. The server is the authority, so no cap is applied here.
  */
 export function methodCallTimeoutMs(
-  contract: BridgeInterfaceContract | undefined,
-  methodName: string,
+  timeouts: BridgeCallTimeouts | undefined,
+  service: string,
+  method: string,
   defaultMs: number,
-  hostMaxMs = HOST_MAX_METHOD_TIMEOUT_MS,
-  slackMs = METHOD_BUDGET_SLACK_MS,
+  graceMs = CALL_TIMEOUT_GRACE_MS,
 ): number {
-  const method = contract?.methods.find((candidate) =>
-    typeof candidate !== "string" && candidate?.name === methodName,
-  );
-  const budget = typeof method === "object" ? method.budget?.timeout_ms : undefined;
-  if (typeof budget !== "number" || !Number.isFinite(budget) || budget <= 0) return defaultMs;
-  return Math.max(defaultMs, Math.min(budget, hostMaxMs) + slackMs);
+  const own = Object.prototype.hasOwnProperty;
+  const methods = timeouts && own.call(timeouts, service) ? timeouts[service] : undefined;
+  const published = methods && own.call(methods, method) ? methods[method] : undefined;
+  if (typeof published !== "number" || !Number.isFinite(published) || published <= 0) return defaultMs;
+  return published + graceMs;
 }
 
 export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefined, methodName: string): string[] {
@@ -516,7 +514,7 @@ export class PluginBridgeSession {
   private readonly options: Required<Pick<PluginBridgeOptions,
     "maxPayloadBytes" | "maxResultBytes" | "maxClipboardBytes" | "maxInflight" | "maxCallsPerMinute"
     | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs"
-    | "hostMaxMethodTimeoutMs" | "methodBudgetSlackMs" | "now"
+    | "callTimeoutGraceMs" | "now"
   >> & PluginBridgeOptions;
 
   private readonly pending = new Map<string, PendingCall>();
@@ -544,8 +542,7 @@ export class PluginBridgeSession {
       // simply stops following until the minute rolls over.
       maxStatesPerMinute: 60,
       timeoutMs: 15_000,
-      hostMaxMethodTimeoutMs: HOST_MAX_METHOD_TIMEOUT_MS,
-      methodBudgetSlackMs: METHOD_BUDGET_SLACK_MS,
+      callTimeoutGraceMs: CALL_TIMEOUT_GRACE_MS,
       now: () => Date.now(),
       ...options,
     };
@@ -671,11 +668,11 @@ export class PluginBridgeSession {
     }
 
     const timeoutMs = methodCallTimeoutMs(
-      this.options.interfaces.find((candidate) => candidate.service === service),
+      this.options.callTimeoutsMs,
+      service,
       method,
       this.options.timeoutMs,
-      this.options.hostMaxMethodTimeoutMs,
-      this.options.methodBudgetSlackMs,
+      this.options.callTimeoutGraceMs,
     );
     const controller = new AbortController();
     let terminate = (_error: Error) => {};

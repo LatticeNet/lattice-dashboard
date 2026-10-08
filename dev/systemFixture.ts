@@ -201,9 +201,9 @@ export function probeHealth(mode: string | null): SystemProbeHealth | undefined 
     case "absent":
       return undefined;
     case "down":
-      return { available: false, reason: "probe socket /run/lattice-probe/probe.sock not found" };
+      return { available: false, reason: "no probe socket at /run/lattice-probe/probe.sock; is the lattice-probe container running?" };
     case "hung":
-      return { available: false, reason: "probe did not answer within 2s" };
+      return { available: false, reason: "the probe did not answer within 3s" };
     default:
       return {
         available: true,
