@@ -1889,6 +1889,10 @@ export interface DDNSView {
   ttl: number;
   /** Seconds between attempts for this profile; 0 means the server default. */
   interval_seconds?: number;
+  /** "default" (or absent, for a profile saved before comments), "custom" or "none". */
+  comment_mode?: string;
+  /** The custom comment template; kept while another mode is selected. */
+  record_comment?: string;
   has_credential: boolean;
   webhook_url?: string;
   webhook_method?: string;
@@ -1898,6 +1902,8 @@ export interface DDNSView {
   last_error?: string;
   created_at: string;
   updated_at: string;
+  /** Only on a save's answer: what will stop or mislead the profile, which the save did not refuse. */
+  warnings?: string[];
 }
 
 export interface DDNSUpsertRequest {
@@ -1914,6 +1920,8 @@ export interface DDNSUpsertRequest {
   max_retries?: number;
   ttl?: number;
   cf_api_token?: string;
+  comment_mode?: string;
+  record_comment?: string;
   webhook_url?: string;
   webhook_method?: string;
   webhook_body?: string;

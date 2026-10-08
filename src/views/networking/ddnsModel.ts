@@ -203,3 +203,166 @@ export function ddnsRunPreview(
   }
   return out;
 }
+
+/* ------------------------------------------------------------------ */
+/* Record comments                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a Cloudflare profile writes in each record's comment. An empty or
+ * unknown mode from the server is the default mode: that is how
+ * lattice-server treats a profile saved before comments existed.
+ */
+export type DdnsCommentMode = "default" | "custom" | "none";
+export const DDNS_COMMENT_MODES: readonly DdnsCommentMode[] = ["default", "custom", "none"];
+
+/** lattice-server's ddns.DefaultCommentTemplate. */
+export const DDNS_DEFAULT_COMMENT_TEMPLATE = "Lattice DDNS for #node#, #time#";
+/** The Cloudflare Free plan's comment limit, which the server cuts to. */
+export const DDNS_COMMENT_MAX_CHARS = 100;
+/** What the server accepts as a stored template. */
+export const DDNS_COMMENT_TEMPLATE_MAX_BYTES = 200;
+/** lattice-server's ddns.CommentPlaceholders, in the same order. */
+export const DDNS_COMMENT_PLACEHOLDERS = [
+  "#node#",
+  "#node_id#",
+  "#profile#",
+  "#domain#",
+  "#type#",
+  "#ip#",
+  "#old_ip#",
+  "#time#",
+  "#date#",
+  "#lattice#",
+] as const;
+
+export function ddnsCommentMode(raw: string | undefined): DdnsCommentMode {
+  return raw === "custom" || raw === "none" ? raw : "default";
+}
+
+export interface DdnsCommentVars {
+  node: string;
+  node_id: string;
+  profile: string;
+  domain: string;
+  type: string;
+  ip: string;
+  old_ip: string;
+  lattice: string;
+  /** ms epoch; rendered in UTC as the server does. */
+  now: number;
+}
+
+export interface DdnsCommentPreview {
+  /** The comment as Cloudflare would store it. */
+  text: string;
+  /** Characters in `text`. */
+  chars: number;
+  /** Characters before the cut; more than DDNS_COMMENT_MAX_CHARS when cut. */
+  fullChars: number;
+}
+
+// The known names spelled out, so an unknown #x# next to #node# does not
+// swallow the leading # the way a generic pattern would. Longest first.
+const KNOWN_PLACEHOLDER = /#(?:node_id|node|profile|domain|type|ip|old_ip|time|date|lattice)#/g;
+const ANY_PLACEHOLDER = /#[A-Za-z0-9_]+#/g;
+const CONTROL = /\p{Cc}/gu;
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Mirrors ddns.RenderComment: fill, flatten to one line, cut to 100 characters. */
+export function renderDdnsComment(template: string, vars: DdnsCommentVars): DdnsCommentPreview {
+  const when = new Date(vars.now);
+  const date = `${when.getUTCFullYear()}-${pad(when.getUTCMonth() + 1)}-${pad(when.getUTCDate())}`;
+  const values: Record<string, string> = {
+    "#node#": vars.node,
+    "#node_id#": vars.node_id,
+    "#profile#": vars.profile,
+    "#domain#": vars.domain,
+    "#type#": vars.type,
+    "#ip#": vars.ip,
+    "#old_ip#": vars.old_ip,
+    "#time#": `${date} ${pad(when.getUTCHours())}:${pad(when.getUTCMinutes())}Z`,
+    "#date#": date,
+    "#lattice#": vars.lattice,
+  };
+  const filled = template.replace(KNOWN_PLACEHOLDER, (token) => values[token] ?? token).replace(CONTROL, " ").trim();
+  const chars = Array.from(filled);
+  if (chars.length <= DDNS_COMMENT_MAX_CHARS) return { text: filled, chars: chars.length, fullChars: chars.length };
+  const text = chars.slice(0, DDNS_COMMENT_MAX_CHARS).join("").trim();
+  return { text, chars: Array.from(text).length, fullChars: chars.length };
+}
+
+export type DdnsTemplateProblem =
+  | { kind: "empty" }
+  | { kind: "lineBreak" }
+  | { kind: "tooLong"; bytes: number }
+  | { kind: "unknown"; placeholder: string };
+
+/** The checks lattice-server runs on a custom template before it saves it. */
+export function ddnsTemplateProblem(template: string): DdnsTemplateProblem | null {
+  if (!template.trim()) return { kind: "empty" };
+  if (/[\r\n]/.test(template)) return { kind: "lineBreak" };
+  const bytes = new TextEncoder().encode(template).length;
+  if (bytes > DDNS_COMMENT_TEMPLATE_MAX_BYTES) return { kind: "tooLong", bytes };
+  const known = new Set<string>(DDNS_COMMENT_PLACEHOLDERS);
+  for (const found of template.match(ANY_PLACEHOLDER) ?? []) {
+    if (!known.has(found)) return { kind: "unknown", placeholder: found };
+  }
+  return null;
+}
+
+/** Inserts a placeholder at the caret, replacing any selection. */
+export function insertDdnsPlaceholder(
+  template: string,
+  placeholder: string,
+  start: number | null | undefined,
+  end: number | null | undefined,
+): { value: string; caret: number } {
+  const from = Math.max(0, Math.min(start ?? template.length, template.length));
+  const to = Math.max(from, Math.min(end ?? from, template.length));
+  return { value: template.slice(0, from) + placeholder + template.slice(to), caret: from + placeholder.length };
+}
+
+const CLOUDFLARE_API_ERROR = /cloudflare: api error \(status (\d+)\): (.*)$/;
+
+/**
+ * A run's error as a person reads it. lattice-server joins one line per failed
+ * record ("A name: cause"); a Cloudflare refusal carries the raw JSON error
+ * list, which is reduced to its messages and codes. A plain sentence, such as
+ * the one naming a CNAME in the way, passes through unchanged.
+ */
+export function ddnsErrorText(
+  lastError: string | undefined,
+  refused: (status: string, said: string) => string = (status, said) => `Cloudflare refused it, HTTP ${status}: ${said}`,
+): string {
+  const lines = (lastError ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines
+    .map((line) => {
+      const match = CLOUDFLARE_API_ERROR.exec(line);
+      if (!match) return line;
+      let items: unknown;
+      try {
+        items = JSON.parse(match[2] ?? "");
+      } catch {
+        return line;
+      }
+      if (!Array.isArray(items) || items.length === 0) return line;
+      const said = items
+        .map((item: { code?: unknown; message?: unknown }) => {
+          const message = typeof item?.message === "string" ? item.message.trim() : "";
+          const code = typeof item?.code === "number" ? ` (code ${item.code})` : "";
+          return message ? `${message}${code}` : "";
+        })
+        .filter(Boolean)
+        .join("; ");
+      if (!said) return line;
+      return `${line.slice(0, match.index)}${refused(match[1] ?? "", said)}`;
+    })
+    .join("\n");
+}

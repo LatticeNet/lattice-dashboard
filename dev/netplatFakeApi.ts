@@ -42,7 +42,7 @@ import type {
   UserUpdateRequest,
 } from "@/lib/api/index";
 
-import { DDNS, runDdns } from "./netplatDdnsFixture";
+import { DDNS, ddnsSaveWarnings, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
@@ -219,6 +219,8 @@ export const api = {
         ttl: input.ttl ?? 60,
         max_retries: input.max_retries ?? 3,
         interval_seconds: input.interval_seconds,
+        comment_mode: input.comment_mode,
+        record_comment: input.record_comment || undefined,
         has_credential: existing?.has_credential || !!input.cf_api_token || !!input.webhook_url,
         webhook_url: input.webhook_url,
         webhook_method: input.webhook_method,
@@ -226,7 +228,8 @@ export const api = {
       } as DDNSView;
       if (existing) Object.assign(existing, next);
       else DDNS.push(next);
-      return { ...next };
+      const warnings = ddnsSaveWarnings(input);
+      return warnings.length ? { ...next, warnings } : { ...next };
     },
     delete: async (id: string) => {
       await delay(undefined, WRITE_MS);
