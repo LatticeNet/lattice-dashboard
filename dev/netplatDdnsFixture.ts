@@ -1,11 +1,13 @@
 /**
- * 23 DDNS profiles, production's count plus the CNAME case (design 23,
+ * 24 DDNS profiles, production's count plus the CNAME cases (design 23,
  * section 1). Names, domains and states are invented to the shape the page
  * has to handle: three failing (a Cloudflare 403 in the server's raw shape, a
- * name that already holds a CNAME, and a webhook 502), one stale (its node's address
- * moved two days ago and the profile has not written since), three on the two
- * offline nodes, and the rest current, most of them last run weeks ago because
- * the server only writes when an address moves.
+ * CNAME profile whose name already holds an A record, and a webhook 502), one
+ * stale (its node's address moved two days ago and the profile has not
+ * written since), three on the two offline nodes, and the rest current, most
+ * of them last run weeks ago because the server only writes when an address
+ * moves. "frontier" is a CNAME profile in sync: it adopted the CNAME the
+ * operator made by hand to the NAT provider's inbound hostname.
  *
  *   ?ddns=empty   no profiles (first run)
  */
@@ -27,11 +29,19 @@ interface Seed {
   error?: string;
   commentMode?: "default" | "custom" | "none";
   recordComment?: string;
+  /** A CNAME profile's target. */
+  cname?: string;
+  /** The target the server last confirmed; defaults to `cname` unless the profile is failing. */
+  confirmed?: string;
 }
 
-/** The sentence lattice-server stores when a name already holds a CNAME. */
+/** The sentence lattice-server stores when an address profile's name already holds a CNAME. */
 export const FRONTIER_CNAME =
   "frontier.nat.aaitr.roobli.org already has a CNAME record pointing to nat-us-28tz.aproxy.top; a name cannot hold both. Remove that record in Cloudflare or use another name.";
+
+/** The sentence lattice-server stores when a CNAME profile's name holds an A record. */
+export const EDGE_A_RECORD =
+  "edge.nat.aaitr.roobli.org already has an A record (198.51.100.41); a name cannot hold a CNAME and other records. Remove it in Cloudflare, then run again.";
 
 const SEEDS: Seed[] = [
   {
@@ -62,8 +72,16 @@ const SEEDS: Seed[] = [
     domains: ["frontier.nat.aaitr.roobli.org"],
     interval: 300,
     lastRunAgo: 4 * MINUTE,
-    wrote: "",
-    error: FRONTIER_CNAME,
+    cname: "nat-us-28tz.aproxy.top",
+  },
+  {
+    name: "softbank-edge",
+    node: "[Metix]-Aaitr-jp-softbank-NAT",
+    domains: ["edge.nat.aaitr.roobli.org"],
+    interval: 300,
+    lastRunAgo: 2 * MINUTE,
+    cname: "nat-jp-07sb.aproxy.top",
+    error: EDGE_A_RECORD,
   },
   { name: "nas-home", node: "[cd]-nas-home", domains: ["files.roobli.org"], interval: 900, lastRunAgo: 27 * DAY },
   { name: "mac-air", node: "[cd]-mac-air", domains: ["air.roobli.org"], interval: 300, lastRunAgo: 4 * HOUR },
@@ -112,8 +130,11 @@ function seedToView(seed: Seed, index: number): DDNSView {
     has_credential: true,
     webhook_url: provider === "webhook" ? "https://hooks.openjobs.example/ddns" : undefined,
     webhook_method: provider === "webhook" ? "POST" : undefined,
-    last_ipv4: v4 ? (seed.wrote ?? node.public_ip) : undefined,
-    last_ipv6: v6 && seed.wrote !== "" ? node.public_ipv6 : undefined,
+    record_type: seed.cname ? "cname" : undefined,
+    cname_target: seed.cname,
+    last_target: seed.cname ? (seed.confirmed ?? (seed.error ? undefined : seed.cname)) : undefined,
+    last_ipv4: v4 && !seed.cname ? (seed.wrote ?? node.public_ip) : undefined,
+    last_ipv6: v6 && !seed.cname && seed.wrote !== "" ? node.public_ipv6 : undefined,
     last_run_at: seed.lastRunAgo === undefined ? undefined : iso(-seed.lastRunAgo),
     last_error: seed.error,
     comment_mode: provider === "cloudflare" ? (seed.commentMode ?? "default") : undefined,
@@ -126,11 +147,29 @@ function seedToView(seed: Seed, index: number): DDNSView {
 export const DDNS: DDNSView[] = flags.get("ddns") === "empty" ? [] : SEEDS.map(seedToView);
 
 /**
- * What lattice-server warns about on a save: the CNAME already on the
- * frontier name, and a node behind NAT.
+ * What lattice-server warns about on a save. An address profile: the CNAME
+ * already on the frontier name, and a node behind NAT. A CNAME profile gets
+ * no NAT warning, since that is the right setup there; it is warned about
+ * the A record on the edge name, and about a target that does not resolve
+ * (any target ending in .invalid here).
  */
-export function ddnsSaveWarnings(input: { node_id: string; domains: readonly string[] }): string[] {
+export function ddnsSaveWarnings(input: {
+  node_id: string;
+  domains: readonly string[];
+  record_type?: string;
+  cname_target?: string;
+}): string[] {
   const out: string[] = [];
+  if (input.record_type === "cname") {
+    const target = (input.cname_target ?? "").toLowerCase().replace(/\.$/, "");
+    if (target.endsWith(".invalid")) {
+      out.push(
+        `${target} does not resolve from the control plane (lookup ${target}: no such host). The profile is saved, but its records will not reach the node until that name resolves.`,
+      );
+    }
+    if (input.domains.includes("edge.nat.aaitr.roobli.org")) out.push(EDGE_A_RECORD);
+    return out;
+  }
   const node = NODES.find((entry) => entry.id === input.node_id);
   if (node?.name.includes("NAT")) {
     out.push(
@@ -150,6 +189,15 @@ export function runDdns(id: string): DDNSView {
   if (flags.get("run") === "fail") {
     profile.last_error = `A ${profile.domains[0]}: cloudflare: 403 Forbidden: zone roobli.org is locked`;
     throw Object.assign(new Error(profile.last_error), { failed: true });
+  }
+  if (profile.record_type === "cname") {
+    if (profile.domains.includes("edge.nat.aaitr.roobli.org")) {
+      profile.last_error = EDGE_A_RECORD;
+      throw Object.assign(new Error(profile.last_error), { failed: true });
+    }
+    profile.last_target = profile.cname_target;
+    profile.last_error = undefined;
+    return { ...profile };
   }
   if (profile.enable_ipv4 && node?.public_ip) profile.last_ipv4 = node.public_ip;
   if (profile.enable_ipv6 && node?.public_ipv6) profile.last_ipv6 = node.public_ipv6;

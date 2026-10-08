@@ -1893,11 +1893,17 @@ export interface DDNSView {
   comment_mode?: string;
   /** The custom comment template; kept while another mode is selected. */
   record_comment?: string;
+  /** "address" (or absent, for a profile saved before record types) or "cname". */
+  record_type?: string;
+  /** The hostname a cname profile points to; kept while the address type is selected. */
+  cname_target?: string;
   has_credential: boolean;
   webhook_url?: string;
   webhook_method?: string;
   last_ipv4?: string;
   last_ipv6?: string;
+  /** The CNAME target the server last confirmed in DNS. */
+  last_target?: string;
   last_run_at?: string;
   last_error?: string;
   created_at: string;
@@ -1922,6 +1928,8 @@ export interface DDNSUpsertRequest {
   cf_api_token?: string;
   comment_mode?: string;
   record_comment?: string;
+  record_type?: string;
+  cname_target?: string;
   webhook_url?: string;
   webhook_method?: string;
   webhook_body?: string;

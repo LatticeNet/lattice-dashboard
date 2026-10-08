@@ -221,6 +221,12 @@ export const api = {
         interval_seconds: input.interval_seconds,
         comment_mode: input.comment_mode,
         record_comment: input.record_comment || undefined,
+        record_type: input.record_type,
+        cname_target: input.record_type === "cname" ? (input.cname_target ?? "").toLowerCase().replace(/\.$/, "") : input.cname_target || undefined,
+        // Each record type keeps only its own status, as the server does.
+        last_target: input.record_type === "cname" ? existing?.last_target : undefined,
+        last_ipv4: input.record_type === "cname" ? undefined : existing?.last_ipv4,
+        last_ipv6: input.record_type === "cname" ? undefined : existing?.last_ipv6,
         has_credential: existing?.has_credential || !!input.cf_api_token || !!input.webhook_url,
         webhook_url: input.webhook_url,
         webhook_method: input.webhook_method,

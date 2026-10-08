@@ -14,6 +14,11 @@
  * never written anything is stale once twice its interval has passed since it
  * was created.
  *
+ * A CNAME profile (record_type "cname") follows no address. The server checks
+ * it every interval and records the target it confirmed in `last_target`, so
+ * it is current when that matches `cname_target`, and otherwise waiting for
+ * its first check after a save or an edit, then stale.
+ *
  * Kept free of Vue so `node --test` covers it directly.
  */
 
@@ -36,6 +41,9 @@ export interface DdnsProfileInput {
   node_id: string;
   enable_ipv4: boolean;
   enable_ipv6: boolean;
+  record_type?: string;
+  cname_target?: string;
+  last_target?: string;
   interval_seconds?: number;
   last_ipv4?: string;
   last_ipv6?: string;
@@ -96,6 +104,7 @@ function trimmed(value: string | undefined): string {
 export function assessDdns(profile: DdnsProfileInput, node: DdnsNodeInput | undefined, now: number): DdnsAssessment {
   const intervalS = ddnsInterval(profile);
   const lastRunMs = ddnsTime(profile.last_run_at);
+  if (ddnsRecordType(profile.record_type) === "cname") return assessCname(profile, node, now, intervalS, lastRunMs);
   const moved: DdnsMove[] = [];
   let noAddress = false;
 
@@ -132,6 +141,28 @@ export function assessDdns(profile: DdnsProfileInput, node: DdnsNodeInput | unde
     nodeUnknown: !node,
     lastRunMs,
   };
+}
+
+/**
+ * A CNAME profile against what the server last confirmed. The node's address
+ * and whether it reports play no part: the record points at the provider's
+ * hostname either way, so the node list being unread leaves it checkable.
+ */
+function assessCname(
+  profile: DdnsProfileInput,
+  node: DdnsNodeInput | undefined,
+  now: number,
+  intervalS: number,
+  lastRunMs: number | null,
+): DdnsAssessment {
+  const confirmed = ddnsCnameInSync(profile);
+  const since = lastRunMs ?? ddnsTime(profile.created_at);
+  const overdue = since !== null && now - since > DDNS_STALE_FACTOR * intervalS * 1000;
+  let state: DdnsState;
+  if (trimmed(profile.last_error)) state = "failing";
+  else if (confirmed) state = "current";
+  else state = overdue ? "stale" : "waiting";
+  return { state, intervalS, moved: [], noAddress: false, nodeDown: false, nodeUnknown: !node, lastRunMs };
 }
 
 export interface DdnsCounts {
@@ -178,8 +209,8 @@ export function ddnsMatchesShow(assessment: DdnsAssessment, show: DdnsShow): boo
 
 export interface DdnsRecordPreview {
   domain: string;
-  type: "A" | "AAAA";
-  /** The address a run writes now. */
+  type: "A" | "AAAA" | "CNAME";
+  /** The address, or for a CNAME the target, a run writes now. */
   value: string;
   /** What the record held after the profile's last write; "" when never written. */
   previous: string;
@@ -188,13 +219,21 @@ export interface DdnsRecordPreview {
 /**
  * What "Run now" writes (design 23, section 3.8: a run shows what goes out).
  * The server publishes the node's current address for each enabled family,
- * to every domain; a family the node reports no address for is skipped.
+ * to every domain; a family the node reports no address for is skipped. A
+ * CNAME profile points every domain at its target instead.
  */
 export function ddnsRunPreview(
   profile: DdnsProfileInput & { domains: readonly string[] },
   node: Pick<DdnsNodeInput, "public_ip" | "public_ipv6"> | undefined,
 ): DdnsRecordPreview[] {
   const out: DdnsRecordPreview[] = [];
+  if (ddnsRecordType(profile.record_type) === "cname") {
+    const target = ddnsNormalizeHost(profile.cname_target ?? "");
+    for (const domain of profile.domains) {
+      out.push({ domain, type: "CNAME", value: target, previous: trimmed(profile.last_target) });
+    }
+    return out;
+  }
   const v4 = profile.enable_ipv4 ? trimmed(node?.public_ip) : "";
   const v6 = profile.enable_ipv6 ? trimmed(node?.public_ipv6) : "";
   for (const domain of profile.domains) {
@@ -202,6 +241,80 @@ export function ddnsRunPreview(
     if (v6) out.push({ domain, type: "AAAA", value: v6, previous: trimmed(profile.last_ipv6) });
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Record type                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a profile publishes: A and AAAA records from the node's IP, or a CNAME
+ * to a provider's hostname, for a node whose inbound traffic arrives at the
+ * provider's edge rather than at the address its traffic leaves from. An
+ * empty or unknown type is the address type, as lattice-server reads it.
+ */
+export type DdnsRecordType = "address" | "cname";
+export const DDNS_RECORD_TYPES: readonly DdnsRecordType[] = ["address", "cname"];
+
+export function ddnsRecordType(raw: string | undefined): DdnsRecordType {
+  return (raw ?? "").trim() === "cname" ? "cname" : "address";
+}
+
+/** lattice-server's ddns.NormalizeHost: trimmed, lower case, no trailing dot. */
+export function ddnsNormalizeHost(name: string): string {
+  const value = name.trim();
+  return (value.endsWith(".") ? value.slice(0, -1) : value).toLowerCase();
+}
+
+/** The server confirmed the target the profile asks for. */
+export function ddnsCnameInSync(profile: Pick<DdnsProfileInput, "cname_target" | "last_target">): boolean {
+  const target = ddnsNormalizeHost(profile.cname_target ?? "");
+  return target !== "" && ddnsNormalizeHost(profile.last_target ?? "") === target;
+}
+
+/** lattice-server's ddns.MaxHostnameBytes. */
+export const DDNS_HOSTNAME_MAX_BYTES = 253;
+
+export type DdnsTargetProblem =
+  | { kind: "empty" }
+  | { kind: "ip" }
+  | { kind: "tooLong"; bytes: number }
+  | { kind: "singleLabel" }
+  | { kind: "emptyLabel" }
+  | { kind: "labelTooLong" }
+  | { kind: "hyphen" }
+  | { kind: "character" }
+  | { kind: "loop"; domain: string };
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const LABEL_CHARS = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The checks lattice-server's ddns.ValidateRecordSettings runs on a CNAME
+ * target, in its order: a hostname rather than an IP, at most 253 bytes, at
+ * least two labels, each 1 to 63 letters, digits, hyphens or underscores and
+ * not starting or ending with a hyphen, and not one of the profile's own
+ * names or a name under one, which would loop.
+ */
+export function ddnsTargetProblem(raw: string, domains: readonly string[]): DdnsTargetProblem | null {
+  const target = ddnsNormalizeHost(raw);
+  if (!target) return { kind: "empty" };
+  if (IPV4.test(target) || target.includes(":")) return { kind: "ip" };
+  const bytes = new TextEncoder().encode(target).length;
+  if (bytes > DDNS_HOSTNAME_MAX_BYTES) return { kind: "tooLong", bytes };
+  const labels = target.split(".");
+  if (labels.length < 2) return { kind: "singleLabel" };
+  for (const label of labels) {
+    if (!label) return { kind: "emptyLabel" };
+    if (new TextEncoder().encode(label).length > 63) return { kind: "labelTooLong" };
+    if (label.startsWith("-") || label.endsWith("-")) return { kind: "hyphen" };
+    if (!LABEL_CHARS.test(label)) return { kind: "character" };
+  }
+  for (const entry of domains) {
+    const domain = ddnsNormalizeHost(entry);
+    if (domain && (target === domain || target.endsWith(`.${domain}`))) return { kind: "loop", domain };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -231,6 +344,7 @@ export const DDNS_COMMENT_PLACEHOLDERS = [
   "#type#",
   "#ip#",
   "#old_ip#",
+  "#target#",
   "#time#",
   "#date#",
   "#lattice#",
@@ -248,6 +362,8 @@ export interface DdnsCommentVars {
   type: string;
   ip: string;
   old_ip: string;
+  /** The CNAME target; empty for an A or AAAA record, as #ip# is for a CNAME. */
+  target: string;
   lattice: string;
   /** ms epoch; rendered in UTC as the server does. */
   now: number;
@@ -264,7 +380,7 @@ export interface DdnsCommentPreview {
 
 // The known names spelled out, so an unknown #x# next to #node# does not
 // swallow the leading # the way a generic pattern would. Longest first.
-const KNOWN_PLACEHOLDER = /#(?:node_id|node|profile|domain|type|ip|old_ip|time|date|lattice)#/g;
+const KNOWN_PLACEHOLDER = /#(?:node_id|node|profile|domain|type|ip|old_ip|target|time|date|lattice)#/g;
 const ANY_PLACEHOLDER = /#[A-Za-z0-9_]+#/g;
 const CONTROL = /\p{Cc}/gu;
 
@@ -284,6 +400,7 @@ export function renderDdnsComment(template: string, vars: DdnsCommentVars): Ddns
     "#type#": vars.type,
     "#ip#": vars.ip,
     "#old_ip#": vars.old_ip,
+    "#target#": vars.target,
     "#time#": `${date} ${pad(when.getUTCHours())}:${pad(when.getUTCMinutes())}Z`,
     "#date#": date,
     "#lattice#": vars.lattice,
