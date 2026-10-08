@@ -13,7 +13,7 @@
  * means "create a plan" on the other networking pages) and the outside-
  * breaking confirm: the records it writes, and the profile's name typed.
  */
-import { computed, reactive, ref } from "vue";
+import { computed, nextTick, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import { useNow } from "@vueuse/core";
@@ -60,12 +60,23 @@ import {
 
 import {
   assessDdns,
+  ddnsCommentMode,
   ddnsCounts,
+  ddnsErrorText,
   ddnsMatchesShow,
   ddnsRunPreview,
+  ddnsTemplateProblem,
+  DDNS_COMMENT_MAX_CHARS,
+  DDNS_COMMENT_MODES,
+  DDNS_COMMENT_PLACEHOLDERS,
+  DDNS_COMMENT_TEMPLATE_MAX_BYTES,
+  DDNS_DEFAULT_COMMENT_TEMPLATE,
   DDNS_SHOWS,
+  insertDdnsPlaceholder,
   parseDdnsShow,
+  renderDdnsComment,
   type DdnsAssessment,
+  type DdnsCommentMode,
   type DdnsShow,
   type DdnsState,
 } from "./ddnsModel";
@@ -179,7 +190,7 @@ const sheet = useRouteOpen();
 
 function firstLine(text: string): string {
   const line = text.split("\n")[0]?.trim() ?? "";
-  return line.length > 160 ? `${line.slice(0, 157)}...` : line;
+  return line.length > 240 ? `${line.slice(0, 237)}...` : line;
 }
 
 function staleProof(profile: DDNSView, assessment: DdnsAssessment): string {
@@ -208,7 +219,7 @@ const attention = computed<AttentionItem[]>(() => {
         tone: "danger",
         claim: t("networking.ddns.attention.failingClaim", { name: nameOf(profile) }),
         proof: t("networking.ddns.attention.failingProof", {
-          error: firstLine(profile.last_error ?? ""),
+          error: firstLine(ddnsErrorText(profile.last_error)),
           age: assessment.lastRunMs === null ? t("networking.ddns.neverRun") : t("networking.ddns.ago", { age: ageSince(assessment.lastRunMs) }),
         }),
         action: open,
@@ -452,15 +463,30 @@ const form = reactive({
   max_retries: 3,
   interval_seconds: 300,
   cf_api_token: "",
+  comment_mode: "default" as DdnsCommentMode,
+  record_comment: "",
   webhook_url: "",
   webhook_method: "POST",
   webhook_body: "",
   webhook_headers: "",
 });
 
+/**
+ * What the last save warned about. A save with warnings keeps the dialog open
+ * on them, now editing the saved profile, so the operator reads them before
+ * the form goes away.
+ */
+const saveWarnings = ref<string[]>([]);
+/** The last published addresses of the profile being edited, for #old_ip#. */
+const editingPublished = ref({ v4: "", v6: "" });
+
 function resetForm() {
   editingId.value = undefined;
   editingHasCredential.value = false;
+  saveWarnings.value = [];
+  editingPublished.value = { v4: "", v6: "" };
+  form.comment_mode = "default";
+  form.record_comment = "";
   form.name = "";
   form.node_id = "";
   form.provider = "cloudflare";
@@ -507,6 +533,9 @@ function openEdit(profile: DDNSView) {
   form.interval_seconds = profile.interval_seconds || 300;
   form.webhook_url = profile.webhook_url ?? "";
   form.webhook_method = profile.webhook_method || "POST";
+  form.comment_mode = ddnsCommentMode(profile.comment_mode);
+  form.record_comment = profile.record_comment ?? "";
+  editingPublished.value = { v4: profile.last_ipv4 ?? "", v6: profile.last_ipv6 ?? "" };
   formOpen.value = true;
 }
 
@@ -521,6 +550,8 @@ const isDirty = computed(
     !!form.node_id ||
     !!form.domains.trim() ||
     !!form.cf_api_token.trim() ||
+    form.comment_mode !== "default" ||
+    !!form.record_comment.trim() ||
     !!form.webhook_url.trim() ||
     !!form.webhook_body.trim() ||
     !!form.webhook_headers.trim(),
@@ -579,8 +610,80 @@ const parsedDomains = computed(() =>
     .filter(Boolean),
 );
 
+/* ── Record comment ────────────────────────────────────────────────── */
+
+const COMMENT_INPUT_ID = "ddns-comment-template";
+
+const commentTemplate = computed(() =>
+  form.comment_mode === "custom" ? form.record_comment : DDNS_DEFAULT_COMMENT_TEMPLATE,
+);
+
+const templateProblem = computed(() =>
+  form.provider === "cloudflare" && form.comment_mode === "custom" ? ddnsTemplateProblem(form.record_comment) : null,
+);
+
+const templateProblemText = computed(() => {
+  const problem = templateProblem.value;
+  if (!problem) return "";
+  switch (problem.kind) {
+    case "empty":
+      return t("networking.ddns.comment.problem.empty");
+    case "lineBreak":
+      return t("networking.ddns.comment.problem.lineBreak");
+    case "tooLong":
+      return t("networking.ddns.comment.problem.tooLong", { bytes: problem.bytes, max: DDNS_COMMENT_TEMPLATE_MAX_BYTES });
+    default:
+      return t("networking.ddns.comment.problem.unknown", { placeholder: problem.placeholder });
+  }
+});
+
+/**
+ * The comment the first record would get, rendered here the way the server
+ * renders it: for the chosen node and the first domain. A value the form does
+ * not have yet shows as its placeholder rather than as nothing.
+ */
+const commentPreview = computed(() => {
+  const node = nodeById.value.get(form.node_id);
+  const v4 = form.enable_ipv4 || !form.enable_ipv6;
+  const ip = (v4 ? node?.public_ip : node?.public_ipv6) ?? "";
+  return renderDdnsComment(commentTemplate.value, {
+    node: node?.name || form.node_id || "#node#",
+    node_id: form.node_id || "#node_id#",
+    profile: form.name.trim() || "#profile#",
+    domain: parsedDomains.value[0] ?? "#domain#",
+    type: v4 ? "A" : "AAAA",
+    ip: ip || "#ip#",
+    old_ip: v4 ? editingPublished.value.v4 : editingPublished.value.v6,
+    lattice: typeof window === "undefined" ? "" : window.location.hostname,
+    now: now.value.getTime(),
+  });
+});
+
+const previewTarget = computed(() => ({
+  node: nodeById.value.get(form.node_id)?.name || form.node_id || "#node#",
+  domain: parsedDomains.value[0] ?? "#domain#",
+}));
+
+function insertPlaceholder(placeholder: string) {
+  const el = document.getElementById(COMMENT_INPUT_ID) as HTMLInputElement | null;
+  const next = insertDdnsPlaceholder(form.record_comment, placeholder, el?.selectionStart, el?.selectionEnd);
+  form.record_comment = next.value;
+  void nextTick(() => {
+    el?.focus();
+    el?.setSelectionRange(next.caret, next.caret);
+  });
+}
+
+function commentSummary(profile: DDNSView): string {
+  const mode = ddnsCommentMode(profile.comment_mode);
+  if (mode === "none") return t("networking.ddns.comment.sheetNone");
+  if (mode === "custom" && profile.record_comment) return t("networking.ddns.comment.sheetCustom", { template: profile.record_comment });
+  return t("networking.ddns.comment.sheetDefault", { template: DDNS_DEFAULT_COMMENT_TEMPLATE });
+}
+
 const canSubmit = computed(() => {
   if (!form.name.trim() || !form.node_id || parsedDomains.value.length === 0) return false;
+  if (templateProblem.value) return false;
   // A blank credential is only acceptable when editing a profile that already
   // has one stored, because the client is never given the value to send back.
   const credentialKept = isEditing.value && editingHasCredential.value;
@@ -602,6 +705,10 @@ async function submitForm() {
       ttl: Number(form.ttl),
       max_retries: Number(form.max_retries),
       interval_seconds: Number(form.interval_seconds),
+      // Sent for both providers so switching the provider back and forth
+      // keeps the stored setting; the webhook provider ignores them.
+      comment_mode: form.comment_mode,
+      record_comment: form.record_comment,
     };
     if (editingId.value) req.id = editingId.value;
     if (form.provider === "cloudflare") {
@@ -614,10 +721,21 @@ async function submitForm() {
       if (form.webhook_headers.trim()) req.webhook_headers = form.webhook_headers;
     }
     const editing = isEditing.value;
-    await api.ddns.save(req);
+    const saved = await api.ddns.save(req);
+    void profilesQuery.refresh();
+    const warnings = saved.warnings ?? [];
+    if (warnings.length > 0) {
+      // Saved. Stay open on the warnings, now editing what was saved, so a
+      // second save updates it instead of creating a duplicate.
+      saveWarnings.value = warnings;
+      editingId.value = saved.id;
+      editingHasCredential.value = saved.has_credential;
+      form.cf_api_token = "";
+      toast.warning(t("networking.ddns.toastSavedWithWarnings"));
+      return;
+    }
     toast.success(t(editing ? "networking.ddns.toastUpdated" : "networking.ddns.toastCreated"));
     closeForm();
-    void profilesQuery.refresh();
   } catch (error) {
     const fallback = isEditing.value
       ? "networking.ddns.toastUpdateFailed"
@@ -829,9 +947,16 @@ async function confirmRun() {
         <span class="font-medium">{{ nameOf(profile) }}</span>
       </template>
       <template #cell-state="{ row: profile }">
-        <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[assessmentOf(profile).state])">
-          {{ $t(`networking.ddns.state.${assessmentOf(profile).state}`) }}
-        </span>
+        <div class="flex min-w-0 flex-col gap-0.5 text-xs">
+          <span :class="cn('whitespace-nowrap', STATE_TONE[assessmentOf(profile).state])">
+            {{ $t(`networking.ddns.state.${assessmentOf(profile).state}`) }}
+          </span>
+          <span
+            v-if="assessmentOf(profile).state === 'failing' && profile.last_error"
+            class="line-clamp-3 max-w-[26rem] min-w-[14rem] whitespace-normal break-words text-muted-foreground"
+            :title="ddnsErrorText(profile.last_error)"
+          >{{ ddnsErrorText(profile.last_error) }}</span>
+        </div>
       </template>
       <template #cell-node="{ row: profile }">
         <NodeLabel :id="profile.node_id" class="text-xs" />
@@ -888,7 +1013,7 @@ async function confirmRun() {
 
         <section v-if="openProfile.last_error" class="space-y-1.5">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.ddns.sheet.lastError') }}</h3>
-          <pre class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 font-mono text-xs text-foreground">{{ openProfile.last_error }}</pre>
+          <p class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground">{{ ddnsErrorText(openProfile.last_error) }}</p>
         </section>
 
         <section class="space-y-1.5">
@@ -944,6 +1069,10 @@ async function confirmRun() {
             <dt class="text-xs text-muted-foreground">{{ $t('networking.ddns.sheet.perRecord') }}</dt>
             <dd>{{ $t('networking.ddns.sheet.recordLine', { ttl: openProfile.ttl, retries: openProfile.max_retries }) }}</dd>
           </div>
+          <div v-if="openProfile.provider === 'cloudflare'" class="min-w-0 sm:col-span-2">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.ddns.sheet.comment') }}</dt>
+            <dd class="break-words">{{ commentSummary(openProfile) }}</dd>
+          </div>
         </dl>
       </div>
       <template v-if="openProfile" #actions>
@@ -979,6 +1108,17 @@ async function confirmRun() {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
+          <div
+            v-if="saveWarnings.length"
+            role="status"
+            class="rounded-md border border-warning/50 bg-warning/10 px-3 py-2.5 text-sm"
+          >
+            <p class="font-medium text-warning-text">{{ $t('networking.ddns.warningsTitle', { n: saveWarnings.length }, saveWarnings.length) }}</p>
+            <ul class="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground">
+              <li v-for="warning in saveWarnings" :key="warning" class="break-words">{{ warning }}</li>
+            </ul>
+          </div>
+
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ddns-name">{{ $t('networking.ddns.name') }}</Label>
@@ -1062,6 +1202,70 @@ async function confirmRun() {
             </p>
           </div>
 
+          <!-- Record comment: Cloudflare only; a webhook has nowhere to put one. -->
+          <fieldset v-if="form.provider === 'cloudflare'" class="grid gap-2">
+            <legend class="mb-2 text-sm font-medium">{{ $t('networking.ddns.comment.label') }}</legend>
+            <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+              <label v-for="mode in DDNS_COMMENT_MODES" :key="mode" class="flex cursor-pointer items-center gap-2 pointer-coarse:min-h-11">
+                <input v-model="form.comment_mode" type="radio" name="ddns-comment-mode" :value="mode" class="size-4 accent-primary" />
+                {{ $t(`networking.ddns.comment.mode.${mode}`) }}
+              </label>
+            </div>
+
+            <template v-if="form.comment_mode === 'custom'">
+              <Label :for="COMMENT_INPUT_ID" class="sr-only">{{ $t('networking.ddns.comment.templateLabel') }}</Label>
+              <Input
+                :id="COMMENT_INPUT_ID"
+                v-model="form.record_comment"
+                class="font-mono text-xs"
+                autocomplete="off"
+                spellcheck="false"
+                :placeholder="DDNS_DEFAULT_COMMENT_TEMPLATE"
+                :aria-invalid="templateProblem && templateProblem.kind !== 'empty' ? true : undefined"
+                aria-describedby="ddns-comment-help"
+              />
+              <div class="flex flex-wrap gap-1.5" role="group" :aria-label="$t('networking.ddns.comment.placeholders')">
+                <button
+                  v-for="placeholder in DDNS_COMMENT_PLACEHOLDERS"
+                  :key="placeholder"
+                  type="button"
+                  class="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground transition-colors hover:border-primary/50 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring pointer-coarse:min-h-9 pointer-coarse:px-2.5"
+                  :aria-label="$t('networking.ddns.comment.insert', { placeholder })"
+                  @click="insertPlaceholder(placeholder)"
+                >{{ placeholder }}</button>
+              </div>
+              <!-- An empty template only needs saying, not flagging, before anything is typed. -->
+              <p
+                v-if="templateProblemText"
+                id="ddns-comment-help"
+                :class="cn('text-xs', templateProblem?.kind === 'empty' ? 'text-muted-foreground' : 'text-destructive')"
+                aria-live="polite"
+              >{{ templateProblemText }}</p>
+              <p v-else id="ddns-comment-help" class="text-xs text-muted-foreground">
+                {{ $t('networking.ddns.comment.customHint', { max: DDNS_COMMENT_TEMPLATE_MAX_BYTES }) }}
+              </p>
+            </template>
+            <p v-else-if="form.comment_mode === 'default'" class="text-xs text-muted-foreground">
+              {{ $t('networking.ddns.comment.defaultHint') }}
+              <code class="font-mono">{{ DDNS_DEFAULT_COMMENT_TEMPLATE }}</code>
+            </p>
+            <p v-else class="text-xs text-muted-foreground">{{ $t('networking.ddns.comment.noneHint') }}</p>
+
+            <div v-if="form.comment_mode !== 'none'" class="rounded-md border border-border bg-muted/30 px-3 py-2">
+              <div class="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                <span class="min-w-0 truncate">{{ $t('networking.ddns.comment.previewFor', previewTarget) }}</span>
+                <span
+                  :class="cn('shrink-0 font-mono tabular', commentPreview.fullChars > DDNS_COMMENT_MAX_CHARS && 'text-warning-text')"
+                >{{ $t('networking.ddns.comment.counter', { n: commentPreview.chars, max: DDNS_COMMENT_MAX_CHARS }) }}</span>
+              </div>
+              <p class="mt-1 break-all font-mono text-xs text-foreground" aria-live="polite">{{ commentPreview.text }}</p>
+              <p v-if="commentPreview.fullChars > DDNS_COMMENT_MAX_CHARS" class="mt-1 text-xs text-warning-text">
+                {{ $t('networking.ddns.comment.cut', { max: DDNS_COMMENT_MAX_CHARS, n: commentPreview.fullChars - commentPreview.chars }) }}
+              </p>
+              <p class="mt-1 text-[11px] text-muted-foreground">{{ $t('networking.ddns.comment.previewHint') }}</p>
+            </div>
+          </fieldset>
+
           <!-- Webhook -->
           <template v-else>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
@@ -1103,7 +1307,10 @@ async function confirmRun() {
           </template>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="onFormOpenChange(false)">
+            <Button v-if="saveWarnings.length" type="button" variant="outline" @click="closeForm">
+              {{ $t('networking.ddns.done') }}
+            </Button>
+            <Button v-else type="button" variant="outline" @click="onFormOpenChange(false)">
               {{ $t('common.actions.cancel') }}
             </Button>
             <Button type="submit" :disabled="saving || !canSubmit">

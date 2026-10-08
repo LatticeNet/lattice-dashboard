@@ -1,7 +1,8 @@
 /**
- * 22 DDNS profiles, production's count (design 23, section 1). Names,
- * domains and states are invented to the shape the page has to handle: two
- * failing (a Cloudflare 401 and a webhook 502), one stale (its node's address
+ * 23 DDNS profiles, production's count plus the CNAME case (design 23,
+ * section 1). Names, domains and states are invented to the shape the page
+ * has to handle: three failing (a Cloudflare 403 in the server's raw shape, a
+ * name that already holds a CNAME, and a webhook 502), one stale (its node's address
  * moved two days ago and the profile has not written since), three on the two
  * offline nodes, and the rest current, most of them last run weeks ago because
  * the server only writes when an address moves.
@@ -24,10 +25,24 @@ interface Seed {
   /** The address it last wrote, when not the node's current one. */
   wrote?: string;
   error?: string;
+  commentMode?: "default" | "custom" | "none";
+  recordComment?: string;
 }
 
+/** The sentence lattice-server stores when a name already holds a CNAME. */
+export const FRONTIER_CNAME =
+  "frontier.nat.aaitr.roobli.org already has a CNAME record pointing to nat-us-28tz.aproxy.top; a name cannot hold both. Remove that record in Cloudflare or use another name.";
+
 const SEEDS: Seed[] = [
-  { name: "home-v4", node: "[cd]-homeserver", domains: ["home.roobli.org", "nas.roobli.org"], interval: 300, lastRunAgo: 3 * DAY },
+  {
+    name: "home-v4",
+    node: "[cd]-homeserver",
+    domains: ["home.roobli.org", "nas.roobli.org"],
+    interval: 300,
+    lastRunAgo: 3 * DAY,
+    commentMode: "custom",
+    recordComment: "Lattice DDNS #profile# on #node# (#node_id#) for #domain# #type# #ip#, was #old_ip#, written #time# by #lattice#",
+  },
   { name: "home-v6", node: "[cd]-homeserver", domains: ["home.roobli.org"], v4: false, v6: true, interval: 300, lastRunAgo: 3 * DAY },
   { name: "hkbn-hub-v4", node: "[cd]-hkbn-hub", domains: ["hub.roobli.org"], interval: 300, lastRunAgo: 11 * DAY },
   {
@@ -39,7 +54,16 @@ const SEEDS: Seed[] = [
     interval: 300,
     lastRunAgo: 3 * HOUR,
     wrote: "",
-    error: "AAAA hub.roobli.org: cloudflare: 401 Unauthorized: the API token lacks Zone.DNS edit on roobli.org",
+    error: 'AAAA hub.roobli.org: cloudflare: api error (status 403): [{"code":10000,"message":"Authentication error"}]',
+  },
+  {
+    name: "frontier",
+    node: "[Metix]-Aaitr-jp-softbank-NAT",
+    domains: ["frontier.nat.aaitr.roobli.org"],
+    interval: 300,
+    lastRunAgo: 4 * MINUTE,
+    wrote: "",
+    error: FRONTIER_CNAME,
   },
   { name: "nas-home", node: "[cd]-nas-home", domains: ["files.roobli.org"], interval: 900, lastRunAgo: 27 * DAY },
   { name: "mac-air", node: "[cd]-mac-air", domains: ["air.roobli.org"], interval: 300, lastRunAgo: 4 * HOUR },
@@ -47,7 +71,7 @@ const SEEDS: Seed[] = [
   { name: "xuezhang-jp", node: "[cd]-xuezhang-jp-NAT", domains: ["jp-nat.roobli.org"], interval: 300, lastRunAgo: 6 * DAY },
   { name: "softbank-nat", node: "[Metix]-Aaitr-jp-softbank-NAT", domains: ["sb.metix.example"], interval: 300, lastRunAgo: 19 * DAY },
   { name: "metix-dmit-4", node: "[Metix]-DMIT-4", domains: ["dmit4.metix.example"], interval: 3600, lastRunAgo: 40 * DAY },
-  { name: "metix-dmit-1", node: "[Metix]-DMIT-1", domains: ["dmit1.metix.example"], interval: 43200, lastRunAgo: 120 * DAY },
+  { name: "metix-dmit-1", node: "[Metix]-DMIT-1", domains: ["dmit1.metix.example"], interval: 43200, lastRunAgo: 120 * DAY, commentMode: "none" },
   { name: "metix-dmit-2", node: "[Metix]-DMIT-2", domains: ["dmit2.metix.example"], interval: 43200, lastRunAgo: 120 * DAY },
   { name: "metix-dmit-3", node: "[Metix]-DMIT-3", domains: ["dmit3.metix.example"], interval: 43200, lastRunAgo: 96 * DAY },
   { name: "metix-nyc", node: "[Metix]-Racknerd-NYC", domains: ["nyc.metix.example"], interval: 86400, lastRunAgo: 88 * DAY },
@@ -92,12 +116,30 @@ function seedToView(seed: Seed, index: number): DDNSView {
     last_ipv6: v6 && seed.wrote !== "" ? node.public_ipv6 : undefined,
     last_run_at: seed.lastRunAgo === undefined ? undefined : iso(-seed.lastRunAgo),
     last_error: seed.error,
+    comment_mode: provider === "cloudflare" ? (seed.commentMode ?? "default") : undefined,
+    record_comment: seed.recordComment,
     created_at: iso(-200 * DAY),
     updated_at: iso(-30 * DAY),
   };
 }
 
 export const DDNS: DDNSView[] = flags.get("ddns") === "empty" ? [] : SEEDS.map(seedToView);
+
+/**
+ * What lattice-server warns about on a save: the CNAME already on the
+ * frontier name, and a node behind NAT.
+ */
+export function ddnsSaveWarnings(input: { node_id: string; domains: readonly string[] }): string[] {
+  const out: string[] = [];
+  const node = NODES.find((entry) => entry.id === input.node_id);
+  if (node?.name.includes("NAT")) {
+    out.push(
+      `${node.name} is behind NAT and is reached through nat-us-28tz.aproxy.top. The public IP Lattice sees for it is only where its traffic leaves, so a record pointing there may not reach the node.`,
+    );
+  }
+  if (input.domains.includes("frontier.nat.aaitr.roobli.org")) out.push(FRONTIER_CNAME);
+  return out;
+}
 
 /** What a run writes: the node's current addresses, or a 502 under ?run=fail. */
 export function runDdns(id: string): DDNSView {
