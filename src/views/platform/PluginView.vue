@@ -371,6 +371,7 @@ function confirmAction() {
     :plugin-route="viewRoute"
     :runtime="plugin.ui_runtime"
     :interfaces="plugin.interfaces ?? []"
+    :call-timeouts-ms="plugin.call_timeouts_ms"
   />
 
   <div v-else class="p-4 sm:p-6 space-y-6">

@@ -2075,6 +2075,12 @@ export interface PluginView {
   /** UI contributions. Present ONLY when the plugin is active (server nils it otherwise). */
   ui?: PluginManifestUI;
   interfaces?: PluginInterfaceContract[];
+  /**
+   * The server's gateway deadline in milliseconds, by service and method, for
+   * each callable method whose deadline is not the 15 s default. Contributions
+   * view only; the plugin bridge waits this long (plus a grace) for the call.
+   */
+  call_timeouts_ms?: Record<string, Record<string, number>>;
   /** Derived active-only metadata; never includes server filesystem paths. */
   ui_runtime?: PluginUIRuntime;
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { MetricsSeries, SystemEventRow, SystemRefusedSeries } from "@/lib/api/systemTypes";
+import { NO_VALUE } from "@/lib/format";
 
 import {
   chartCeiling,
@@ -18,6 +19,7 @@ import {
   formatUnit,
   freeSpaceTone,
   groupPluginRows,
+  probeState,
   memoryTone,
   metricsBlock,
   niceCeil,
@@ -247,4 +249,22 @@ test("refused series group by the cap that refused them, the total cap first, a 
     ],
   );
   assert.deepEqual(refusedGroups([]), []);
+});
+
+test("probeState reads the probe sidecar's health as the System page states it", () => {
+  assert.deepEqual(probeState(undefined), { kind: "absent" });
+  assert.deepEqual(probeState({} as never), { kind: "absent" });
+  assert.deepEqual(probeState({ available: false, reason: "probe socket /run/lattice-probe/probe.sock not found\n" }), {
+    kind: "unavailable",
+    reason: "probe socket /run/lattice-probe/probe.sock not found",
+  });
+  assert.deepEqual(probeState({ available: false }), { kind: "unavailable", reason: "" });
+  assert.deepEqual(
+    probeState({ available: true, probe_version: "0.1.0", engine: "sing-box", core_version: "1.13.19", uptime_s: 3600, inflight: 0, max_inflight: 32, targets: 3 }),
+    { kind: "available", engine: "sing-box 1.13.19", probeVersion: "0.1.0", uptimeSeconds: 3600, inflight: 0, maxInflight: 32, targets: 3, saturated: false },
+  );
+  const full = probeState({ available: true, engine: "sing-box", inflight: 32, max_inflight: 32 });
+  assert.equal(full.kind === "available" && full.saturated, true);
+  const bare = probeState({ available: true, inflight: -1 });
+  assert.deepEqual(bare, { kind: "available", engine: NO_VALUE, probeVersion: NO_VALUE, uptimeSeconds: undefined, inflight: undefined, maxInflight: undefined, targets: undefined, saturated: false });
 });

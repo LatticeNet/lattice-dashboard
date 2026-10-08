@@ -17,7 +17,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
-import { Cpu, HardDrive, RefreshCw, Search, Server } from "lucide-vue-next";
+import { Activity, Cpu, HardDrive, RefreshCw, Search, Server } from "lucide-vue-next";
 
 import { api, ApiError, type MetricsQuery, type MetricsRange, type SystemHealth } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -35,6 +35,7 @@ import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import DataState from "@/components/common/DataState.vue";
 import HistoryChart from "@/components/common/HistoryChart.vue";
 import RangeSparkline from "@/components/common/RangeSparkline.vue";
+import StatusDot from "@/components/common/StatusDot.vue";
 import SystemEventRow from "./SystemEventRow.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,7 @@ import {
   memoryTone,
   metricsBlock,
   parseRange,
+  probeState,
   refusedGroups,
   sortedTiers,
   spanParts,
@@ -268,6 +270,36 @@ const processFacts = computed<Fact[]>(() => {
   return facts;
 });
 
+/** The outbound probe beside the server; absent on a server that predates it. */
+const probe = computed(() => probeState(health.value?.probe));
+
+const probeFacts = computed<Fact[]>(() => {
+  const p = probe.value;
+  if (p.kind !== "available") return [];
+  const facts: Fact[] = [
+    { key: "engine", label: t("platform.system.probe.engine"), value: p.engine, detail: t("platform.system.probe.engineDetail") },
+    { key: "uptime", label: t("platform.system.probe.uptime"), value: formatDuration(p.uptimeSeconds) },
+  ];
+  facts.push({
+    key: "inflight",
+    label: t("platform.system.probe.inflight"),
+    value: p.inflight === undefined ? NO_VALUE : p.maxInflight === undefined ? String(p.inflight) : `${p.inflight} / ${p.maxInflight}`,
+    detail: p.saturated
+      ? t("platform.system.probe.inflightFull")
+      : p.maxInflight === undefined
+        ? undefined
+        : t("platform.system.probe.inflightDetail", { max: p.maxInflight }),
+    tone: p.saturated ? "warning" : "default",
+  });
+  facts.push({
+    key: "targets",
+    label: t("platform.system.probe.targets"),
+    value: p.targets === undefined ? NO_VALUE : String(p.targets),
+    detail: t("platform.system.probe.targetsDetail"),
+  });
+  return facts;
+});
+
 const TONE_TEXT: Record<Tone, string> = { default: "text-foreground", warning: "text-warning-text", destructive: "text-destructive" };
 
 /* Rows --------------------------------------------------------------- */
@@ -423,6 +455,38 @@ function refreshAll(): void {
             </section>
           </div>
           <p v-if="stepLabel" class="-mt-2 text-xs text-muted-foreground">{{ stepLabel }}</p>
+
+          <!-- The outbound probe beside the server: whether vpn-core's tests can run, and on what. -->
+          <section
+            v-if="probe.kind !== 'absent'"
+            class="min-w-0 rounded-lg border border-border bg-card p-4"
+            :aria-label="$t('platform.system.probe.title')"
+            data-testid="system-probe"
+          >
+            <h2 class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
+              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('platform.system.probe.title') }}
+              <StatusDot
+                :tone="probe.kind === 'available' ? 'success' : 'warning'"
+                :pulse="false"
+                :label="probe.kind === 'available' ? $t('platform.system.probe.available') : $t('platform.system.probe.unavailable')"
+              />
+              <span v-if="probe.kind === 'available'" class="truncate font-mono text-xs font-normal text-muted-foreground">
+                {{ $t('platform.system.probe.version', { version: probe.probeVersion }) }}
+              </span>
+            </h2>
+            <dl v-if="probe.kind === 'available'" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+              <div v-for="f in probeFacts" :key="f.key" class="min-w-0">
+                <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>
+                <dd :class="cn('font-mono text-sm tabular', TONE_TEXT[f.tone ?? 'default'])">{{ f.value }}</dd>
+                <dd v-if="f.detail" class="text-xs text-pretty text-muted-foreground">{{ f.detail }}</dd>
+              </div>
+            </dl>
+            <div v-else class="mt-2 space-y-1">
+              <p class="font-mono text-sm break-words">{{ probe.reason || $t('platform.system.probe.noReason') }}</p>
+              <p class="max-w-prose text-xs text-pretty text-muted-foreground">{{ $t('platform.system.probe.unavailableBody') }}</p>
+            </div>
+          </section>
 
           <!-- Data files: what is growing, by how much over the range. -->
           <section class="min-w-0 rounded-lg border border-border bg-card" :aria-label="$t('platform.system.files.title')" data-testid="system-files">

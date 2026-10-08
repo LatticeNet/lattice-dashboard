@@ -409,7 +409,12 @@ interface PluginBridgeOptions {
   maxResizesPerMinute?: number;
   maxClipboardPerMinute?: number;
   maxStatesPerMinute?: number;
+  /** The wait for a method the server publishes no deadline for. */
   timeoutMs?: number;
+  /** The contributions view's call_timeouts_ms: the server's deadline per service and method, where it is not the default. */
+  callTimeoutsMs?: BridgeCallTimeouts;
+  /** Added to a published deadline; tests shrink it. */
+  callTimeoutGraceMs?: number;
   now?: () => number;
 }
 
@@ -460,6 +465,40 @@ export function bridgeInterfaceFingerprint(interfaces: BridgeInterfaceContract[]
   })));
 }
 
+/** The server's gateway deadline per service and method, in milliseconds. */
+export type BridgeCallTimeouts = Record<string, Record<string, number>>;
+
+/**
+ * Added to a published deadline so the server's own timeout answer, which
+ * says what ran out, reaches the frame before the bridge gives up.
+ */
+export const CALL_TIMEOUT_GRACE_MS = 2_000;
+
+/**
+ * How long the bridge waits for one call.
+ *
+ * The server gives each call a deadline: 15 s by default, a method's signed
+ * budget when it declares one, and longer for a core method whose work takes
+ * longer (vpn-core's probe run). It publishes every deadline that is not the
+ * default as call_timeouts_ms in the contributions view. A fixed 15 s here
+ * abandoned those calls while the server was still prepared to answer, so a
+ * published deadline is waited out plus the grace, and anything else keeps
+ * the default. The server is the authority, so no cap is applied here.
+ */
+export function methodCallTimeoutMs(
+  timeouts: BridgeCallTimeouts | undefined,
+  service: string,
+  method: string,
+  defaultMs: number,
+  graceMs = CALL_TIMEOUT_GRACE_MS,
+): number {
+  const own = Object.prototype.hasOwnProperty;
+  const methods = timeouts && own.call(timeouts, service) ? timeouts[service] : undefined;
+  const published = methods && own.call(methods, method) ? methods[method] : undefined;
+  if (typeof published !== "number" || !Number.isFinite(published) || published <= 0) return defaultMs;
+  return published + graceMs;
+}
+
 export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefined, methodName: string): string[] {
   if (!contract) return [];
   const method = contract.methods.find((candidate) =>
@@ -474,7 +513,8 @@ export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefi
 export class PluginBridgeSession {
   private readonly options: Required<Pick<PluginBridgeOptions,
     "maxPayloadBytes" | "maxResultBytes" | "maxClipboardBytes" | "maxInflight" | "maxCallsPerMinute"
-    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs" | "now"
+    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs"
+    | "callTimeoutGraceMs" | "now"
   >> & PluginBridgeOptions;
 
   private readonly pending = new Map<string, PendingCall>();
@@ -502,6 +542,7 @@ export class PluginBridgeSession {
       // simply stops following until the minute rolls over.
       maxStatesPerMinute: 60,
       timeoutMs: 15_000,
+      callTimeoutGraceMs: CALL_TIMEOUT_GRACE_MS,
       now: () => Date.now(),
       ...options,
     };
@@ -626,6 +667,13 @@ export class PluginBridgeSession {
       return;
     }
 
+    const timeoutMs = methodCallTimeoutMs(
+      this.options.callTimeoutsMs,
+      service,
+      method,
+      this.options.timeoutMs,
+      this.options.callTimeoutGraceMs,
+    );
     const controller = new AbortController();
     let terminate = (_error: Error) => {};
     const terminal = new Promise<never>((_resolve, reject) => {
@@ -643,7 +691,7 @@ export class PluginBridgeSession {
       terminate,
       cancelled: false,
       timedOut: false,
-      timer: setTimeout(onTimeout, this.options.timeoutMs),
+      timer: setTimeout(onTimeout, timeoutMs),
     };
     this.pending.set(id, pending);
     const payload = message.payload ?? null;
@@ -661,7 +709,7 @@ export class PluginBridgeSession {
           throw new StepUpCancelled();
         }
         if (controller.signal.aborted || !grant) throw new StepUpCancelled();
-        pending.timer = setTimeout(onTimeout, this.options.timeoutMs);
+        pending.timer = setTimeout(onTimeout, timeoutMs);
         return this.options.call(service, method, { ...payload, step_up_grant: grant }, controller.signal);
       }
     };

@@ -17,6 +17,7 @@ import type {
   MetricsUnit,
   SystemEventRow,
   SystemMetricsStore,
+  SystemProbeHealth,
   SystemRefusedSeries,
   SystemSpark,
   SystemTier,
@@ -208,6 +209,50 @@ export function storeFreshness(store: Pick<SystemMetricsStore, "last_write_at" |
   if (!store.last_write_at) return "waiting";
   const age = now - Date.parse(store.last_write_at);
   return age > 3 * 60_000 ? "late" : "fresh";
+}
+
+/**
+ * The outbound probe as the System page states it. Absent means the server
+ * does not report one (it predates the probe), which the page leaves out
+ * rather than calling a fault.
+ */
+export type ProbeState =
+  | { kind: "absent" }
+  | { kind: "unavailable"; reason: string }
+  | {
+      kind: "available";
+      engine: string;
+      probeVersion: string;
+      uptimeSeconds?: number;
+      inflight?: number;
+      maxInflight?: number;
+      targets?: number;
+      /** Every test slot is taken, so the next run is refused until one finishes. */
+      saturated: boolean;
+    };
+
+function countOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+export function probeState(probe: SystemProbeHealth | undefined): ProbeState {
+  if (!probe || typeof probe.available !== "boolean") return { kind: "absent" };
+  if (!probe.available) {
+    return { kind: "unavailable", reason: (probe.reason ?? "").replace(/\s+/g, " ").trim() };
+  }
+  const inflight = countOf(probe.inflight);
+  const maxInflight = countOf(probe.max_inflight);
+  const engine = [probe.engine, probe.core_version].filter((part) => typeof part === "string" && part).join(" ");
+  return {
+    kind: "available",
+    engine: engine || NO_VALUE,
+    probeVersion: probe.probe_version || NO_VALUE,
+    uptimeSeconds: countOf(probe.uptime_s),
+    inflight,
+    maxInflight,
+    targets: countOf(probe.targets),
+    saturated: inflight !== undefined && maxInflight !== undefined && maxInflight > 0 && inflight >= maxInflight,
+  };
 }
 
 /**

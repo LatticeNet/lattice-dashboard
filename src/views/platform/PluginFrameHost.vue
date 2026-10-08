@@ -37,6 +37,8 @@ const props = defineProps<{
   pluginRoute: string;
   runtime: PluginUIRuntime;
   interfaces: PluginInterfaceContract[];
+  /** The contributions view's call_timeouts_ms, so the bridge waits as long as the server does. */
+  callTimeoutsMs?: Record<string, Record<string, number>>;
 }>();
 
 /** How long a loaded document gets to answer before the host says so. */
@@ -346,6 +348,7 @@ function armSession() {
     nonce: nonce.value,
     sourceWindow: nextSource,
     interfaces: props.interfaces,
+    callTimeoutsMs: props.callTimeoutsMs,
     locale: navigator.language || "en",
     colorScheme: colorScheme(),
     designTokens: designTokens(),

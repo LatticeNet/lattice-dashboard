@@ -145,6 +145,11 @@ export const SCOPE_GROUPS: readonly ScopeGroup[] = [
         note: "A proxy:read grant satisfies this too, during the migration. The reverse does not hold.",
       },
       { scope: "substore:admin", grants: "Administer sub-store subscriptions, scripts and shares.", sensitive: true },
+      {
+        scope: "vpn:probe",
+        grants: "Test a pasted outbound through the control plane's probe: whether it connects, its latency, its exit and UDP.",
+        note: "Its own domain: no proxy, vpncore or substore grant implies it, only *, vpn:* or vpn:probe itself. A test changes nothing but spends the control plane's bandwidth, so it requires an unrestricted node allowlist.",
+      },
     ],
   },
   {
@@ -277,6 +282,7 @@ export const SCOPE_MODEL_GAPS = [
   "audit:read gates the installed plugin listing, which belongs with plugin rather than audit.",
   "terminal:open and task:run are effectively shell access on a node and have no read-only variant.",
   "A proxy grant satisfies vpncore and substore during the migration; the reverse does not hold.",
+  "vpn:probe stands alone: no proxy, vpncore or substore grant implies it.",
 ] as const;
 
 /**

@@ -21,8 +21,12 @@
  *   ?history=disabled  node history answers 503 metrics_disabled
  *   ?history=unavailable node history answers 503 metrics_unavailable
  *   ?history=gaps      the node went quiet for a stretch
+ *   ?probe=down        the outbound probe's socket is missing
+ *   ?probe=hung        the probe's socket is there but it does not answer
+ *   ?probe=full        the probe answers with every test slot taken
+ *   ?probe=absent      the server predates the probe and reports none
  */
-import type { MetricsQuery, MetricsRange, MetricsSeries, SystemEventRow, SystemHealth, SystemRefusedSeries, SystemSpark } from "@/lib/api/systemTypes";
+import type { MetricsQuery, MetricsRange, MetricsSeries, SystemEventRow, SystemHealth, SystemProbeHealth, SystemRefusedSeries, SystemSpark } from "@/lib/api/systemTypes";
 
 const SPAN: Record<MetricsRange, number> = {
   "1h": 3600,
@@ -189,6 +193,29 @@ function refusedSeries(now: number): SystemRefusedSeries[] {
     row("plugin/latticenet.sub-store", "subscription/rebuild-every-artifact-for-every-user", "max_series_per_owner", 240, 12),
     row("cp.store", "SaveLatencyProbeResults", "kind_mismatch", 60, 59),
   ];
+}
+
+/** The probe sidecar as the server reports it, by the ?probe= switch; up 3 h 12 m by default. */
+export function probeHealth(mode: string | null): SystemProbeHealth | undefined {
+  switch (mode) {
+    case "absent":
+      return undefined;
+    case "down":
+      return { available: false, reason: "no probe socket at /run/lattice-probe/probe.sock; is the lattice-probe container running?" };
+    case "hung":
+      return { available: false, reason: "the probe did not answer within 3s" };
+    default:
+      return {
+        available: true,
+        probe_version: "0.1.0",
+        engine: "sing-box",
+        core_version: "1.13.19",
+        uptime_s: 11_520,
+        inflight: mode === "full" ? 32 : 2,
+        max_inflight: 32,
+        targets: 3,
+      };
+  }
 }
 
 export function systemHealth(range: MetricsRange, mode: string | null, nowMs = Date.now()): SystemHealth {
