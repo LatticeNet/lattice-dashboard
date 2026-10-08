@@ -683,8 +683,8 @@ const deleteImpact = computed(() => {
         :examples="queryExamples"
       />
       <DataTable
-        :class="cn('max-md:[&_table]:min-w-0', query.invalid.value && 'opacity-50')"
-        :inert="query.invalid.value || undefined"
+        :class="cn('max-md:[&_table]:min-w-0', query.staleRows.value && 'opacity-50')"
+        :inert="query.staleRows.value || undefined"
         :columns="columns"
         :rows="query.rows.value"
         :external-sort="query.sorted.value"
