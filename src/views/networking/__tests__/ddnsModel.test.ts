@@ -194,4 +194,9 @@ test("a run error reads as sentences, not as Cloudflare's JSON", () => {
   );
   assert.equal(ddnsErrorText("A x: cloudflare: api error (status 500): not json"), "A x: cloudflare: api error (status 500): not json");
   assert.equal(ddnsErrorText(undefined), "");
+  // The console passes its own wording for the refusal.
+  assert.equal(
+    ddnsErrorText('A x: cloudflare: api error (status 403): [{"code":10000,"message":"Authentication error"}]', (status, said) => `拒绝 ${status} ${said}`),
+    "A x: 拒绝 403 Authentication error (code 10000)",
+  );
 });

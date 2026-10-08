@@ -13,7 +13,7 @@
  * means "create a plan" on the other networking pages) and the outside-
  * breaking confirm: the records it writes, and the profile's name typed.
  */
-import { computed, nextTick, reactive, ref } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import { useNow } from "@vueuse/core";
@@ -188,6 +188,11 @@ function refreshAll(): void {
 
 const sheet = useRouteOpen();
 
+/** A run error as readable text, with Cloudflare's refusal in the console's language. */
+function errorText(lastError: string | undefined): string {
+  return ddnsErrorText(lastError, (status, said) => t("networking.ddns.cloudflareRefused", { status, said }));
+}
+
 function firstLine(text: string): string {
   const line = text.split("\n")[0]?.trim() ?? "";
   return line.length > 240 ? `${line.slice(0, 237)}...` : line;
@@ -219,7 +224,7 @@ const attention = computed<AttentionItem[]>(() => {
         tone: "danger",
         claim: t("networking.ddns.attention.failingClaim", { name: nameOf(profile) }),
         proof: t("networking.ddns.attention.failingProof", {
-          error: firstLine(ddnsErrorText(profile.last_error)),
+          error: firstLine(errorText(profile.last_error)),
           age: assessment.lastRunMs === null ? t("networking.ddns.neverRun") : t("networking.ddns.ago", { age: ageSince(assessment.lastRunMs) }),
         }),
         action: open,
@@ -477,6 +482,9 @@ const form = reactive({
  * the form goes away.
  */
 const saveWarnings = ref<string[]>([]);
+/** The form as it was saved when the save came back with warnings. */
+const savedSnapshot = ref("");
+const warningsPanel = ref<HTMLElement | null>(null);
 /** The last published addresses of the profile being edited, for #old_ip#. */
 const editingPublished = ref({ v4: "", v6: "" });
 
@@ -484,6 +492,7 @@ function resetForm() {
   editingId.value = undefined;
   editingHasCredential.value = false;
   saveWarnings.value = [];
+  savedSnapshot.value = "";
   editingPublished.value = { v4: "", v6: "" };
   form.comment_mode = "default";
   form.record_comment = "";
@@ -543,8 +552,10 @@ function openEdit(profile: DDNSView) {
  * The form holds a Cloudflare token or a webhook body, so an Escape or an
  * overlay click must not discard typed credentials without asking.
  */
-const isDirty = computed(
-  () =>
+const isDirty = computed(() => {
+  // Saved with warnings: only what changed since that save would be lost.
+  if (saveWarnings.value.length > 0) return JSON.stringify(form) !== savedSnapshot.value;
+  return (
     isEditing.value ||
     !!form.name.trim() ||
     !!form.node_id ||
@@ -554,8 +565,9 @@ const isDirty = computed(
     !!form.record_comment.trim() ||
     !!form.webhook_url.trim() ||
     !!form.webhook_body.trim() ||
-    !!form.webhook_headers.trim(),
-);
+    !!form.webhook_headers.trim()
+  );
+});
 const discardOpen = ref(false);
 
 function onFormOpenChange(next: boolean) {
@@ -613,6 +625,15 @@ const parsedDomains = computed(() =>
 /* ── Record comment ────────────────────────────────────────────────── */
 
 const COMMENT_INPUT_ID = "ddns-comment-template";
+
+// Custom starts from the default template rather than an empty field, so
+// there is something to edit and the preview never reads 0/100.
+watch(
+  () => form.comment_mode,
+  (mode) => {
+    if (mode === "custom" && !form.record_comment.trim()) form.record_comment = DDNS_DEFAULT_COMMENT_TEMPLATE;
+  },
+);
 
 const commentTemplate = computed(() =>
   form.comment_mode === "custom" ? form.record_comment : DDNS_DEFAULT_COMMENT_TEMPLATE,
@@ -731,7 +752,12 @@ async function submitForm() {
       editingId.value = saved.id;
       editingHasCredential.value = saved.has_credential;
       form.cf_api_token = "";
-      toast.warning(t("networking.ddns.toastSavedWithWarnings"));
+      savedSnapshot.value = JSON.stringify(form);
+      // The panel says "Saved", so no toast on top of it. Bring it into view
+      // and give it focus: on a phone it is above the fold after a save.
+      await nextTick();
+      warningsPanel.value?.scrollIntoView({ block: "start", behavior: "smooth" });
+      warningsPanel.value?.focus({ preventScroll: true });
       return;
     }
     toast.success(t(editing ? "networking.ddns.toastUpdated" : "networking.ddns.toastCreated"));
@@ -954,8 +980,8 @@ async function confirmRun() {
           <span
             v-if="assessmentOf(profile).state === 'failing' && profile.last_error"
             class="line-clamp-3 max-w-[26rem] min-w-[14rem] whitespace-normal break-words text-muted-foreground"
-            :title="ddnsErrorText(profile.last_error)"
-          >{{ ddnsErrorText(profile.last_error) }}</span>
+            :title="errorText(profile.last_error)"
+          >{{ errorText(profile.last_error) }}</span>
         </div>
       </template>
       <template #cell-node="{ row: profile }">
@@ -1013,7 +1039,7 @@ async function confirmRun() {
 
         <section v-if="openProfile.last_error" class="space-y-1.5">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.ddns.sheet.lastError') }}</h3>
-          <p class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground">{{ ddnsErrorText(openProfile.last_error) }}</p>
+          <p class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground">{{ errorText(openProfile.last_error) }}</p>
         </section>
 
         <section class="space-y-1.5">
@@ -1097,7 +1123,9 @@ async function confirmRun() {
 
     <!-- Create dialog -->
     <Dialog :open="formOpen" @update:open="onFormOpenChange">
-      <DialogScrollContent class="sm:max-w-2xl">
+      <!-- Pinned to the top so switching the comment mode, which changes the
+           height, does not move the radios under the pointer. -->
+      <DialogScrollContent class="self-start sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {{ isEditing ? $t('networking.ddns.editProfileTitle') : $t('networking.ddns.newProfileTitle') }}
@@ -1110,8 +1138,10 @@ async function confirmRun() {
         <form class="space-y-4" @submit.prevent="submitForm">
           <div
             v-if="saveWarnings.length"
+            ref="warningsPanel"
             role="status"
-            class="rounded-md border border-warning/50 bg-warning/10 px-3 py-2.5 text-sm"
+            tabindex="-1"
+            class="scroll-mt-4 rounded-md border border-warning/50 bg-warning/10 px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <p class="font-medium text-warning-text">{{ $t('networking.ddns.warningsTitle', { n: saveWarnings.length }, saveWarnings.length) }}</p>
             <ul class="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground">
@@ -1203,7 +1233,7 @@ async function confirmRun() {
           </div>
 
           <!-- Record comment: Cloudflare only; a webhook has nowhere to put one. -->
-          <fieldset v-if="form.provider === 'cloudflare'" class="grid gap-2">
+          <fieldset v-if="form.provider === 'cloudflare'" class="grid min-w-0 gap-2">
             <legend class="mb-2 text-sm font-medium">{{ $t('networking.ddns.comment.label') }}</legend>
             <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <label v-for="mode in DDNS_COMMENT_MODES" :key="mode" class="flex cursor-pointer items-center gap-2 pointer-coarse:min-h-11">
@@ -1220,7 +1250,6 @@ async function confirmRun() {
                 class="font-mono text-xs"
                 autocomplete="off"
                 spellcheck="false"
-                :placeholder="DDNS_DEFAULT_COMMENT_TEMPLATE"
                 :aria-invalid="templateProblem && templateProblem.kind !== 'empty' ? true : undefined"
                 aria-describedby="ddns-comment-help"
               />
@@ -1253,12 +1282,12 @@ async function confirmRun() {
 
             <div v-if="form.comment_mode !== 'none'" class="rounded-md border border-border bg-muted/30 px-3 py-2">
               <div class="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
-                <span class="min-w-0 truncate">{{ $t('networking.ddns.comment.previewFor', previewTarget) }}</span>
+                <span class="min-w-0 [overflow-wrap:anywhere]">{{ $t('networking.ddns.comment.previewFor', previewTarget) }}</span>
                 <span
                   :class="cn('shrink-0 font-mono tabular', commentPreview.fullChars > DDNS_COMMENT_MAX_CHARS && 'text-warning-text')"
                 >{{ $t('networking.ddns.comment.counter', { n: commentPreview.chars, max: DDNS_COMMENT_MAX_CHARS }) }}</span>
               </div>
-              <p class="mt-1 break-all font-mono text-xs text-foreground" aria-live="polite">{{ commentPreview.text }}</p>
+              <p class="mt-1 font-mono text-xs text-foreground [overflow-wrap:anywhere]" aria-live="polite">{{ commentPreview.text }}</p>
               <p v-if="commentPreview.fullChars > DDNS_COMMENT_MAX_CHARS" class="mt-1 text-xs text-warning-text">
                 {{ $t('networking.ddns.comment.cut', { max: DDNS_COMMENT_MAX_CHARS, n: commentPreview.fullChars - commentPreview.chars }) }}
               </p>
@@ -1307,17 +1336,17 @@ async function confirmRun() {
           </template>
 
           <DialogFooter>
-            <Button v-if="saveWarnings.length" type="button" variant="outline" @click="closeForm">
-              {{ $t('networking.ddns.done') }}
-            </Button>
-            <Button v-else type="button" variant="outline" @click="onFormOpenChange(false)">
+            <Button v-if="!saveWarnings.length" type="button" variant="outline" @click="onFormOpenChange(false)">
               {{ $t('common.actions.cancel') }}
             </Button>
-            <Button type="submit" :disabled="saving || !canSubmit">
+            <Button type="submit" :variant="saveWarnings.length ? 'outline' : 'default'" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Pencil v-else-if="isEditing" class="size-4" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
               {{ isEditing ? $t('networking.ddns.saveChanges') : $t('common.actions.create') }}
+            </Button>
+            <Button v-if="saveWarnings.length" type="button" @click="closeForm">
+              {{ $t('networking.ddns.done') }}
             </Button>
           </DialogFooter>
         </form>

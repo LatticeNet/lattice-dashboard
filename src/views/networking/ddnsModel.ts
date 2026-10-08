@@ -334,7 +334,10 @@ const CLOUDFLARE_API_ERROR = /cloudflare: api error \(status (\d+)\): (.*)$/;
  * list, which is reduced to its messages and codes. A plain sentence, such as
  * the one naming a CNAME in the way, passes through unchanged.
  */
-export function ddnsErrorText(lastError: string | undefined): string {
+export function ddnsErrorText(
+  lastError: string | undefined,
+  refused: (status: string, said: string) => string = (status, said) => `Cloudflare refused it, HTTP ${status}: ${said}`,
+): string {
   const lines = (lastError ?? "")
     .split("\n")
     .map((line) => line.trim())
@@ -359,7 +362,7 @@ export function ddnsErrorText(lastError: string | undefined): string {
         .filter(Boolean)
         .join("; ");
       if (!said) return line;
-      return `${line.slice(0, match.index)}Cloudflare refused it, HTTP ${match[1]}: ${said}`;
+      return `${line.slice(0, match.index)}${refused(match[1] ?? "", said)}`;
     })
     .join("\n");
 }

@@ -1021,7 +1021,7 @@ export default {
         previewFor: "预览：{node}，{domain}",
         previewHint: "#time# 是写入记录的时间（UTC）。#lattice# 在预览里显示为当前控制台的域名。",
         counter: "{n}/{max}",
-        cut: "Cloudflare 免费版只保留 {max} 个字符，最后 {n} 个会被截掉。",
+        cut: "Lattice 把备注限制在 {max} 个字符以内（Cloudflare 免费版的上限），最后 {n} 个会被截掉。",
         problem: {
           empty: "请填写模板，或者改选默认。",
           lineBreak: "模板只能写一行。",
@@ -1034,7 +1034,7 @@ export default {
       },
       warningsTitle: "已保存。正式使用前，请先确认下面的问题：",
       done: "完成",
-      toastSavedWithWarnings: "已保存，但有需要确认的地方",
+      cloudflareRefused: "Cloudflare 拒绝了写入，HTTP {status}：{said}",
       edit: "编辑",
       runNow: "立即运行",
       runConfirm: "立即写入 DNS",
