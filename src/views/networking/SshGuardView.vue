@@ -48,6 +48,8 @@ import { partitionBatchResults, runWithConcurrency } from "@/views/operations/ap
 import { guardReality } from "@/views/networking/sshGuardReality";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
@@ -110,6 +112,7 @@ import {
   batchRefusal,
   boardStage,
   controlPlaneNodeIds,
+  coverageBucket,
   coverageCounts,
   filterByCoverage,
   filterByPosture,
@@ -143,6 +146,7 @@ import {
   type ScopeState,
   type SshPosture,
 } from "./sshGuardBoardModel";
+import { SSH_GUARD_QUERY_EXAMPLES, sshGuardQuerySchema, type GuardRowFacts } from "./sshGuardQuery";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -705,13 +709,71 @@ const counts = computed(() => coverageCounts(states.value, scopeOf, now.value));
 /** No node list was ever read (a failed poll keeps the last good one). */
 const nodesNotRead = computed(() => !!nodesQuery.error.value && !nodesQuery.data.value);
 const postureChipCounts = computed<Record<PostureFilter, number>>(() => ({ all: states.value.length, ...postures.value }));
-const visibleStates = computed(() =>
+const chipStates = computed(() =>
   filterByCoverage(
     filterByPosture(states.value, postureFilter.value, (id) => postureOf(id).posture),
     coverageFilter.value,
     scopeOf,
     now.value,
   ),
+);
+
+/*
+ * The query field narrows and orders what the two chip groups leave, in the
+ * list query (src/lib/query): the shared node fields plus what this board
+ * knows per row. Every board field reads the facts folded here, once per
+ * render, from the same sources the row prints.
+ */
+const nodesById = computed(() => new Map((nodesQuery.data.value ?? []).map((n) => [n.id, n] as const)));
+const rowFacts = computed(
+  () =>
+    new Map(
+      states.value.map((state) => {
+        const stage = stageOf(state);
+        const scope = scopeOf(state.nodeId);
+        const posture = postureOf(state.nodeId);
+        const facts: GuardRowFacts = {
+          node: nodesById.value.get(state.nodeId),
+          posture: posture.posture,
+          gate: posture.gate,
+          stage,
+          state: coverageBucket(stage, scope),
+          scope,
+          evidence: evidence.value.get(state.nodeId),
+          knock: knockRowKnowledge(state, knockRows.value.get(state.nodeId)).knowledge,
+          reverting: state.revertArmed && stage !== "reverted",
+          armable: isArmable(state),
+        };
+        return [state.nodeId, facts] as const;
+      }),
+    ),
+);
+const querySchema = sshGuardQuerySchema((state) => rowFacts.value.get(state.nodeId));
+/** `?q=`, beside the chips' own keys, written when the typing pauses. */
+const storedQuery = computed<string>({
+  get: () => (typeof route.query.q === "string" ? route.query.q : ""),
+  set: (value) => {
+    const query = { ...route.query };
+    if (value.trim()) query.q = value;
+    else delete query.q;
+    router.replace({ query }).catch(() => {});
+  },
+});
+const queryText = useQueryText(storedQuery);
+const query = useListQuery(chipStates, querySchema, queryText);
+/** The rows on the page: the chips, then the query; finding first unless the query sorts. */
+const visibleStates = query.rows;
+const chipsNarrow = computed(() => postureFilter.value !== "all" || coverageFilter.value !== "all");
+const queryNarrows = computed(() => query.filtering.value || chipsNarrow.value);
+/** Both chip groups back to All in one write: two setters in one tick would each start from the old address. */
+function resetChips(): void {
+  const next = { ...route.query };
+  delete next.posture;
+  delete next.coverage;
+  router.replace({ query: next }).catch(() => {});
+}
+const queryExamples = computed(() =>
+  SSH_GUARD_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`networking.sshGuard.query.examples.${example.key}`) })),
 );
 
 const proof = computed(() => proofCounts(states.value, now.value));
@@ -1214,8 +1276,8 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         </Button>
         <Button
           size="sm"
-          :disabled="!canAdmin || !armableSelected.length"
-          :title="armableSelected.length ? undefined : $t('networking.sshGuard.actions.armSelectedNone')"
+          :disabled="!canAdmin || !armableSelected.length || query.invalid.value"
+          :title="query.invalid.value ? $t('networking.sshGuard.query.staleActions') : armableSelected.length ? undefined : $t('networking.sshGuard.actions.armSelectedNone')"
           @click="openSheet(armableSelected.map((s) => s.nodeId))"
         >
           {{ armableSelected.length
@@ -1370,6 +1432,20 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
     </div>
     </div>
 
+    <!-- The query field: search, filter and sort inside what the chips leave. -->
+    <ListQueryBar
+      v-if="states.length"
+      v-model="queryText"
+      class="max-w-3xl"
+      storage-key="ssh-guard"
+      testid="ssh-guard-query"
+      :query="query"
+      :count="queryNarrows ? { shown: visibleStates.length, total: states.length } : undefined"
+      :label="$t('networking.sshGuard.query.label')"
+      :placeholder="$t('networking.sshGuard.query.placeholder')"
+      :examples="queryExamples"
+    />
+
     <DataState
       :loading="approvalsQuery.loading.value || nodesQuery.loading.value"
       :error="approvalsQuery.error.value"
@@ -1392,11 +1468,11 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
           {{ $t('networking.sshGuard.scope.bulkProgress', { done: bulkProgress.done, total: bulkProgress.total }) }}
         </span>
         <div class="ms-auto flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning"
+          <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning || query.invalid.value"
             @click="applyScope(selectedVisible.map((s) => s.nodeId), 'enrolled')">
             {{ $t('networking.sshGuard.scope.bulkEnrol') }}
           </Button>
-          <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning"
+          <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning || query.invalid.value"
             @click="bulkExcludeOpen = true">
             {{ $t('networking.sshGuard.scope.bulkExclude') }}
           </Button>
@@ -1411,13 +1487,26 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         </ul>
       </div>
 
-      <p v-if="!visibleStates.length" class="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-        {{ $t('networking.sshGuard.coverage.emptyFilter') }}
-      </p>
+      <div v-if="!visibleStates.length" class="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+        <p>{{ $t('networking.sshGuard.coverage.emptyFilter') }}</p>
+        <!-- The chips and the field both narrow the table; say so when together they leave nothing. -->
+        <p v-if="query.filtering.value && chipsNarrow" class="mt-1 text-xs" data-testid="ssh-guard-conflict">
+          {{ $t('networking.sshGuard.query.conflict') }}
+          <button
+            type="button"
+            class="ms-1 rounded-sm font-medium text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+            @click="resetChips"
+          >{{ $t('networking.sshGuard.query.showAllChips') }}</button>
+        </p>
+      </div>
 
       <!-- The table scrolls sideways inside itself at narrow widths and keeps
            the node column pinned; the page stays the only vertical scroller. -->
-      <div v-else class="relative overflow-x-auto rounded-md border border-border">
+      <div
+        v-else
+        :class="cn('relative overflow-x-auto rounded-md border border-border', query.invalid.value && 'opacity-50')"
+        :inert="query.invalid.value || undefined"
+      >
         <table class="w-full border-collapse text-sm">
           <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>

@@ -768,6 +768,30 @@ export default {
           "The link names a connection the store no longer holds, or one outside the nodes you can see.",
       },
       collection: {
+        query: {
+          label: "Search, filter and sort the collection policies",
+          placeholder: "Search, or readiness:not_ready -is:trace sort:name",
+          noMatch: "No node's policy matches this query.",
+          examples: {
+            notReady: "Collectors that cannot record or have gone quiet, by name",
+            capturing: "Nodes inside a running capture",
+            heavy: "Nodes holding over 100,000 lines, most first",
+            untraced: "Edge nodes with trace collection off",
+          },
+          fields: {
+            trace: "Trace collection is on",
+            level: "Trace level: info, debug, trace",
+            budget: "Lines per second the agent may send; 0 is its default",
+            readiness: "Collector readiness: ready, not_ready, pending, waiting, stale, off",
+            capturing: "A running capture covers the node",
+            captures: "Running captures that cover the node",
+            sources: "Raw log sources the node ships",
+            held: "Lines held across the node's sources",
+            raw: "Raw sing-box lines flow",
+            quiet: "Nothing collected, captured or held",
+            edited: "The row has unsaved changes",
+          },
+        },
         everyNode: "{value} on every node",
         neverChanged: "never changed",
         policyHint:
@@ -2046,6 +2070,25 @@ export default {
       goToApprovals: "Go to Approvals",
     },
     agentUpdatesPage: {
+      query: {
+        label: "Search, filter and sort agent updates",
+        placeholder: "Search, or is:behind policy:none sort:name",
+        examples: {
+          behind: "Behind the latest release and not planned automatically",
+          none: "Nodes with no update policy",
+          failed: "Policies whose last plan failed, latest first",
+          quiet: "Not planned for over a week",
+        },
+        fields: {
+          standing: "Against the latest release: behind, current, ahead, unknown",
+          policy: "Update policy: none, manual, auto, disabled",
+          target: "The version the policy aims at",
+          planned: "When the policy last planned an update",
+          behind: "Runs an agent older than the latest release",
+          failed: "The policy's last plan failed",
+          stale: "Holds update approvals that no longer apply",
+        },
+      },
       layersLabel: "Agent Updates layers",
       layers: { nodes: "Nodes", distribution: "Distribution" },
       proof: {

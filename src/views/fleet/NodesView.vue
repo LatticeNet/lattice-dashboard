@@ -30,6 +30,9 @@ import { useAuthStore } from "@/stores/auth";
 import { countryName, splitNamePrefix } from "@/lib/fleet";
 import { NO_VALUE, formatBytes, formatRelativeTime } from "@/lib/format";
 import { agentConfigBadges, nodeHasAgentCapability, nodeHasArchOsToken } from "@/lib/nodeFilterExpressions";
+import { nodeQuerySchema } from "@/lib/query/nodeFields";
+import { withoutSorts } from "@/lib/query/syntax";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import {
   NODE_STATUSES,
   compareByAttention,
@@ -50,6 +53,7 @@ import {
   NODE_COLUMNS_STORAGE_KEY,
   NODE_GROUP_BYS,
   NODE_GROUP_PARAM,
+  NODE_QUERY_EXAMPLES,
   NODE_STATUS_PARAM,
   NODES_LAYOUT_PARAM,
   agentVersions,
@@ -69,7 +73,6 @@ import {
   nodeStatusFilterCodec,
   parseHiddenColumns,
   ratioPercent,
-  searchScore,
   serializeHiddenColumns,
   shownPercent,
   uniformColumns,
@@ -86,6 +89,7 @@ import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
 import FilterPanel from "@/components/common/FilterPanel.vue";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
 import TableColumnManager from "@/components/common/TableColumnManager.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -93,7 +97,6 @@ import CopyButton from "@/components/common/CopyButton.vue";
 import NodeSheet from "@/components/fleet/NodeSheet.vue";
 import EnrollSheet from "@/components/fleet/EnrollSheet.vue";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -189,20 +192,34 @@ function matches(node: Node): boolean {
   if (!agentFilter.value.every((token) => nodeHasAgentCapability(node, token))) return false;
   if (!osFilter.value.every((token) => nodeHasArchOsToken(node, token))) return false;
   if (tagFilter.value.length && !tagFilter.value.every((tag) => (node.tags ?? []).includes(tag))) return false;
-  if (search.value.trim() && searchScore(node, search.value) === 0) return false;
   return true;
 }
 
-/** Worst first, then by name; with a search, the best matches float up. */
-const shown = computed(() => {
-  const filtered = nodes.value.filter(matches).sort((a, b) => compareByAttention(a, b) || compareNodeIdentity(a, b));
-  const q = search.value.trim();
-  if (!q) return filtered;
-  return [...filtered].sort((a, b) => searchScore(b, q) - searchScore(a, q));
-});
+/** The status select and the panel's chips, worst first, then by name. */
+const narrowed = computed(() => nodes.value.filter(matches).sort((a, b) => compareByAttention(a, b) || compareNodeIdentity(a, b)));
+
+/*
+ * The search field speaks the list query (src/lib/query): bare words are the
+ * fuzzy search this page always had, and field terms, OR, negation and sort:
+ * narrow and order what the status select and the chips leave. Group names
+ * are read when the query runs, so group: follows the list once it loads.
+ */
+const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((group) => [group.id, group.name] as const)));
+const querySchema = nodeQuerySchema({ groupName: (id) => groupNames.value.get(id) });
+/** The field's text: the list follows each key, `?q=` follows when the typing pauses. */
+const queryText = useQueryText(search);
+const query = useListQuery(narrowed, querySchema, queryText);
+/** The rows on the page: narrowed, then searched; worst first unless the query sorts or a bare word ranks. */
+const shown = query.rows;
+
+const queryExamples = computed(() =>
+  NODE_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`fleet.nodes.query.examples.${example.key}`) })),
+);
 
 const panelCount = computed(() => agentFilter.value.length + tagFilter.value.length + osFilter.value.length);
-const filtered = computed(() => !!search.value.trim() || statusFilter.value !== "all" || panelCount.value > 0);
+const filtered = computed(() => query.filtering.value || statusFilter.value !== "all" || panelCount.value > 0);
+/** Filters set outside the field, which the field's own clear button does not reach. */
+const outsideFilters = computed(() => statusFilter.value !== "all" || panelCount.value > 0);
 
 interface Applied {
   key: string;
@@ -221,8 +238,49 @@ function clearPanel(): void {
   osFilter.value = [];
 }
 
+function clearSearch(): void {
+  queryText.value = "";
+  search.value = "";
+}
+
+interface EmptyAction {
+  key: string;
+  label: string;
+  run: () => void;
+}
+/**
+ * What an empty list offers: one reset per source of narrowing, so the
+ * operator drops the one that conflicts and keeps the rest. Clearing all of
+ * them stays with the applied-filters strip above the list.
+ */
+const emptyActions = computed<EmptyAction[]>(() => [
+  ...(query.filtering.value ? [{ key: "search", label: t("fleet.nodes.filters.clearSearch"), run: clearSearch }] : []),
+  ...(statusFilter.value !== "all"
+    ? [{ key: "status", label: t("fleet.nodes.filters.showAllStatuses"), run: () => (statusFilter.value = "all") }]
+    : []),
+  ...(panelCount.value > 0 ? [{ key: "panel", label: t("fleet.nodes.filters.clearChips"), run: clearPanel }] : []),
+]);
+
+/** Query field to the column that shows it, for the header mark of a typed sort:. */
+const SORT_COLUMN: Record<string, string> = {
+  name: "name",
+  ip: "address",
+  agent: "agent",
+  last_seen: "lastSeen",
+  cpu: "cpu",
+  tag: "tags",
+  mem: "memory",
+  disk: "disk",
+};
+const sortMark = computed(() => {
+  const first = query.active.value.sorts[0];
+  const column = first && SORT_COLUMN[first.field.key];
+  return column ? { key: column, dir: first.desc ? ("desc" as const) : ("asc" as const) } : null;
+});
+
 function clearFilters(): void {
   // One write: three bound keys written in one tick build on each other (useOwnedRoute).
+  queryText.value = "";
   search.value = "";
   statusFilter.value = "all";
   clearPanel();
@@ -674,17 +732,18 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
     <section :aria-label="$t('fleet.nodes.list.title')" class="space-y-3">
       <!-- The toolbar: what the list shows. Every control is in the address. -->
       <div v-if="nodes.length > 0 || filtered" class="space-y-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="relative min-w-0 flex-[1_1_16rem]">
-            <Search class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <Input
-              v-model="search"
-              type="search"
-              class="ps-9"
-              :placeholder="$t('fleet.nodes.filters.searchPlaceholder')"
-              :aria-label="$t('fleet.nodes.filters.searchPlaceholder')"
-            />
-          </div>
+        <div class="flex flex-wrap items-start gap-2">
+          <ListQueryBar
+            v-model="queryText"
+            class="flex-[1_1_16rem] max-lg:basis-full"
+            storage-key="nodes"
+            testid="nodes-query"
+            :query="query"
+            :count="filtered ? { shown: shown.length, total: nodes.length } : undefined"
+            :label="$t('fleet.nodes.query.label')"
+            :placeholder="$t('fleet.nodes.query.placeholder')"
+            :examples="queryExamples"
+          />
           <Select v-model="statusFilter">
             <SelectTrigger class="w-[calc(50%-0.25rem)] sm:w-40" :aria-label="$t('fleet.nodes.filters.status')">
               <SelectValue />
@@ -702,7 +761,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
               <SelectItem v-for="by in NODE_GROUP_BYS" :key="by" :value="by">{{ $t(`fleet.nodes.groupBy.by.${by}`) }}</SelectItem>
             </SelectContent>
           </Select>
-          <div class="inline-flex shrink-0 rounded-md border border-input bg-background p-0.5" role="group" :aria-label="$t('fleet.nodes.view.label')">
+          <div class="inline-flex h-9 shrink-0 items-center rounded-md border border-input bg-background p-0.5" role="group" :aria-label="$t('fleet.nodes.view.label')">
             <button
               v-for="mode in ['list', 'card'] as const"
               :key="mode"
@@ -801,7 +860,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           />
         </div>
 
-        <div v-if="applied.length || filtered" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <div v-if="outsideFilters" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="nodes-applied">
           <button
             v-for="filter in applied"
             :key="filter.key"
@@ -813,8 +872,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             <span class="truncate">{{ filter.label }}</span>
             <X class="size-3 shrink-0" aria-hidden="true" />
           </button>
-          <span v-if="filtered" class="tabular">{{ $t('fleet.nodes.filters.showing', { shown: shown.length, total: nodes.length }) }}</span>
-          <Button v-if="filtered" variant="ghost" size="sm" class="h-7 px-2 text-xs" type="button" @click="clearFilters">
+          <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" type="button" @click="clearFilters">
             <X class="size-3.5" aria-hidden="true" />
             {{ $t('fleet.nodes.filters.clear') }}
           </Button>
@@ -866,6 +924,10 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         :has-data="nodesQuery.data.value !== undefined"
         :selectable="showSelection"
         :expression-filter="false"
+        :external-sort="query.sorted.value"
+        :external-sort-mark="sortMark"
+        :class="query.invalid.value && 'opacity-50'"
+        :inert="query.invalid.value || undefined"
         :show-summary="false"
         :group-key="groupKeyFn"
         :group-order="groupOrder"
@@ -873,18 +935,21 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         :active-row-id="sheet.openId.value"
         :select-all-label="$t('fleet.nodes.bulk.selectAllVisible')"
         @retry="nodesQuery.refresh"
+        @sort="queryText = withoutSorts(queryText)"
       >
         <template #empty>
           <EmptyState
             v-if="filtered"
             :icon="Search"
             :title="$t('fleet.nodes.filters.noMatchTitle')"
-            :description="$t('fleet.nodes.filters.noMatchDescription')"
+            :description="query.filtering.value && outsideFilters ? $t('fleet.nodes.query.conflict') : $t('fleet.nodes.filters.noMatchDescription')"
           >
-            <Button variant="outline" size="sm" type="button" @click="clearFilters">
-              <X aria-hidden="true" />
-              {{ $t('fleet.nodes.filters.clear') }}
-            </Button>
+            <div class="flex flex-wrap justify-center gap-2" data-testid="nodes-empty-actions">
+              <Button v-for="action in emptyActions" :key="action.key" variant="outline" size="sm" type="button" @click="action.run()">
+                <X aria-hidden="true" />
+                {{ action.label }}
+              </Button>
+            </div>
           </EmptyState>
           <EmptyState v-else :icon="Server" :title="$t('fleet.nodes.list.emptyTitle')" :description="$t('fleet.nodes.list.emptyDescription')">
             <Button v-if="canAdminNodes" size="sm" type="button" @click="enrollOpen = true">
@@ -996,9 +1061,22 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           v-else-if="nodesQuery.data.value !== undefined && shown.length === 0"
           :icon="filtered ? Search : Server"
           :title="filtered ? $t('fleet.nodes.filters.noMatchTitle') : $t('fleet.nodes.list.emptyTitle')"
-          :description="filtered ? $t('fleet.nodes.filters.noMatchDescription') : $t('fleet.nodes.list.emptyDescription')"
-        />
-        <div v-else class="space-y-5">
+          :description="
+            !filtered
+              ? $t('fleet.nodes.list.emptyDescription')
+              : query.filtering.value && outsideFilters
+                ? $t('fleet.nodes.query.conflict')
+                : $t('fleet.nodes.filters.noMatchDescription')
+          "
+        >
+          <div v-if="filtered" class="flex flex-wrap justify-center gap-2">
+            <Button v-for="action in emptyActions" :key="action.key" variant="outline" size="sm" type="button" @click="action.run()">
+              <X aria-hidden="true" />
+              {{ action.label }}
+            </Button>
+          </div>
+        </EmptyState>
+        <div v-else :class="cn('space-y-5', query.invalid.value && 'opacity-50')" :inert="query.invalid.value || undefined">
           <section v-for="group in cardGroups" :key="group.key" class="space-y-2" :aria-label="groupBy === 'none' ? undefined : groupLabel(group.key)">
             <h3 v-if="groupBy !== 'none'" class="flex flex-wrap items-baseline gap-x-2 text-sm">
               <span class="font-medium">{{ groupLabel(group.key) }}</span>

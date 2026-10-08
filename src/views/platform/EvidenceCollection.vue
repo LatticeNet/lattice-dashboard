@@ -16,6 +16,9 @@ import { toast } from "@/lib/toast";
 import { CircleStop, Play, RefreshCw, ScrollText } from "lucide-vue-next";
 
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
 import { api, type TraceLevel, type TraceLine, type TracePolicy, type TraceSession } from "@/lib/api";
 import { formatDateTime, shortId } from "@/lib/format";
 import DataState from "@/components/common/DataState.vue";
@@ -37,6 +40,7 @@ import EvidenceReadinessCell from "./EvidenceReadinessCell.vue";
 import EvidenceRetention from "./EvidenceRetention.vue";
 import { TRACE_TTL_DEFAULT_SECONDS, TRACE_TTL_MAX_SECONDS, clampTraceTtlSeconds } from "./connTraceModel";
 import { useEvidenceContext } from "./evidenceContext";
+import { COLLECTION_QUERY_EXAMPLES, COLLECTION_QUERY_PARAM, collectionQuerySchema } from "./evidenceCollectionQuery";
 import {
   AGENT_DEFAULT_BUDGET_BEFORE,
   AGENT_DEFAULT_BUDGET_FROM,
@@ -95,9 +99,33 @@ function seedDraft(row: TracePolicy): PolicyDraft {
 const showIdlePolicies = ref(false);
 const idleNodeIds = computed(() => new Set(ctx.coverageRows.value.filter((row) => row.quiet).map((row) => row.nodeId)));
 const idlePolicies = computed(() => policies.value.filter((row) => idleNodeIds.value.has(row.node_id) && !dirty(row)));
-const shownPolicies = computed(() =>
-  showIdlePolicies.value ? policies.value : policies.value.filter((row) => !idleNodeIds.value.has(row.node_id) || dirty(row)),
+
+/*
+ * The query field (src/lib/query) over the policy table. A query searches
+ * every node, quiet ones included: hiding the node an operator just named
+ * behind "show quiet nodes" would read as "not here".
+ */
+const nodesById = computed(() => new Map(ctx.nodes.value.map((node) => [node.id, node] as const)));
+const querySchema = collectionQuerySchema({
+  nodeOf: (policy) => nodesById.value.get(policy.node_id),
+  coverageOf: (policy) => coverageBy.value.get(policy.node_id),
+  edited: (policy) => dirty(policy),
+  nameOf: (id) => ctx.nodeLabel(id),
+});
+const storedQuery = bindQueryParam<string>(ownedRoute, COLLECTION_QUERY_PARAM, {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value) => (value.trim() ? value : undefined),
+});
+const queryText = useQueryText(storedQuery);
+const query = useListQuery(policies, querySchema, queryText);
+const queryExamples = computed(() =>
+  COLLECTION_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`platform.evidence.collection.query.examples.${example.key}`) })),
 );
+
+const shownPolicies = computed(() => {
+  if (query.filtering.value) return query.rows.value;
+  return showIdlePolicies.value ? policies.value : policies.value.filter((row) => !idleNodeIds.value.has(row.node_id) || dirty(row));
+});
 const drafts = ref<Record<string, PolicyDraft>>({});
 const savingNode = ref("");
 
@@ -438,7 +466,30 @@ async function startFiltered(): Promise<void> {
         :empty-description="$t('platform.trace.policyEmptyDescription')"
         @retry="ctx.policies.refresh"
       >
-        <div v-if="shownPolicies.length" ref="policyTable" class="relative overflow-x-auto rounded-md border border-border">
+        <ListQueryBar
+          v-model="queryText"
+          class="mb-3 max-w-3xl"
+          storage-key="evidence-collection"
+          testid="collection-query"
+          :query="query"
+          :count="query.filtering.value ? { shown: shownPolicies.length, total: policies.length } : undefined"
+          :label="$t('platform.evidence.collection.query.label')"
+          :placeholder="$t('platform.evidence.collection.query.placeholder')"
+          :examples="queryExamples"
+        />
+        <p
+          v-if="query.filtering.value && !shownPolicies.length"
+          class="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground"
+          data-testid="collection-no-match"
+        >
+          {{ $t('platform.evidence.collection.query.noMatch') }}
+        </p>
+        <div
+          v-if="shownPolicies.length"
+          ref="policyTable"
+          :class="['relative overflow-x-auto rounded-md border border-border', query.invalid.value && 'opacity-50']"
+          :inert="query.invalid.value || undefined"
+        >
           <table class="w-full text-sm" :class="readinessShown ? 'min-w-[960px]' : 'min-w-[720px]'">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -593,7 +644,7 @@ async function startFiltered(): Promise<void> {
             </tbody>
           </table>
         </div>
-        <div v-if="idlePolicies.length" class="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1">
+        <div v-if="idlePolicies.length && !query.filtering.value" class="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1">
           <p class="text-sm text-muted-foreground">
             {{ showIdlePolicies
               ? $t('platform.evidence.overview.quietShown', { count: idlePolicies.length }, idlePolicies.length)

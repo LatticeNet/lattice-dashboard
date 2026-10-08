@@ -56,7 +56,7 @@ const anyHidden = () => props.columns.some((c) => props.hidden.has(c.id));
     <Button
       variant="outline"
       size="sm"
-      class="pointer-coarse:min-w-11"
+      class="h-9 pointer-coarse:min-w-11"
       :aria-expanded="open"
       :aria-label="$t('common.table.columns')"
       @click="open = !open"

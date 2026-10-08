@@ -33,6 +33,11 @@ import { GROUP_COLOR_TOKENS, groupColor } from "@/lib/groupColors";
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ListQueryBar from "@/components/common/ListQueryBar.vue";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { useListQuery, useQueryText } from "@/composables/useListQuery";
+import { withoutSorts } from "@/lib/query/syntax";
+import { GROUPS_QUERY_EXAMPLES, groupsQuerySchema } from "./groupsQuery";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
@@ -107,6 +112,18 @@ function nodeLabel(id: string): string {
  */
 const owned = useOwnedRoute();
 const sheet = bindRouteOpen(owned);
+
+/* The query field over the group list (src/lib/query), at ?q=. */
+const querySchema = groupsQuerySchema({ nodeName: (id) => nodeLabel(id) });
+const storedQuery = bindQueryParam<string>(owned, "q", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value) => (value.trim() ? value : undefined),
+});
+const queryText = useQueryText(storedQuery);
+const query = useListQuery(sortedGroups, querySchema, queryText);
+const queryExamples = computed(() =>
+  GROUPS_QUERY_EXAMPLES.map((example) => ({ query: example.query, note: t(`fleet.groups.query.examples.${example.key}`) })),
+);
 const NEW_GROUP = "new";
 const creating = computed(() => sheet.openId.value === NEW_GROUP);
 const editingExisting = ref(false);
@@ -653,10 +670,25 @@ const deleteImpact = computed(() => {
     <template v-else>
       <!-- Two columns on a phone fit the screen, so the table drops its 640 px
            scroll floor there instead of scrolling a pinned name. -->
+      <ListQueryBar
+        v-if="sortedGroups.length || queryText"
+        v-model="queryText"
+        class="max-w-3xl"
+        storage-key="groups"
+        testid="groups-query"
+        :query="query"
+        :count="query.filtering.value ? { shown: query.rows.value.length, total: sortedGroups.length } : undefined"
+        :label="$t('fleet.groups.query.label')"
+        :placeholder="$t('fleet.groups.query.placeholder')"
+        :examples="queryExamples"
+      />
       <DataTable
-        class="max-md:[&_table]:min-w-0"
+        :class="cn('max-md:[&_table]:min-w-0', query.invalid.value && 'opacity-50')"
+        :inert="query.invalid.value || undefined"
         :columns="columns"
-        :rows="sortedGroups"
+        :rows="query.rows.value"
+        :external-sort="query.sorted.value"
+        @sort="queryText = withoutSorts(queryText)"
         :row-key="(group) => group.id"
         :loading="groupsQuery.loading.value"
         :error="groupsQuery.error.value ?? null"
@@ -669,6 +701,13 @@ const deleteImpact = computed(() => {
       >
         <template #empty>
           <EmptyState
+            v-if="query.filtering.value && sortedGroups.length"
+            :icon="FolderTree"
+            :title="$t('fleet.groups.query.noMatchTitle')"
+            :description="$t('fleet.groups.query.noMatchDescription')"
+          />
+          <EmptyState
+            v-else
             :icon="FolderTree"
             :title="$t('fleet.groups.emptyTitle')"
             :description="canAdmin ? $t('fleet.groups.emptyDescription') : $t('fleet.groups.emptyDescriptionReadOnly')"

@@ -89,7 +89,7 @@ onBeforeUnmount(() => {
       data-filter-trigger
       variant="outline"
       size="sm"
-      class="pointer-coarse:min-w-11"
+      class="h-9 pointer-coarse:min-w-11"
       :aria-expanded="open"
       :aria-label="label"
       @click="toggle"
