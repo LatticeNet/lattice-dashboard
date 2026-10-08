@@ -8,6 +8,7 @@ import {
   bridgeInterfaceFingerprint,
   heldPluginStateStillApplies,
   interfaceMethodScopes,
+  methodCallTimeoutMs,
   planPluginStateWrite,
   pluginPageStateFromQuery,
   pluginStateLocation,
@@ -239,6 +240,103 @@ test("bridge times out calls even when they ignore abort", async () => {
     service: "test.plugin/items", method: "list", payload: {},
   } });
   assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
+});
+
+// The server stops a budgeted method at its signed timeout_ms (capped at 30 s)
+// and every other method at 15 s. The bridge used to stop every call at 15 s,
+// so a method the server allowed 30 s was abandoned halfway.
+test("a call waits its method's budget, capped as the server caps it", () => {
+  const contract = {
+    service: "test.plugin/probe",
+    methods: [
+      { name: "run", effect: "read", budget: { timeout_ms: 30_000 } },
+      { name: "slow", effect: "read", budget: { timeout_ms: 120_000 } },
+      { name: "quick", effect: "read", budget: { timeout_ms: 1_000 } },
+      { name: "broken", effect: "read", budget: { timeout_ms: Number.NaN } },
+      { name: "health", effect: "read" },
+      "legacy",
+    ],
+  };
+  assert.equal(methodCallTimeoutMs(contract, "run", 15_000), 32_000);
+  assert.equal(methodCallTimeoutMs(contract, "slow", 15_000), 32_000, "a budget past the host maximum is capped");
+  assert.equal(methodCallTimeoutMs(contract, "quick", 15_000), 15_000, "a short budget never waits less than the default");
+  assert.equal(methodCallTimeoutMs(contract, "broken", 15_000), 15_000);
+  assert.equal(methodCallTimeoutMs(contract, "health", 15_000), 15_000);
+  assert.equal(methodCallTimeoutMs(contract, "legacy", 15_000), 15_000);
+  assert.equal(methodCallTimeoutMs(undefined, "run", 15_000), 15_000);
+});
+
+function budgetSession(call: (method: string) => Promise<unknown>) {
+  return makeSession({
+    timeoutMs: 20,
+    hostMaxMethodTimeoutMs: 120,
+    methodBudgetSlackMs: 0,
+    interfaces: [{
+      service: "test.plugin/probe",
+      methods: [
+        { name: "run", effect: "read", budget: { timeout_ms: 80 } },
+        { name: "huge", effect: "read", budget: { timeout_ms: 60_000 } },
+        { name: "health", effect: "read" },
+      ],
+    }],
+    call: (_service, method) => call(method),
+  });
+}
+
+async function timedCall(method: string, call: (method: string) => Promise<unknown>) {
+  const { session, source, posted } = budgetSession(call);
+  const started = performance.now();
+  await session.handle({ source, data: {
+    type: "lattice.plugin.call", nonce: "nonce-123", id: method,
+    service: "test.plugin/probe", method, payload: {},
+  } });
+  return { posted, elapsed: performance.now() - started };
+}
+
+test("a budgeted method outlives the default wait and answers", async () => {
+  const { posted } = await timedCall("run", () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 50)));
+  assert.equal(posted.at(-1)?.type, "lattice.host.result");
+});
+
+test("a budgeted method times out at its own budget, not the default", async () => {
+  const { posted, elapsed } = await timedCall("run", () => new Promise(() => {}));
+  assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
+  assert.ok(elapsed >= 75, `timed out after ${elapsed} ms, before the 80 ms budget`);
+});
+
+test("a method without a budget keeps the default wait", async () => {
+  const { posted, elapsed } = await timedCall("health", () => new Promise(() => {}));
+  assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
+  assert.ok(elapsed < 75, `waited ${elapsed} ms, past the 20 ms default`);
+});
+
+test("a budget above the host maximum waits only the maximum", async () => {
+  const { posted, elapsed } = await timedCall("huge", () => new Promise(() => {}));
+  assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
+  assert.ok(elapsed >= 115 && elapsed < 1_000, `waited ${elapsed} ms for a budget capped at 120 ms`);
+});
+
+test("the repeat after step-up gets the method's budget again", async () => {
+  let calls = 0;
+  const { session, source, posted } = makeSession({
+    timeoutMs: 20,
+    hostMaxMethodTimeoutMs: 120,
+    methodBudgetSlackMs: 0,
+    interfaces: [{ service: "test.plugin/users", methods: [{ name: "reveal", effect: "read", budget: { timeout_ms: 80 } }] }],
+    call: async (_service, _method, payload) => {
+      calls += 1;
+      if (!(payload as { step_up_grant?: string }).step_up_grant) throw new FakeApiError(403, "step_up_required", "step-up");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { ok: true };
+    },
+    stepUp: async () => "grant",
+  });
+  await session.handle({ source, data: {
+    type: "lattice.plugin.call", nonce: "nonce-123", id: "reveal-budget",
+    service: "test.plugin/users", method: "reveal", payload: { user_id: "vu_a" },
+  } });
+  assert.equal(calls, 2);
+  assert.equal(posted.at(-1)?.type, "lattice.host.result");
 });
 
 // Regression: the rate budget used to be consumed only by well-formed calls, so a frame

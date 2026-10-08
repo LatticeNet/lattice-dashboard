@@ -2040,6 +2040,16 @@ export interface PluginInterfaceMethod {
   effect: "read" | "write" | "plan" | string;
   scopes?: string[];
   operator_target_fields?: string[];
+  /** The signed invoke budget, present when the manifest declares one for this method. */
+  budget?: PluginInvokeBudget;
+}
+
+/** A method's signed runtime budget. The server caps timeout_ms at 30000. */
+export interface PluginInvokeBudget {
+  timeout_ms: number;
+  stdout_bytes: number;
+  stderr_bytes: number;
+  host_calls: number;
 }
 
 export interface PluginUIRuntime {

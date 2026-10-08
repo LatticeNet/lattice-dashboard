@@ -4,6 +4,8 @@ export interface BridgeInterfaceMethod {
   name: string;
   effect: "read" | "write" | "plan" | string;
   scopes?: string[];
+  /** The method's signed invoke budget, when its manifest declares one. */
+  budget?: { timeout_ms?: number };
 }
 
 export interface BridgeInterfaceContract {
@@ -409,7 +411,12 @@ interface PluginBridgeOptions {
   maxResizesPerMinute?: number;
   maxClipboardPerMinute?: number;
   maxStatesPerMinute?: number;
+  /** The wait for a method whose manifest declares no budget. */
   timeoutMs?: number;
+  /** The server's cap on a method budget; tests shrink it. */
+  hostMaxMethodTimeoutMs?: number;
+  /** Slack added to a budgeted method's wait; tests shrink it. */
+  methodBudgetSlackMs?: number;
   now?: () => number;
 }
 
@@ -460,6 +467,40 @@ export function bridgeInterfaceFingerprint(interfaces: BridgeInterfaceContract[]
   })));
 }
 
+/** The server's ceiling on a signed method budget (plugin.HostMaxInvokeTimeoutMS). */
+export const HOST_MAX_METHOD_TIMEOUT_MS = 30_000;
+
+/**
+ * Added to a budgeted method's timeout so the server's own timeout answer,
+ * which says what ran out, reaches the frame before the bridge gives up.
+ */
+export const METHOD_BUDGET_SLACK_MS = 2_000;
+
+/**
+ * How long the bridge waits for one call.
+ *
+ * The server stops a call at the method's signed budget (capped at its host
+ * maximum) and at 15 s for a method that declares none, so a fixed 15 s here
+ * cut every budgeted method short: a vpn-core probe run allowed 30 s on the
+ * server was abandoned by the console at 15. A budgeted method now waits its
+ * own budget, capped the way the server caps it, plus the slack; it never
+ * waits less than the default.
+ */
+export function methodCallTimeoutMs(
+  contract: BridgeInterfaceContract | undefined,
+  methodName: string,
+  defaultMs: number,
+  hostMaxMs = HOST_MAX_METHOD_TIMEOUT_MS,
+  slackMs = METHOD_BUDGET_SLACK_MS,
+): number {
+  const method = contract?.methods.find((candidate) =>
+    typeof candidate !== "string" && candidate?.name === methodName,
+  );
+  const budget = typeof method === "object" ? method.budget?.timeout_ms : undefined;
+  if (typeof budget !== "number" || !Number.isFinite(budget) || budget <= 0) return defaultMs;
+  return Math.max(defaultMs, Math.min(budget, hostMaxMs) + slackMs);
+}
+
 export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefined, methodName: string): string[] {
   if (!contract) return [];
   const method = contract.methods.find((candidate) =>
@@ -474,7 +515,8 @@ export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefi
 export class PluginBridgeSession {
   private readonly options: Required<Pick<PluginBridgeOptions,
     "maxPayloadBytes" | "maxResultBytes" | "maxClipboardBytes" | "maxInflight" | "maxCallsPerMinute"
-    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs" | "now"
+    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs"
+    | "hostMaxMethodTimeoutMs" | "methodBudgetSlackMs" | "now"
   >> & PluginBridgeOptions;
 
   private readonly pending = new Map<string, PendingCall>();
@@ -502,6 +544,8 @@ export class PluginBridgeSession {
       // simply stops following until the minute rolls over.
       maxStatesPerMinute: 60,
       timeoutMs: 15_000,
+      hostMaxMethodTimeoutMs: HOST_MAX_METHOD_TIMEOUT_MS,
+      methodBudgetSlackMs: METHOD_BUDGET_SLACK_MS,
       now: () => Date.now(),
       ...options,
     };
@@ -626,6 +670,13 @@ export class PluginBridgeSession {
       return;
     }
 
+    const timeoutMs = methodCallTimeoutMs(
+      this.options.interfaces.find((candidate) => candidate.service === service),
+      method,
+      this.options.timeoutMs,
+      this.options.hostMaxMethodTimeoutMs,
+      this.options.methodBudgetSlackMs,
+    );
     const controller = new AbortController();
     let terminate = (_error: Error) => {};
     const terminal = new Promise<never>((_resolve, reject) => {
@@ -643,7 +694,7 @@ export class PluginBridgeSession {
       terminate,
       cancelled: false,
       timedOut: false,
-      timer: setTimeout(onTimeout, this.options.timeoutMs),
+      timer: setTimeout(onTimeout, timeoutMs),
     };
     this.pending.set(id, pending);
     const payload = message.payload ?? null;
@@ -661,7 +712,7 @@ export class PluginBridgeSession {
           throw new StepUpCancelled();
         }
         if (controller.signal.aborted || !grant) throw new StepUpCancelled();
-        pending.timer = setTimeout(onTimeout, this.options.timeoutMs);
+        pending.timer = setTimeout(onTimeout, timeoutMs);
         return this.options.call(service, method, { ...payload, step_up_grant: grant }, controller.signal);
       }
     };
