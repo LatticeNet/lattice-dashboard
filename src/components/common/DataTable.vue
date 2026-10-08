@@ -103,8 +103,20 @@ const props = withDefaults(
     activeRowId?: string | null;
     /** Client-side page size; 0 disables pagination. */
     pageSize?: number;
-    /** Shows the built-in debounced search box (requires >=1 searchable column). */
+    /**
+     * Shows the built-in debounced search box (requires >=1 searchable column).
+     * A table without it does not own its `<stateKey>.q` key: it neither reads
+     * nor rewrites it, so a page's own query field may keep its text there.
+     * The same holds for `<stateKey>.expr` without the expression filter.
+     */
     searchable?: boolean;
+    /**
+     * The page orders the rows itself (a `sort:` in its query field). The
+     * table then keeps the rows in the order given and shows no header as
+     * sorted; a header click emits `sort`, so the page can drop its order and
+     * let the click take over.
+     */
+    externalSort?: boolean;
     /** Shows the compact expression filter. Defaults on when searchable columns exist. */
     expressionFilter?: boolean;
     /** Placeholder for the search box. */
@@ -189,6 +201,7 @@ const props = withDefaults(
     selectable: false,
     pageSize: 0,
     searchable: false,
+    externalSort: false,
     expressionFilter: true,
     searchPlaceholder: undefined,
     expressionPlaceholder: undefined,
@@ -238,7 +251,7 @@ const label = {
   clearSelection: computed(() => props.clearSelectionLabel ?? t("common.table.clearSelection")),
 };
 
-const emit = defineEmits<{ retry: []; "row-select": [row: T] }>();
+const emit = defineEmits<{ retry: []; "row-select": [row: T]; sort: [key: string] }>();
 const router = useRouter();
 const instance = getCurrentInstance();
 
@@ -568,6 +581,7 @@ const sortDir = ref<SortDir>(seed.dir);
 
 function toggleSort(column: DataTableColumn<T>): void {
   if (!column.sortable) return;
+  emit("sort", column.key);
   if (sortKey.value !== column.key) {
     sortKey.value = column.key;
     sortDir.value = "asc";
@@ -580,6 +594,18 @@ function toggleSort(column: DataTableColumn<T>): void {
     sortKey.value = null;
   } else sortDir.value = "asc";
 }
+
+// The page took over the order (a sort: typed in its query field): the
+// header's own sort steps aside, so the two never disagree on screen.
+watch(
+  () => props.externalSort,
+  (external) => {
+    if (!external) return;
+    sortKey.value = null;
+    sortDir.value = null;
+  },
+  { immediate: true },
+);
 
 function compareValues(a: unknown, b: unknown): number {
   // null/undefined always sort last regardless of direction
@@ -596,7 +622,7 @@ function compareValues(a: unknown, b: unknown): number {
 }
 
 const sortedRows = computed(() => {
-  if (!sortKey.value || !sortDir.value) return filteredRows.value;
+  if (props.externalSort || !sortKey.value || !sortDir.value) return filteredRows.value;
   const key = sortKey.value;
   const column = props.columns.find((c) => c.key === key);
   if (!column) return filteredRows.value;
@@ -607,7 +633,7 @@ const sortedRows = computed(() => {
 
 function ariaSortFor(column: DataTableColumn<T>): "ascending" | "descending" | "none" | undefined {
   if (!column.sortable) return undefined;
-  if (sortKey.value !== column.key || !sortDir.value) return "none";
+  if (props.externalSort || sortKey.value !== column.key || !sortDir.value) return "none";
   return sortDir.value === "asc" ? "ascending" : "descending";
 }
 
@@ -695,11 +721,41 @@ const urlState = computed<TableUrlState>(() => ({
 
 if (props.stateKey) {
   const stateKey = props.stateKey;
+  const params = tableStateParams(stateKey);
+
+  /*
+   * A table owns `q` only with its search box, and `expr` only with its
+   * expression filter. Without them the page may keep its own query field's
+   * text under the same key (Monitoring's ?monitors.q=), so the table leaves
+   * that key exactly as the address has it: never read, never trimmed, never
+   * dropped.
+   */
+  const ownsSearch = () => props.searchable && props.columns.some((c) => c.searchable);
+  const ownsExpr = () => ownsSearch() && props.expressionFilter && props.columns.some((c) => c.searchable || c.filterable);
+
+  /** The table's state for the address bar, with the keys it does not own as the address has them. */
+  const forAddress = (state: TableUrlState, current: TableUrlState): TableUrlState => ({
+    ...state,
+    q: ownsSearch() ? state.q : current.q,
+    expr: ownsExpr() ? state.expr : current.expr,
+  });
+
+  /** Write the table's keys, carrying the ones it does not own through untouched. */
+  const writeOwned = (query: typeof route.query, state: TableUrlState) => {
+    const next = writeTableUrlState(query, stateKey, state);
+    for (const [owned, name] of [[ownsSearch(), params.q], [ownsExpr(), params.expr]] as const) {
+      if (owned) continue;
+      if (query[name] === undefined) delete next[name];
+      else next[name] = query[name]!;
+    }
+    return next;
+  };
 
   watch(urlState, (state) => {
     const current = readTableUrlState(route.query, stateKey, sortableKeys.value);
-    if (tableUrlStatesEqual(current, state)) return;
-    router.replace({ query: writeTableUrlState(route.query, stateKey, state) }).catch(() => {});
+    const desired = forAddress(state, current);
+    if (tableUrlStatesEqual(current, desired)) return;
+    router.replace({ query: writeOwned(route.query, desired) }).catch(() => {});
   });
 
   /**
@@ -707,11 +763,13 @@ if (props.stateKey) {
    * a column that is not sortable, a direction that is not asc/desc, a page
    * below one, or a search on a table with nothing searchable. The URL then
    * describes the table actually on screen, so copying it hands over the same
-   * view rather than the same broken request.
+   * view rather than the same broken request. A key the table does not own is
+   * not its to correct.
    */
   onMounted(() => {
-    const canonical = writeTableUrlState(route.query, stateKey, urlState.value);
-    const owned = Object.values(tableStateParams(stateKey));
+    const current = readTableUrlState(route.query, stateKey, sortableKeys.value);
+    const canonical = writeOwned(route.query, forAddress(urlState.value, current));
+    const owned = Object.values(params);
     const drifted = owned.some((name) => (route.query[name] ?? undefined) !== (canonical[name] ?? undefined));
     if (drifted) router.replace({ query: canonical }).catch(() => {});
   });
@@ -720,18 +778,18 @@ if (props.stateKey) {
     () => route.query,
     (query) => {
       const incoming = readTableUrlState(query, stateKey, sortableKeys.value);
-      if (tableUrlStatesEqual(incoming, urlState.value)) return;
+      if (tableUrlStatesEqual(incoming, forAddress(urlState.value, incoming))) return;
       applyingFromUrl = true;
       nextTick(() => {
         applyingFromUrl = false;
       });
       // Mirror into both the debounced term and the visible input so the box
       // shows what is actually filtering.
-      if (incoming.q !== searchTerm.value) {
+      if (ownsSearch() && incoming.q !== searchTerm.value) {
         searchInput.value = incoming.q;
         searchTerm.value = incoming.q;
       }
-      if (incoming.expr !== expressionTerm.value) {
+      if (ownsExpr() && incoming.expr !== expressionTerm.value) {
         expressionInput.value = incoming.expr;
         expressionTerm.value = incoming.expr;
       }
