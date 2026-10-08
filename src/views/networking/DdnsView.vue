@@ -17,7 +17,7 @@ import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import { useNow } from "@vueuse/core";
-import { CloudUpload, Pencil, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import { CloudUpload, Pencil, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-vue-next";
 
 import { api, ApiError, unwrap, type DDNSUpsertRequest, type DDNSView, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -191,6 +191,11 @@ const sheet = useRouteOpen();
 /** A run error as readable text, with Cloudflare's refusal in the console's language. */
 function errorText(lastError: string | undefined): string {
   return ddnsErrorText(lastError, (status, said) => t("networking.ddns.cloudflareRefused", { status, said }));
+}
+
+/** A failing row carries its reason on a line under it. */
+function failureShown(profile: DDNSView): boolean {
+  return assessmentOf(profile).state === "failing" && !!profile.last_error?.trim();
 }
 
 function firstLine(text: string): string {
@@ -881,6 +886,7 @@ async function confirmRun() {
       :expression-filter="false"
       :search-placeholder="$t('networking.ddns.searchPlaceholder')"
       :row-click="(profile, el) => sheet.open(profile.id, el)"
+      :row-expanded="failureShown"
       :active-row-id="sheet.openId.value"
       :group-key="grouping === 'node' ? (profile) => profile.node_id : undefined"
       :group-order="groupOrder"
@@ -973,16 +979,18 @@ async function confirmRun() {
         <span class="font-medium">{{ nameOf(profile) }}</span>
       </template>
       <template #cell-state="{ row: profile }">
-        <div class="flex min-w-0 flex-col gap-0.5 text-xs">
-          <span :class="cn('whitespace-nowrap', STATE_TONE[assessmentOf(profile).state])">
-            {{ $t(`networking.ddns.state.${assessmentOf(profile).state}`) }}
-          </span>
-          <span
-            v-if="assessmentOf(profile).state === 'failing' && profile.last_error"
-            class="line-clamp-3 max-w-[26rem] min-w-[14rem] whitespace-normal break-words text-muted-foreground"
-            :title="errorText(profile.last_error)"
-          >{{ errorText(profile.last_error) }}</span>
-        </div>
+        <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[assessmentOf(profile).state])">
+          {{ $t(`networking.ddns.state.${assessmentOf(profile).state}`) }}
+        </span>
+      </template>
+      <!-- Why a write failed, on a line of its own under the row: in a column
+           it was squeezed, and at 375 px it ran under the pinned actions. The
+           detail line spans the row and wraps to the visible width. -->
+      <template #row-detail="{ row: profile }">
+        <p class="flex items-start gap-2 text-xs text-destructive" data-testid="ddns-failure-reason">
+          <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span class="min-w-0 whitespace-pre-line [overflow-wrap:anywhere]">{{ errorText(profile.last_error) }}</span>
+        </p>
       </template>
       <template #cell-node="{ row: profile }">
         <NodeLabel :id="profile.node_id" class="text-xs" />
