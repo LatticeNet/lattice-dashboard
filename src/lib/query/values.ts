@@ -77,12 +77,27 @@ export function parseDuration(text: string): number | undefined {
   return total;
 }
 
-/** A moment as epoch milliseconds: `2026-10-01`, `2026-10-01T12:00`, full ISO. */
+const MOMENT = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * A moment as epoch milliseconds: `2026-10-01`, `2026-10-01T12:00`, full ISO.
+ * Without a zone the moment is the operator's local time, for a bare date
+ * (local midnight) as much as for a date and time; Date.parse would read
+ * the bare date as UTC and the two forms would disagree. A date the calendar
+ * does not have (2026-02-30) is refused, not rolled into March.
+ */
 export function parseTime(text: string): number | undefined {
-  const src = text.trim();
-  if (!/^\d{4}-\d{2}-\d{2}/.test(src)) return undefined;
-  const ms = Date.parse(src);
-  return Number.isNaN(ms) ? undefined : ms;
+  const match = MOMENT.exec(text.trim());
+  if (!match) return undefined;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map((part) => Number(part ?? 0)) as [number, number, number, number, number, number];
+  const millis = Number((match[7] ?? "0").padEnd(3, "0"));
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return undefined;
+  if (hour > 23 || minute > 59 || second > 59) return undefined;
+  const zone = match[8];
+  if (!zone) return new Date(year, month - 1, day, hour, minute, second, millis).getTime();
+  const offset = zone.toUpperCase() === "Z" ? 0 : (zone[0] === "-" ? -1 : 1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(-2)));
+  return Date.UTC(year, month - 1, day, hour, minute, second, millis) - offset * 60_000;
 }
 
 /** A time a field holds, as epoch ms; the zero time Go serialises counts as never. */

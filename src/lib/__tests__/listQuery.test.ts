@@ -8,7 +8,9 @@ import { completeQuery } from "../query/complete.ts";
 import { applyQuery, compileQuery, describeFields, type CompiledQuery, type QuerySchema } from "../query/engine.ts";
 import { nodeQuerySchema } from "../query/nodeFields.ts";
 import { parseQuery, withoutSorts, type QueryNode } from "../query/syntax.ts";
-import { compareVersions, parseDuration, parseNumber } from "../query/values.ts";
+import { compareVersions, parseDuration, parseNumber, parseTime } from "../query/values.ts";
+import type { NodeGuardState } from "../../views/networking/sshGuardModel.ts";
+import { sshGuardQuerySchema, type GuardRowFacts } from "../../views/networking/sshGuardQuery.ts";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures                                                            */
@@ -168,7 +170,6 @@ test("errors carry the code and the offending span", () => {
     ["a AND", "danglingOperator", 2, 5],
     ["a -", "nothingToNegate", 2, 3],
     ["()", "emptyGroup", 0, 2],
-    ["a, b", "strayComma", 1, 2],
     ["NOT(a, b)", "notArity", 0, 9],
     ["AND()", "callArity", 0, 5],
     ["status:offline,", "emptyValue", 14, 15],
@@ -478,4 +479,79 @@ test("a page field shadows a shared field of the same name, and the menu offers 
   assert.deepEqual(applyQuery(rows, (c as { ok: true; query: CompiledQuery<Row> }).query).map((r) => r.region), ["Tokyo"]);
   const info = describeFields(s, rows);
   assert.deepEqual(info.map((f) => [f.key, f.aliases]), [["region", []], ["georegion", ["geo"]]]);
+});
+
+/* ------------------------------------------------------------------ */
+/* Review follow-ups                                                   */
+/* ------------------------------------------------------------------ */
+
+test("outside a call a comma separates terms, so pasted text never fails", () => {
+  assert.deepEqual(tree("a, b"), ["and", "a", "b"]);
+  assert.deepEqual(tree("cd,VDS"), ["and", "cd", "VDS"]);
+  assert.deepEqual(tree("(hk, sg) OR x"), ["or", ["and", "hk", "sg"], "x"]);
+  assert.deepEqual(tree(", a ,"), "a");
+  // A comma that touches a field value still lists values, and inside a call it separates arguments.
+  assert.deepEqual(tree("tag:a,b c"), ["and", "tag:a,b", "c"]);
+  assert.deepEqual(tree("OR(a, b), c"), ["and", ["or", "a", "b"], "c"]);
+  assert.deepEqual(run("edge, cd"), ["n-hk"]);
+});
+
+test("a time without a zone is local, and a date the calendar lacks is refused", () => {
+  assert.equal(parseTime("2026-10-01"), new Date(2026, 9, 1).getTime());
+  assert.equal(parseTime("2026-10-01T12:30"), new Date(2026, 9, 1, 12, 30).getTime());
+  assert.equal(parseTime("2026-10-01 12:30:15.250"), new Date(2026, 9, 1, 12, 30, 15, 250).getTime());
+  assert.equal(parseTime("2026-10-01T12:00Z"), Date.UTC(2026, 9, 1, 12));
+  assert.equal(parseTime("2026-10-01T12:00+08:00"), Date.UTC(2026, 9, 1, 4));
+  assert.equal(parseTime("2026-10-01T12:00-0530"), Date.UTC(2026, 9, 1, 17, 30));
+  for (const bad of ["2026-02-30", "2026-13-01", "2026-10-01T24:00", "2026-10-01T12:60", "2026-10-01x", "10/01/2026"]) {
+    assert.equal(parseTime(bad), undefined, bad);
+  }
+});
+
+test("SSH Guard: board fields and node fields reached through the row", () => {
+  const byId = new Map(FLEET.map((n) => [n.id, n]));
+  const states = ["n-hk", "n-fsn", "ghost"].map((nodeId) => ({ nodeId, name: byId.get(nodeId)?.name ?? nodeId }) as NodeGuardState);
+  const facts: Record<string, GuardRowFacts> = {
+    "n-hk": {
+      node: byId.get("n-hk"),
+      posture: "password_open",
+      gate: false,
+      stage: "open",
+      state: "open",
+      scope: "enrolled",
+      evidence: { status: "fresh", collectedAt: ago(30), sshd: { kind: "legacy", ports: [22], text: ":22" }, password: { enabled: true, observedAt: ago(30) } },
+      knock: "no_knock",
+      reverting: false,
+      armable: true,
+    } as GuardRowFacts,
+    "n-fsn": {
+      node: byId.get("n-fsn"),
+      posture: "secured",
+      gate: true,
+      stage: "confirmed",
+      state: "confirmed",
+      scope: "enrolled",
+      evidence: { status: "stale", collectedAt: ago(2 * 3600), sshd: { kind: "gated", ports: [58394], text: ":58394 only" } },
+      knock: "installed",
+      reverting: false,
+      armable: false,
+    } as GuardRowFacts,
+    ghost: { posture: "unknown", gate: false, stage: "open", state: "open", scope: "undecided", knock: "unknown", reverting: false, armable: false } as GuardRowFacts,
+  };
+  const guard = sshGuardQuerySchema((state) => facts[state.nodeId]);
+  const find = (query: string) => {
+    const compiled = compileQuery(query, guard);
+    if (!compiled.ok) throw new Error(`${query}: ${compiled.error.code}`);
+    return applyQuery(states, compiled.query, NOW).map((state) => state.nodeId);
+  };
+  assert.deepEqual(find("posture:password_open"), ["n-hk"]);
+  assert.deepEqual(find("posture:not_reported"), ["ghost"]);
+  assert.deepEqual(find("port:22 -is:gate"), ["n-hk"]);
+  assert.deepEqual(find("knock:none"), ["n-hk"]);
+  assert.deepEqual(find("is:stale"), ["n-fsn"]);
+  assert.deepEqual(find("observed>1h"), ["n-fsn"]);
+  // A bare word ranks the rows it matches first, so compare the set.
+  assert.deepEqual(find("tag:edge OR ghost").sort(), ["ghost", "n-hk"]);
+  assert.deepEqual(find("is:armable OR is:gate sort:-observed"), ["n-hk", "n-fsn"]);
+  assert.equal(compileQuery("posture:locked", guard).ok, false);
 });

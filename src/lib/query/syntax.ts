@@ -16,6 +16,8 @@
  * - `field:value` is a term. The operator is `:` (contains), `:=` or `=`
  *   (exact), or a comparison `>`, `>=`, `<`, `<=` (also written `:>` and so
  *   on). `field:a,b` lists values, any of which may match.
+ * - Anywhere else a comma separates terms like a space does, so `hk, sg`
+ *   or a pasted `cd, VDS` searches both words instead of failing.
  * - Double quotes keep a value whole: `name:"edge sg"`, `"OR"`. Inside quotes
  *   `\"` and `\\` stand for a quote and a backslash.
  * - `sort:field` or `sort:-field` orders the result; repeat it, or list
@@ -88,7 +90,6 @@ export type QueryErrorCode =
   | "danglingOperator"
   | "nothingToNegate"
   | "emptyGroup"
-  | "strayComma"
   | "notArity"
   | "callArity"
   | "sortNested"
@@ -295,10 +296,8 @@ class Parser {
     const ctx: Ctx = { inCall: false, nested: false };
     const tree = this.parseAnd(ctx);
     const tok = this.peek();
-    if (tok) {
-      if (tok.t === "rparen") fail("unexpectedParen", tok.start, tok.end);
-      fail("strayComma", tok.start, tok.end);
-    }
+    // Outside a call only a ")" stops the top level.
+    if (tok) fail("unexpectedParen", tok.start, tok.end);
     return tree;
   }
 
@@ -307,7 +306,11 @@ class Parser {
     let pendingAnd: Tok | undefined;
     while (!this.atStop(ctx)) {
       const tok = this.peek()!;
-      if (tok.t === "comma") fail("strayComma", tok.start, tok.end);
+      if (tok.t === "comma") {
+        // Outside a call a comma separates terms as a space does (a call stops at it above).
+        this.next();
+        continue;
+      }
       // After an operand AND is the operator, even with "(" after it; right
       // after that operator, AND( is a call: a AND AND(b, c).
       if (items.length > 0 && this.isKeyword(tok, "AND") && !(pendingAnd && this.isCall())) {
@@ -372,10 +375,7 @@ class Parser {
         if (this.peek()?.t === "rparen") fail("emptyGroup", tok.start, this.peek()!.end);
         const inner = this.parseAnd({ inCall: false, nested: true });
         const close = this.peek();
-        if (close?.t !== "rparen") {
-          if (close?.t === "comma") fail("strayComma", close.start, close.end);
-          fail("unclosedParen", tok.start, tok.end);
-        }
+        if (close?.t !== "rparen") fail("unclosedParen", tok.start, tok.end);
         this.next();
         if (!inner) fail("emptyGroup", tok.start, close.end);
         return inner;
@@ -383,9 +383,8 @@ class Parser {
       case "rparen":
         return fail("unexpectedParen", tok.start, tok.end);
       case "comma":
-        return fail("strayComma", tok.start, tok.end);
       case "pipe":
-        return fail("danglingOperator", tok.start, tok.end, { op: "|" });
+        return fail("danglingOperator", tok.start, tok.end, { op: tok.t === "pipe" ? "|" : "," });
       default:
         break;
     }

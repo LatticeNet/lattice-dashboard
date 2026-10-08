@@ -151,8 +151,8 @@ function refresh(withRecent = false): void {
     const result = completeQuery(text, caret, fields.value);
     const typed = text.slice(result.start, caret).toLowerCase();
     items.value = result.items
-      // A value already typed in full has nothing left to complete.
-      .filter((item) => !(item.kind === "value" && item.label.toLowerCase() === typed && text.slice(caret, result.end) === ""))
+      // A value, flag or sort key already typed in full has nothing left to complete.
+      .filter((item) => !(item.insert.trimEnd().toLowerCase() === typed && text.slice(caret, result.end) === ""))
       .map((item, i) => ({ key: `${item.kind}-${i}-${item.label}`, ...item, start: result.start, end: result.end }));
   }
   active.value = -1;
@@ -491,6 +491,7 @@ defineExpose({ focus: () => input.value?.focus() });
                 </template>
               </dl>
               <p class="mt-2 text-xs text-muted-foreground">{{ t('common.listQuery.help.precedence') }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ t('common.listQuery.help.missing', { negated: '-cpu<50', plain: 'cpu>=50' }) }}</p>
 
               <p class="mt-3 text-xs font-medium text-muted-foreground">{{ t('common.listQuery.help.fields') }}</p>
               <dl class="mt-1 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">

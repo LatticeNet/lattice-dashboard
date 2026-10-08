@@ -117,6 +117,11 @@ const props = withDefaults(
      * let the click take over.
      */
     externalSort?: boolean;
+    /**
+     * With externalSort, the column the page's order follows (its first sort
+     * key, when a column shows that field), so the header still carries the mark.
+     */
+    externalSortMark?: { key: string; dir: "asc" | "desc" } | null;
     /** Shows the compact expression filter. Defaults on when searchable columns exist. */
     expressionFilter?: boolean;
     /** Placeholder for the search box. */
@@ -202,6 +207,7 @@ const props = withDefaults(
     pageSize: 0,
     searchable: false,
     externalSort: false,
+    externalSortMark: null,
     expressionFilter: true,
     searchPlaceholder: undefined,
     expressionPlaceholder: undefined,
@@ -631,10 +637,18 @@ const sortedRows = computed(() => {
   return [...filteredRows.value].sort((a, b) => compareValues(rawValue(a, column), rawValue(b, column)) * dir);
 });
 
+/** The order the headers show: the page's when it orders the rows, the table's own otherwise. */
+const shownSort = computed<{ key: string | null; dir: SortDir }>(() =>
+  props.externalSort
+    ? { key: props.externalSortMark?.key ?? null, dir: props.externalSortMark?.dir ?? null }
+    : { key: sortKey.value, dir: sortDir.value },
+);
+
 function ariaSortFor(column: DataTableColumn<T>): "ascending" | "descending" | "none" | undefined {
   if (!column.sortable) return undefined;
-  if (props.externalSort || sortKey.value !== column.key || !sortDir.value) return "none";
-  return sortDir.value === "asc" ? "ascending" : "descending";
+  const { key, dir } = shownSort.value;
+  if (key !== column.key || !dir) return "none";
+  return dir === "asc" ? "ascending" : "descending";
 }
 
 /* ----------------------------- grouping ----------------------------- */
@@ -1032,12 +1046,12 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 >
                   <span>{{ column.label }}</span>
                   <ChevronUp
-                    v-if="sortKey === column.key && sortDir === 'asc'"
+                    v-if="shownSort.key === column.key && shownSort.dir === 'asc'"
                     class="size-3.5"
                     aria-hidden="true"
                   />
                   <ChevronDown
-                    v-else-if="sortKey === column.key && sortDir === 'desc'"
+                    v-else-if="shownSort.key === column.key && shownSort.dir === 'desc'"
                     class="size-3.5"
                     aria-hidden="true"
                   />

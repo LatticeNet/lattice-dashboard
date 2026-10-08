@@ -238,6 +238,46 @@ function clearPanel(): void {
   osFilter.value = [];
 }
 
+function clearSearch(): void {
+  queryText.value = "";
+  search.value = "";
+}
+
+interface EmptyAction {
+  key: string;
+  label: string;
+  run: () => void;
+}
+/**
+ * What an empty list offers: one reset per source of narrowing, so the
+ * operator drops the one that conflicts and keeps the rest. Clearing all of
+ * them stays with the applied-filters strip above the list.
+ */
+const emptyActions = computed<EmptyAction[]>(() => [
+  ...(query.filtering.value ? [{ key: "search", label: t("fleet.nodes.filters.clearSearch"), run: clearSearch }] : []),
+  ...(statusFilter.value !== "all"
+    ? [{ key: "status", label: t("fleet.nodes.filters.showAllStatuses"), run: () => (statusFilter.value = "all") }]
+    : []),
+  ...(panelCount.value > 0 ? [{ key: "panel", label: t("fleet.nodes.filters.clearChips"), run: clearPanel }] : []),
+]);
+
+/** Query field to the column that shows it, for the header mark of a typed sort:. */
+const SORT_COLUMN: Record<string, string> = {
+  name: "name",
+  ip: "address",
+  agent: "agent",
+  last_seen: "lastSeen",
+  cpu: "cpu",
+  tag: "tags",
+  mem: "memory",
+  disk: "disk",
+};
+const sortMark = computed(() => {
+  const first = query.active.value.sorts[0];
+  const column = first && SORT_COLUMN[first.field.key];
+  return column ? { key: column, dir: first.desc ? ("desc" as const) : ("asc" as const) } : null;
+});
+
 function clearFilters(): void {
   // One write: three bound keys written in one tick build on each other (useOwnedRoute).
   queryText.value = "";
@@ -885,6 +925,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         :selectable="showSelection"
         :expression-filter="false"
         :external-sort="query.sorted.value"
+        :external-sort-mark="sortMark"
         :class="query.invalid.value && 'opacity-50'"
         :inert="query.invalid.value || undefined"
         :show-summary="false"
@@ -903,10 +944,12 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             :title="$t('fleet.nodes.filters.noMatchTitle')"
             :description="query.filtering.value && outsideFilters ? $t('fleet.nodes.query.conflict') : $t('fleet.nodes.filters.noMatchDescription')"
           >
-            <Button variant="outline" size="sm" type="button" @click="clearFilters">
-              <X aria-hidden="true" />
-              {{ $t('fleet.nodes.filters.clear') }}
-            </Button>
+            <div class="flex flex-wrap justify-center gap-2" data-testid="nodes-empty-actions">
+              <Button v-for="action in emptyActions" :key="action.key" variant="outline" size="sm" type="button" @click="action.run()">
+                <X aria-hidden="true" />
+                {{ action.label }}
+              </Button>
+            </div>
           </EmptyState>
           <EmptyState v-else :icon="Server" :title="$t('fleet.nodes.list.emptyTitle')" :description="$t('fleet.nodes.list.emptyDescription')">
             <Button v-if="canAdminNodes" size="sm" type="button" @click="enrollOpen = true">
@@ -1018,8 +1061,21 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           v-else-if="nodesQuery.data.value !== undefined && shown.length === 0"
           :icon="filtered ? Search : Server"
           :title="filtered ? $t('fleet.nodes.filters.noMatchTitle') : $t('fleet.nodes.list.emptyTitle')"
-          :description="filtered ? $t('fleet.nodes.filters.noMatchDescription') : $t('fleet.nodes.list.emptyDescription')"
-        />
+          :description="
+            !filtered
+              ? $t('fleet.nodes.list.emptyDescription')
+              : query.filtering.value && outsideFilters
+                ? $t('fleet.nodes.query.conflict')
+                : $t('fleet.nodes.filters.noMatchDescription')
+          "
+        >
+          <div v-if="filtered" class="flex flex-wrap justify-center gap-2">
+            <Button v-for="action in emptyActions" :key="action.key" variant="outline" size="sm" type="button" @click="action.run()">
+              <X aria-hidden="true" />
+              {{ action.label }}
+            </Button>
+          </div>
+        </EmptyState>
         <div v-else :class="cn('space-y-5', query.invalid.value && 'opacity-50')" :inert="query.invalid.value || undefined">
           <section v-for="group in cardGroups" :key="group.key" class="space-y-2" :aria-label="groupBy === 'none' ? undefined : groupLabel(group.key)">
             <h3 v-if="groupBy !== 'none'" class="flex flex-wrap items-baseline gap-x-2 text-sm">
