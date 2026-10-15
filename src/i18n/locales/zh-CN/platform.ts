@@ -1322,6 +1322,7 @@ export default {
       ruleEventsLabel: "事件类型",
       availableEvents: "可用事件",
       ruleEventsHint: "多个事件 id 用逗号分隔。* 匹配所有事件。",
+      rulePluginHint: "插件消息的类型是 plugin.<插件 id>.message，例如 plugin.latticenet.sub-store.message；规则里要写完整的类型。",
       nodeOfflineHint: "node.offline 在节点连续十分钟没有心跳后发送，每次离线只发一次；发过离线提醒的节点恢复后，下一次检查就发 node.online。给节点加标签 offline-alert-after:3h（或 :45m，范围 2m 到 168h）可单独设置延迟，加 no-offline-alert 则两种都不发。离线记录照常保留。",
       ruleChannelsLabel: "渠道",
       createChannelFirst: "请先创建渠道,再添加路由规则。",

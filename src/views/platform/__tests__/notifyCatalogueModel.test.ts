@@ -193,9 +193,10 @@ test("every catalogue entry and category has words in both locales", () => {
 
 test("filter options from the server's catalogue: grouped in its category order, its webhook and new types included", () => {
   const groups = eventOptionGroups(SERVER);
+  // A category only the server knows comes after the catalogue's own, and general stays last.
   assert.deepEqual(
     groups.map((g) => g.category),
-    ["nodes", "services", "monitors", "agents", "ssh", "auth", "quota", "inventory", "notify", "webhooks", "general", "probes"],
+    ["nodes", "services", "monitors", "agents", "ssh", "auth", "quota", "inventory", "notify", "webhooks", "probes", "general"],
   );
   const byCategory = Object.fromEntries(groups.map((g) => [g.category, g.options.map((o) => o.type)]));
   assert.deepEqual(byCategory.nodes, ["node.offline", "node.online"]);
@@ -230,11 +231,25 @@ test("filter options without a catalogue: the mirror, the types the rows carry, 
   assert.deepEqual(byCategory.general, ["generic", "no.such.type"]);
 });
 
-test("the rule form lists what a rule can name: exact types, no pattern and nothing only seen", () => {
-  const fallback = ruleEventGroups(null).flatMap((g) => g.options.map((o) => o.type));
-  assert.deepEqual(fallback, CONTRACT.map(([type]) => type));
-  const server = ruleEventGroups(SERVER).flatMap((g) => g.options.map((o) => o.type));
-  assert.ok(server.includes("backup.finished"));
-  assert.ok(server.includes("probe.down"));
-  assert.ok(!server.some((type) => type.includes("<")));
+test("a row's own fields place its type in the filter, so a type never reads two ways on one screen", () => {
+  // A slice P server whose catalogue read failed: the row says probes and warning, the mirror knows nothing.
+  const groups = eventOptionGroups(null, [row({ event_type: "probe.down", category: "probes", severity: "warning", recovery: false, icon: "radar" })]);
+  const probes = groups.find((g) => g.category === "probes");
+  assert.deepEqual(probes?.options.map((o) => [o.type, o.tone, o.icon, o.labelKey]), [["probe.down", "warning", "bell", ""]]);
+  assert.equal(groups.find((g) => g.category === "general")?.options.some((o) => o.type === "probe.down"), false);
+  assert.equal(groups.at(-1)?.category, "general");
+});
+
+test("the rule form lists what a rule can name, and shows the plugin pattern flagged as a shape", () => {
+  const fallback = ruleEventGroups(null);
+  assert.deepEqual(fallback.flatMap((g) => g.options.filter((o) => !o.pattern).map((o) => o.type)), CONTRACT.map(([type]) => type));
+  // The pattern sits in its own category, before webhooks and general, flagged so it is never taken for a type.
+  assert.deepEqual(fallback.map((g) => g.category).slice(-2), ["plugins", "general"]);
+  const plugin = fallback.find((g) => g.category === "plugins")!.options;
+  assert.deepEqual(plugin.map((o) => [o.type, o.pattern, o.icon, o.labelKey]), [["plugin.<id>.message", true, "puzzle", "plugin_message"]]);
+  const server = ruleEventGroups(SERVER);
+  const types = server.flatMap((g) => g.options.filter((o) => !o.pattern).map((o) => o.type));
+  assert.ok(types.includes("backup.finished"));
+  assert.ok(types.includes("probe.down"));
+  assert.deepEqual(server.map((g) => g.category).slice(-4), ["plugins", "webhooks", "probes", "general"]);
 });

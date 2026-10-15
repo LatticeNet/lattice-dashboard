@@ -1445,6 +1445,7 @@ export default {
       ruleEventsLabel: "Event types",
       availableEvents: "Available events",
       ruleEventsHint: "Use comma-separated event ids. * matches every event.",
+      rulePluginHint: "A plugin's messages arrive as plugin.<plugin id>.message, for example plugin.latticenet.sub-store.message; a rule names that full type.",
       nodeOfflineHint: "node.offline fires after ten minutes without a heartbeat, once per outage, and node.online follows at the next check after an outage that was sent. Tag a node offline-alert-after:3h (or :45m, from 2m to 168h) to give it its own delay, or no-offline-alert to keep it off both. The outage is recorded either way.",
       ruleChannelsLabel: "Channels",
       createChannelFirst: "Create a channel before adding a routing rule.",

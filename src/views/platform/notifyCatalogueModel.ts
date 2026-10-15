@@ -283,7 +283,8 @@ export const TONE_DISC: Record<NotifyTone, string> = {
   critical: "bg-destructive/10 text-destructive",
   warning: "bg-warning/10 text-warning-text",
   notice: "bg-info/10 text-info-text",
-  quiet: "bg-muted text-muted-foreground",
+  // The ring keeps the disc's edge on a hovered or open row, whose fill is the same muted step.
+  quiet: "bg-muted text-muted-foreground ring-1 ring-inset ring-border",
   recovered: "bg-success/10 text-success-text",
 };
 
@@ -302,6 +303,8 @@ export interface EventOption {
   description: string;
   icon: NotifyIconName;
   tone: NotifyTone;
+  /** A family of types (plugin.<id>.message), listed in the rule form so its shape is visible; never a filter value. */
+  pattern?: true;
 }
 
 export interface EventOptionGroup {
@@ -311,8 +314,12 @@ export interface EventOptionGroup {
   options: EventOption[];
 }
 
-function optionFor(type: string, catalogue: NotifyCatalogueResponse | null | undefined, webhook: boolean): { category: string; option: EventOption } {
-  const presentation = presentDelivery({ event_type: type, source: webhook ? "webhook" : "server" }, catalogue);
+type PresentedRow = Pick<NotifyDelivery, "event_type" | "source"> & Partial<Pick<NotifyDelivery, "category" | "severity" | "recovery" | "icon">>;
+
+/** An option drawn as its row is: the fields a row carries win here too, so a type never reads two ways on one screen. */
+function optionFor(row: PresentedRow, catalogue: NotifyCatalogueResponse | null | undefined): { category: string; option: EventOption } {
+  const type = row.event_type;
+  const presentation = presentDelivery(row, catalogue);
   return {
     category: presentation.category,
     option: { type, labelKey: presentation.labelKey, description: presentation.description, icon: presentation.icon, tone: notifyTone(presentation) },
@@ -330,7 +337,7 @@ function optionFor(type: string, catalogue: NotifyCatalogueResponse | null | und
  */
 export function eventOptionGroups(
   catalogue: NotifyCatalogueResponse | null | undefined,
-  rows: readonly Pick<NotifyDelivery, "event_type" | "source">[] = [],
+  rows: readonly PresentedRow[] = [],
   current = "",
 ): EventOptionGroup[] {
   const table = catalogueOf(catalogue);
@@ -340,10 +347,11 @@ export function eventOptionGroups(
     if (!labels.has(category.id)) labels.set(category.id, category.label);
   }
   const seen = new Set<string>();
-  const add = (type: string, webhook: boolean) => {
+  const add = (row: PresentedRow) => {
+    const type = row.event_type;
     if (!type || type === "*" || seen.has(type)) return;
     seen.add(type);
-    const { category, option } = optionFor(type, catalogue, webhook);
+    const { category, option } = optionFor(row, catalogue);
     let group = groups.get(category);
     if (!group) {
       group = { category, label: labels.get(category) ?? category, options: [] };
@@ -351,14 +359,16 @@ export function eventOptionGroups(
     }
     group.options.push(option);
   };
-  for (const known of table.types) add(known.type, false);
-  for (const known of table.webhook_types ?? []) add(known.type, true);
-  const extras = rows.map((row) => ({ type: row.event_type, webhook: row.source === "webhook" }));
-  if (current) extras.push({ type: current, webhook: false });
-  extras.sort((a, b) => a.type.localeCompare(b.type));
-  for (const extra of extras) add(extra.type, extra.webhook);
-  const order = [...labels.keys()];
+  for (const known of table.types) add({ event_type: known.type, source: "server" });
+  for (const known of table.webhook_types ?? []) add({ event_type: known.type, source: "webhook" });
+  const extras: PresentedRow[] = [...rows];
+  if (current) extras.push({ event_type: current, source: "server" });
+  extras.sort((a, b) => a.event_type.localeCompare(b.event_type));
+  for (const extra of extras) add(extra);
+  // The catalogue's order, a category only the server knows after it, and general always last.
+  const order = [...labels.keys()].filter((id) => id !== "general");
   const rank = (id: string) => {
+    if (id === "general") return order.length + 1;
     const at = order.indexOf(id);
     return at < 0 ? order.length : at;
   };
@@ -367,9 +377,30 @@ export function eventOptionGroups(
 
 /**
  * The rule form's list of event types: what a rule can name, which is an
- * exact type (notifyRuleMatches compares types exactly, or "*"), so a pattern
- * is left out and so are types only seen in the log.
+ * exact type (notifyRuleMatches compares types exactly, or "*"), so types
+ * only seen in the log are left out. A pattern is listed in its category,
+ * flagged, so a rule author sees how a plugin's messages are typed.
  */
 export function ruleEventGroups(catalogue: NotifyCatalogueResponse | null | undefined): EventOptionGroup[] {
-  return eventOptionGroups(catalogue);
+  const groups = eventOptionGroups(catalogue);
+  for (const pattern of catalogueOf(catalogue).patterns ?? []) {
+    const text = patternText(pattern);
+    if (!text) continue;
+    const option: EventOption = {
+      type: text,
+      labelKey: patternLabelKey(text),
+      description: pattern.description,
+      icon: notifyIconName(pattern.icon),
+      tone: notifyTone({ severity: isSeverity(pattern.severity) ? pattern.severity : "info", recovery: pattern.recovery === true }),
+      pattern: true,
+    };
+    const group = groups.find((candidate) => candidate.category === pattern.category);
+    if (group) group.options.push(option);
+    else {
+      const label = (catalogueOf(catalogue).categories ?? []).find((c) => c.id === pattern.category)?.label ?? pattern.category;
+      const at = groups.findIndex((candidate) => candidate.category === "webhooks" || candidate.category === "general");
+      groups.splice(at < 0 ? groups.length : at, 0, { category: pattern.category, label, options: [option] });
+    }
+  }
+  return groups;
 }

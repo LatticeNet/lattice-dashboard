@@ -1623,15 +1623,17 @@ async function confirmDeleteRule(): Promise<void> {
                       <template v-else>{{ $t('platform.notifications.sent.allEvents') }}</template>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent class="max-h-[min(28rem,var(--reka-select-content-available-height))]">
+                  <!-- Capped at the room beside the trigger: at 375 px the widest option (a plugin's type) would run off the screen. -->
+                  <SelectContent class="max-h-[min(28rem,var(--reka-select-content-available-height))] max-w-[min(26rem,var(--reka-select-content-available-width))]">
                     <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.sent.allEvents') }}</SelectItem>
                     <template v-for="group in sentEventGroups" :key="group.category">
                       <SelectSeparator />
                       <SelectGroup :data-category="group.category">
                         <SelectLabel>{{ categoryLabel(group) }}</SelectLabel>
-                        <SelectItem v-for="option in group.options" :key="option.type" :value="option.type" :data-event="option.type">
+                        <SelectItem v-for="option in group.options" :key="option.type" :value="option.type" :data-event="option.type" class="*:[span]:last:min-w-0 *:[span]:last:flex-1">
                           <NotifyEventGlyph :icon="option.icon" :tone="option.tone" :disc="false" />
-                          <span class="min-w-0 truncate">{{ typeLabel(option) }}</span>
+                          <!-- The type gives way first: a plugin's type is long and the label is what a reader scans for. -->
+                          <span class="max-w-[70%] shrink-0 truncate">{{ typeLabel(option) }}</span>
                           <span class="ml-auto min-w-0 truncate pl-2 font-mono text-[11px] text-muted-foreground">{{ option.type }}</span>
                         </SelectItem>
                       </SelectGroup>
@@ -1678,7 +1680,7 @@ async function confirmDeleteRule(): Promise<void> {
                   <template v-if="toneSaysSeverity(rowTone(row))"><span :class="['font-medium', TONE_INK[rowTone(row)]]">{{ toneWord(rowTone(row)) }}</span> · </template><span class="font-mono break-all">{{ row.event_type }}</span> · {{ sentOrigin(row) }} · <span class="tabular" :title="formatDateTime(row.created_at)">{{ formatRelativeTime(row.created_at) }}</span>
                 </p>
                 <p class="mt-0.5 text-xs text-muted-foreground break-words">
-                  {{ sentChannelLabel(row) }}<template v-if="row.role === 'fallback' || row.role === 'test'"> · {{ $t(`platform.notifications.sent.role.${row.role}`) }}</template><template v-if="(row.attempts?.length ?? 0) > 1"> · {{ $t('platform.notifications.sent.attempts', { n: row.attempts?.length ?? 0 }, row.attempts?.length ?? 0) }}</template><template v-if="sentState(row) === 'retrying' && row.next_attempt_at"> · {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(row.next_attempt_at) }) }}</template>
+                  {{ sentChannelLabel(row) }}<Badge v-if="row.role === 'fallback' || row.role === 'test'" variant="outline" class="ms-1.5 text-[10px]">{{ $t(`platform.notifications.sent.role.${row.role}`) }}</Badge><template v-if="(row.attempts?.length ?? 0) > 1"> · {{ $t('platform.notifications.sent.attempts', { n: row.attempts?.length ?? 0 }, row.attempts?.length ?? 0) }}</template><template v-if="sentState(row) === 'retrying' && row.next_attempt_at"> · {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(row.next_attempt_at) }) }}</template>
                 </p>
               </div>
             </div>
@@ -1735,7 +1737,10 @@ async function confirmDeleteRule(): Promise<void> {
       <div v-if="openDelivery" class="space-y-5 text-sm" data-testid="sent-sheet">
         <div class="flex flex-wrap items-center gap-2">
           <!-- How bad, in words for critical and warning as on the row; for a screen reader always. -->
-          <span v-if="toneSaysSeverity(rowTone(openDelivery))" :class="['text-sm font-medium', TONE_INK[rowTone(openDelivery)]]" data-testid="sent-sheet-severity">{{ toneWord(rowTone(openDelivery)) }}</span>
+          <template v-if="toneSaysSeverity(rowTone(openDelivery))">
+            <span :class="['text-sm font-medium', TONE_INK[rowTone(openDelivery)]]" data-testid="sent-sheet-severity">{{ toneWord(rowTone(openDelivery)) }}</span>
+            <span aria-hidden="true" class="text-muted-foreground">·</span>
+          </template>
           <span v-else class="sr-only">{{ toneWord(rowTone(openDelivery)) }}</span>
           <span v-if="sentTone(sentState(openDelivery)) === 'quiet'" class="text-sm font-medium">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</span>
           <Badge v-else :variant="sentBadgeVariant(openDelivery)">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</Badge>
@@ -2007,11 +2012,12 @@ async function confirmDeleteRule(): Promise<void> {
               <template v-for="group in ruleEventOptionGroups" :key="group.category">
                 <dt class="pt-0.5 text-xs text-muted-foreground">{{ categoryLabel(group) }}</dt>
                 <dd class="flex flex-wrap gap-1">
+                  <!-- A pattern (plugin.<id>.message) is a shape, not a type a rule can name: dashed, and rulePluginHint below says to name the plugin. -->
                   <Badge
                     v-for="option in group.options"
                     :key="option.type"
                     variant="outline"
-                    class="gap-1 font-mono text-[10px]"
+                    :class="['gap-1 font-mono text-[10px]', option.pattern && 'border-dashed text-muted-foreground']"
                     :title="typeLabel(option)"
                     :data-event="option.type"
                   >
@@ -2021,6 +2027,7 @@ async function confirmDeleteRule(): Promise<void> {
               </template>
             </dl>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleEventsHint') }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.rulePluginHint') }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.nodeOfflineHint') }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFailingHint') }}</p>
           </div>
