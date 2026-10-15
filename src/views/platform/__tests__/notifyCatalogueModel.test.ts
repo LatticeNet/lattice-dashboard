@@ -54,7 +54,8 @@ const SERVER: NotifyCatalogueResponse = {
     ...FALLBACK_CATALOGUE.types.map((entry) => ({ ...entry })),
     { type: "probe.down", category: "probes", severity: "warning", recovery: false, icon: "radar", description: "An outbound probe failed" },
   ],
-  patterns: [{ pattern: "plugin.<id>.message", type: "plugin.<id>.message", category: "plugins", severity: "info", recovery: false, icon: "puzzle", description: "A message from a plugin" }],
+  // As lattice-server sends it: a pattern carries no type of its own.
+  patterns: [{ pattern: "plugin.<id>.message", category: "plugins", severity: "info", recovery: false, icon: "puzzle", description: "Plugin message" }],
   webhook_types: [{ type: "backup.finished", category: "webhooks", severity: "info", recovery: false, icon: "webhook", description: "Inbound webhook nas-backup" }],
 };
 
@@ -129,6 +130,9 @@ test("lookup order: exact, then the plugin pattern, then a webhook, then generic
   assert.equal(catalogueMatch("plugin.latticenet.sub-store.message", SERVER).kind, "pattern");
   assert.equal(catalogueMatch("backup.finished", SERVER).kind, "webhook");
   assert.equal(catalogueMatch("backup.finished", SERVER).entry.description, "Inbound webhook nas-backup");
+  // A webhook row whose type the loaded catalogue does not list (its webhook deleted since) still reads as a webhook.
+  const orphan = presentDelivery(row({ event_type: "deploy.finished", source: "webhook" }), SERVER);
+  assert.deepEqual([orphan.category, orphan.icon, orphan.labelKey], ["webhooks", "webhook", "webhook"]);
   assert.equal(catalogueMatch("probe.down", SERVER).kind, "exact");
   assert.equal(catalogueMatch("no.such.type", SERVER).kind, "generic");
   // The type named generic is the generic entry, not an exact match of its own.
@@ -136,8 +140,13 @@ test("lookup order: exact, then the plugin pattern, then a webhook, then generic
   // A plugin id carries dots, so the wildcard spans segments; the fixed ones must still match.
   assert.ok(patternMatches("plugin.<id>.message", "plugin.a.b.c.message"));
   assert.ok(patternMatches("plugin.*.message", "plugin.x.message"));
-  assert.ok(!patternMatches("plugin.<id>.message", "plugin.message"));
   assert.ok(!patternMatches("plugin.<id>.message", "plugin.x.messages"));
+  assert.ok(!patternMatches("plugin.<id>.message", "plugin..message"));
+  assert.ok(!patternMatches("plugin.<id>.message", "xplugin.a.message"));
+  // A host call without a plugin id sends plugin.message, which the server files under plugins too.
+  assert.ok(patternMatches("plugin.<id>.message", "plugin.message"));
+  assert.equal(presentDelivery(row({ event_type: "plugin.message", source: "plugin" })).category, "plugins");
+  assert.equal(catalogueMatch("plugin.message", SERVER).kind, "pattern");
 });
 
 test("an icon name the console cannot draw draws bell", () => {

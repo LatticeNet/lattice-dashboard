@@ -21,6 +21,7 @@ import {
 } from "lucide-vue-next";
 import {
   api,
+  ApiError,
   unwrap,
   type MachineView,
   type Node,
@@ -613,15 +614,13 @@ const sentRead = computed(() => sentQueryState.data.value !== undefined);
 const sentFiltered = computed(() => sentOutcome.value !== "all" || !!sentChannel.value || !!sentEvent.value);
 
 /*
- * The presentation catalogue (design-notify-abstraction 13.1), read once for
- * the event filter, the rule form and any row an older server sent without
- * its presentation. A server before slice P answers 404, and a failed read
- * means the same to this page: notifyCatalogueModel's mirror stands in.
+ * The presentation catalogue (design-notify-abstraction 13.1), for the event
+ * filter, the rule form and any row an older server sent without its
+ * presentation. Until it is read, or when it cannot be, notifyCatalogueModel's
+ * mirror stands in. ensureCatalogue (below the rule form's state) reads it
+ * when the Sent log or the rule form first needs it.
  */
-const catalogueQuery = useAsyncData((signal) => (canManage.value ? api.notify.catalogue({ signal }) : Promise.resolve(undefined)));
-watch(canManage, (can) => {
-  if (can && catalogueQuery.data.value === undefined) void catalogueQuery.refresh();
-});
+const catalogueQuery = useAsyncData((signal) => api.notify.catalogue({ signal }), { immediate: false });
 const catalogue = computed<NotifyCatalogueResponse | null>(() => catalogueQuery.data.value ?? null);
 const sentEventGroups = computed(() => eventOptionGroups(catalogue.value, sentRows.value, sentEvent.value));
 const ruleEventOptionGroups = computed(() => ruleEventGroups(catalogue.value));
@@ -644,9 +643,14 @@ function typeLabel(entry: { type: string; labelKey: string; description: string 
     return te(path) ? t(path) : undefined;
   });
 }
-/** The filter's trigger names one type: a type nobody catalogued shows itself, since "Other notification" names every such type alike. */
+/**
+ * The filter's trigger names one type. A webhook's type and a type nobody
+ * catalogued show themselves, since "Inbound webhook event" and "Other
+ * notification" name every such type alike; the open list shows both.
+ */
 function triggerLabel(option: { type: string; labelKey: string; description: string }): string {
-  return option.labelKey === "generic" && option.type !== "generic" ? option.type : typeLabel(option);
+  const shared = option.labelKey === "webhook" || (option.labelKey === "generic" && option.type !== "generic");
+  return shared ? option.type : typeLabel(option);
 }
 function sentTypeLabel(d: NotifyDelivery): string {
   return typeLabel(presentation(d));
@@ -988,6 +992,25 @@ async function confirmDelete(): Promise<void> {
 // ── Routing rules ───────────────────────────────────────────────────────────
 const ruleOpen = ref(false);
 const ruleSaving = ref(false);
+
+/*
+ * Read the catalogue when the Sent log or the rule form needs it, once it
+ * landed never again (it changes only with the server), and again after a
+ * failed read, unless that was the 404 of a server before slice P.
+ */
+function ensureCatalogue(): void {
+  if (!canManage.value || catalogueQuery.data.value !== undefined || catalogueQuery.loading.value) return;
+  const error = catalogueQuery.error.value;
+  if (error instanceof ApiError && error.status === 404) return;
+  void catalogueQuery.refresh();
+}
+watch(
+  [() => layer.value, () => ruleOpen.value, () => canManage.value],
+  ([current, open]) => {
+    if (current === "sent" || open) ensureCatalogue();
+  },
+  { immediate: true },
+);
 const ruleEditingId = ref<string | undefined>();
 const ruleName = ref("");
 const ruleEvents = ref("monitor.down");

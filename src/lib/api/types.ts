@@ -2453,9 +2453,10 @@ export interface NotifyCatalogueEntry {
   description: string;
 }
 
-/** An entry that covers a family of types, such as plugin.<id>.message. */
-export interface NotifyCataloguePattern extends NotifyCatalogueEntry {
+/** An entry that covers a family of types, such as plugin.<id>.message; it names the family, not one type. */
+export interface NotifyCataloguePattern extends Omit<NotifyCatalogueEntry, "type"> {
   pattern: string;
+  type?: string;
 }
 
 export interface NotifyCatalogueCategory {

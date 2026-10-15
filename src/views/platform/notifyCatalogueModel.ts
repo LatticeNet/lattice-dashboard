@@ -67,7 +67,7 @@ export const FALLBACK_CATEGORIES = [
   { id: "monitors", label: "Monitors" },
   { id: "agents", label: "Agents" },
   { id: "ssh", label: "SSH" },
-  { id: "auth", label: "Sign-in" },
+  { id: "auth", label: "Auth" },
   { id: "quota", label: "Quota" },
   { id: "inventory", label: "Inventory" },
   { id: "notify", label: "Notifications" },
@@ -87,31 +87,31 @@ function entry(type: string, category: string, severity: NotifySeverity, icon: N
 export const FALLBACK_CATALOGUE: NotifyCatalogueResponse = {
   categories: FALLBACK_CATEGORIES.map((category) => ({ ...category })),
   types: [
-    entry("node.offline", "nodes", "critical", "server-off", "A node stopped reporting"),
-    entry("node.online", "nodes", "info", "server", "A node is reporting again", true),
-    entry("service.down", "services", "critical", "power-off", "A service on a node went down"),
-    entry("service.recovered", "services", "info", "power", "A service on a node recovered", true),
-    entry("monitor.down", "monitors", "warning", "activity", "A monitor is failing"),
-    entry("monitor.recovered", "monitors", "info", "heart-pulse", "A monitor recovered", true),
-    entry("agent.stalled", "agents", "warning", "hourglass", "A node agent stalled"),
-    entry("agent.recovered", "agents", "info", "bot", "A node agent recovered", true),
-    entry("ssh.login", "ssh", "notice", "key-round", "An SSH login on a node"),
-    entry("ssh.compromise_suspected", "ssh", "critical", "shield-alert", "A suspected SSH compromise"),
-    entry("auth.2fa_limit", "auth", "warning", "lock-keyhole", "Too many failed two-factor attempts"),
-    entry("proxy.quota", "quota", "notice", "gauge", "A VPN user is near their traffic quota"),
-    entry("proxy.expiry", "quota", "notice", "calendar-clock", "A VPN user is about to expire"),
-    entry("inventory.renewal", "inventory", "notice", "receipt", "A machine renews soon"),
-    entry("notify.channel_failing", "notify", "warning", "bell-off", "A notification channel is failing"),
-    entry("notify.channel_ok", "notify", "info", "bell-ring", "A notification channel works again", true),
-    entry("notify.test", "notify", "info", "flask-conical", "A test message"),
-    entry("generic", "general", "info", "bell", "A notification"),
+    entry("node.offline", "nodes", "critical", "server-off", "Node offline"),
+    entry("node.online", "nodes", "info", "server", "Node back online", true),
+    entry("service.down", "services", "critical", "power-off", "Proxy core down"),
+    entry("service.recovered", "services", "info", "power", "Proxy core recovered", true),
+    entry("monitor.down", "monitors", "warning", "activity", "Monitor failing"),
+    entry("monitor.recovered", "monitors", "info", "heart-pulse", "Monitor recovered", true),
+    entry("agent.stalled", "agents", "warning", "hourglass", "Agent loop stalled"),
+    entry("agent.recovered", "agents", "info", "bot", "Agent loop recovered", true),
+    entry("ssh.login", "ssh", "notice", "key-round", "SSH login"),
+    entry("ssh.compromise_suspected", "ssh", "critical", "shield-alert", "SSH login after repeated failures"),
+    entry("auth.2fa_limit", "auth", "warning", "lock-keyhole", "Two-factor attempt limit reached"),
+    entry("proxy.quota", "quota", "notice", "gauge", "Proxy user quota"),
+    entry("proxy.expiry", "quota", "notice", "calendar-clock", "Proxy user expiry"),
+    entry("inventory.renewal", "inventory", "notice", "receipt", "Server renewal due"),
+    entry("notify.channel_failing", "notify", "warning", "bell-off", "Notification channel failing"),
+    entry("notify.channel_ok", "notify", "info", "bell-ring", "Notification channel recovered", true),
+    entry("notify.test", "notify", "info", "flask-conical", "Channel test"),
+    entry("generic", "general", "info", "bell", "Notification"),
   ],
-  patterns: [{ ...entry("plugin.<id>.message", "plugins", "info", "puzzle", "A message from a plugin"), pattern: "plugin.<id>.message" }],
+  patterns: [{ pattern: "plugin.<id>.message", category: "plugins", severity: "info", recovery: false, icon: "puzzle", description: "Plugin message" }],
   webhook_types: [],
 };
 
 /** The entry operator webhook types share when the server's catalogue is not loaded. */
-const FALLBACK_WEBHOOK = entry("", "webhooks", "info", "webhook", "An event from an inbound webhook");
+const FALLBACK_WEBHOOK = entry("", "webhooks", "info", "webhook", "Inbound webhook event");
 
 const GENERIC_TYPE = "generic";
 
@@ -138,13 +138,25 @@ function patternText(pattern: NotifyCataloguePattern): string {
   return pattern.pattern || pattern.type || "";
 }
 
-/** A wildcard matches one or more segments: a plugin id carries dots of its own. */
+/**
+ * A wildcard matches one or more segments, since a plugin id carries dots of
+ * its own, or none: the server reads plugin.message (a host call without a
+ * plugin id) as a plugin's message too (isNotifyPluginMessageType).
+ */
 export function patternMatches(pattern: string, type: string): boolean {
-  const parts = pattern.split(".");
-  if (!parts.some(wildcard)) return pattern === type;
-  const source = parts.map((part) => (wildcard(part) ? ".+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("\\.");
-  return new RegExp(`^${source}$`).test(type);
+  let compiled = COMPILED.get(pattern);
+  if (compiled === undefined) {
+    const parts = pattern.split(".");
+    const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const source = parts.map((part, index) => (wildcard(part) ? "(?:\\.[^]+)?" : (index ? "\\." : "") + escape(part))).join("");
+    compiled = parts.some(wildcard) ? new RegExp(`^${source}$`) : null;
+    COMPILED.set(pattern, compiled);
+  }
+  return compiled ? compiled.test(type) : pattern === type;
 }
+
+/** Each pattern compiled once: the Sent log matches up to 500 rows on every poll. */
+const COMPILED = new Map<string, RegExp | null>();
 
 export function patternLabelKey(pattern: string): string {
   return pattern
@@ -173,7 +185,7 @@ export function catalogueMatch(
   const exact = table.types.find((candidate) => candidate.type === type && type !== GENERIC_TYPE);
   if (exact) return { kind: "exact", entry: exact, labelKey: eventKey(type) };
   const pattern = (table.patterns ?? []).find((candidate) => patternMatches(patternText(candidate), type));
-  if (pattern) return { kind: "pattern", entry: pattern, labelKey: patternLabelKey(patternText(pattern)) };
+  if (pattern) return { kind: "pattern", entry: { ...pattern, type }, labelKey: patternLabelKey(patternText(pattern)) };
   const webhook = (table.webhook_types ?? []).find((candidate) => candidate.type === type);
   if (webhook) return { kind: "webhook", entry: webhook, labelKey: "webhook" };
   if (options.webhook) {
