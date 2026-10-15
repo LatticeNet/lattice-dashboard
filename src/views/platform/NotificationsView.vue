@@ -25,6 +25,7 @@ import {
   type MachineView,
   type Node,
   type NotifyChannelUpsertRequest,
+  type NotifyCatalogueResponse,
   type NotifyChannelView,
   type NotifyDelivery,
   type NotifyKind,
@@ -75,7 +76,6 @@ import {
   SENT_LIMIT,
   SENT_OUTCOMES,
   sentCause,
-  sentEventChoices,
   sentNote,
   sentOccurrences,
   sentQuery,
@@ -83,6 +83,19 @@ import {
   sentTone,
   type SentOutcomeFilter,
 } from "./notifySentModel";
+import {
+  eventOptionGroups,
+  notifyLabel,
+  notifyTone,
+  presentDelivery,
+  ruleEventGroups,
+  TONE_INK,
+  toneSaysSeverity,
+  type EventOptionGroup,
+  type NotifyPresentation,
+  type NotifyTone,
+} from "./notifyCatalogueModel";
+import NotifyEventGlyph from "./NotifyEventGlyph.vue";
 import {
   channelFallbackChoices,
   channelFallbackForSave,
@@ -120,7 +133,10 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -141,26 +157,6 @@ type RulePreset = {
   body: string;
 };
 
-// Every event type the server sends, typed or classified. ssh.pressure_window
-// is left out on purpose: it is recorded, never notified. The two notify.*
-// types report a channel's own delivery health.
-const EVENT_OPTIONS = [
-  "*",
-  "monitor.down",
-  "monitor.recovered",
-  "service.down",
-  "service.recovered",
-  "node.offline",
-  "node.online",
-  "ssh.login",
-  "ssh.compromise_suspected",
-  "auth.2fa_limit",
-  "proxy.quota",
-  "proxy.expiry",
-  "inventory.renewal",
-  "notify.channel_failing",
-  "notify.channel_ok",
-];
 // renderNotifyTemplate substitutes exactly three variables: event_type, title,
 // and body. Anything else is left in the delivered message verbatim, which is
 // how these presets used to ship literal "{{message}}" to Telegram.
@@ -615,7 +611,53 @@ watch([() => sentOutcome.value, () => sentChannel.value, () => sentEvent.value],
 const sentRows = computed<NotifyDelivery[]>(() => sentQueryState.data.value?.deliveries ?? []);
 const sentRead = computed(() => sentQueryState.data.value !== undefined);
 const sentFiltered = computed(() => sentOutcome.value !== "all" || !!sentChannel.value || !!sentEvent.value);
-const sentEventOptions = computed(() => sentEventChoices(EVENT_OPTIONS, sentRows.value, sentEvent.value));
+
+/*
+ * The presentation catalogue (design-notify-abstraction 13.1), read once for
+ * the event filter, the rule form and any row an older server sent without
+ * its presentation. A server before slice P answers 404, and a failed read
+ * means the same to this page: notifyCatalogueModel's mirror stands in.
+ */
+const catalogueQuery = useAsyncData((signal) => (canManage.value ? api.notify.catalogue({ signal }) : Promise.resolve(undefined)));
+watch(canManage, (can) => {
+  if (can && catalogueQuery.data.value === undefined) void catalogueQuery.refresh();
+});
+const catalogue = computed<NotifyCatalogueResponse | null>(() => catalogueQuery.data.value ?? null);
+const sentEventGroups = computed(() => eventOptionGroups(catalogue.value, sentRows.value, sentEvent.value));
+const ruleEventOptionGroups = computed(() => ruleEventGroups(catalogue.value));
+/** The chosen type as the trigger shows it: the select would otherwise run the option's label and type together. */
+const sentEventOption = computed(() => sentEventGroups.value.flatMap((group) => group.options).find((option) => option.type === sentEvent.value));
+
+/* Each row's tone, glyph and label inputs, computed once per read rather than per binding. */
+const sentPresentations = computed(() => new Map(sentRows.value.map((d) => [d.id, presentDelivery(d, catalogue.value)])));
+function presentation(d: NotifyDelivery): NotifyPresentation {
+  return sentPresentations.value.get(d.id) ?? presentDelivery(d, catalogue.value);
+}
+function rowTone(d: NotifyDelivery): NotifyTone {
+  return notifyTone(presentation(d));
+}
+
+/** The console's words for a catalogue entry, falling back to the catalogue's description, then the raw type. */
+function typeLabel(entry: { type: string; labelKey: string; description: string }): string {
+  return notifyLabel(entry, (key) => {
+    const path = `platform.notifications.sent.types.${key}`;
+    return te(path) ? t(path) : undefined;
+  });
+}
+/** The filter's trigger names one type: a type nobody catalogued shows itself, since "Other notification" names every such type alike. */
+function triggerLabel(option: { type: string; labelKey: string; description: string }): string {
+  return option.labelKey === "generic" && option.type !== "generic" ? option.type : typeLabel(option);
+}
+function sentTypeLabel(d: NotifyDelivery): string {
+  return typeLabel(presentation(d));
+}
+function toneWord(tone: NotifyTone): string {
+  return t(`platform.notifications.sent.tone.${tone}`);
+}
+function categoryLabel(group: EventOptionGroup): string {
+  const path = `platform.notifications.sent.categories.${group.category}`;
+  return te(path) ? t(path) : group.label;
+}
 
 /* One write for all three filters, for the reason openChannelSent gives. */
 function clearSentFilters(): void {
@@ -678,7 +720,8 @@ const sentColumns = computed<DataTableColumn<NotifyDelivery>[]>(() => [
     label: t("platform.notifications.sent.colMessage"),
     searchable: true,
     wrap: true,
-    value: (d) => `${d.event_type} ${d.title ?? ""} ${d.body ?? ""}`,
+    // The label is searchable too, so "offline" or "离线" finds node.offline rows.
+    value: (d) => `${d.event_type} ${sentTypeLabel(d)} ${d.title ?? ""} ${d.body ?? ""}`,
   },
   {
     key: "channel",
@@ -1548,14 +1591,28 @@ async function confirmDeleteRule(): Promise<void> {
                   :model-value="sentEvent || SELECT_DEFAULT"
                   @update:model-value="(value) => (sentEvent = fromSelectValue(String(value ?? '')))"
                 >
-                  <SelectTrigger id="sent-event" class="h-9 w-full min-w-0 pointer-coarse:h-11 sm:w-52" data-testid="sent-event">
-                    <SelectValue class="min-w-0 overflow-hidden" />
+                  <SelectTrigger id="sent-event" class="h-9 w-full min-w-0 pointer-coarse:h-11 sm:w-60" data-testid="sent-event">
+                    <SelectValue class="min-w-0 overflow-hidden">
+                      <span v-if="sentEventOption" class="flex min-w-0 items-center gap-2" :title="sentEventOption.type">
+                        <NotifyEventGlyph :icon="sentEventOption.icon" :tone="sentEventOption.tone" :disc="false" />
+                        <span class="min-w-0 truncate">{{ triggerLabel(sentEventOption) }}</span>
+                      </span>
+                      <template v-else>{{ $t('platform.notifications.sent.allEvents') }}</template>
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent class="max-h-[min(28rem,var(--reka-select-content-available-height))]">
                     <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.sent.allEvents') }}</SelectItem>
-                    <SelectItem v-for="event in sentEventOptions" :key="event" :value="event">
-                      <span class="font-mono text-xs">{{ event }}</span>
-                    </SelectItem>
+                    <template v-for="group in sentEventGroups" :key="group.category">
+                      <SelectSeparator />
+                      <SelectGroup :data-category="group.category">
+                        <SelectLabel>{{ categoryLabel(group) }}</SelectLabel>
+                        <SelectItem v-for="option in group.options" :key="option.type" :value="option.type" :data-event="option.type">
+                          <NotifyEventGlyph :icon="option.icon" :tone="option.tone" :disc="false" />
+                          <span class="min-w-0 truncate">{{ typeLabel(option) }}</span>
+                          <span class="ml-auto min-w-0 truncate pl-2 font-mono text-[11px] text-muted-foreground">{{ option.type }}</span>
+                        </SelectItem>
+                      </SelectGroup>
+                    </template>
                   </SelectContent>
                 </Select>
               </div>
@@ -1568,10 +1625,39 @@ async function confirmDeleteRule(): Promise<void> {
             <span class="text-xs tabular text-muted-foreground" :title="formatDateTime(row.created_at)">{{ formatRelativeTime(row.created_at) }}</span>
           </template>
           <template #cell-message="{ row }">
-            <div class="min-w-0 max-w-xl">
-              <Badge variant="outline" class="h-auto max-w-full whitespace-normal break-all text-left font-mono text-[10px]">{{ row.event_type }}</Badge>
-              <p class="mt-1 text-sm text-foreground max-md:break-words">{{ row.title || row.event_type }}</p>
-              <p class="mt-0.5 text-xs text-muted-foreground max-md:break-words">{{ sentOrigin(row) }}</p>
+            <div class="flex min-w-0 max-w-xl items-start gap-3" data-testid="sent-message" :data-tone="rowTone(row)" :data-icon="presentation(row).icon">
+              <NotifyEventGlyph :icon="presentation(row).icon" :tone="rowTone(row)" />
+              <div class="min-w-0 flex-1">
+                <p class="text-sm leading-7 font-medium text-foreground break-words">
+                  <span class="sr-only">{{ $t('platform.notifications.sent.severityLead', { severity: toneWord(rowTone(row)) }) }}</span>{{ sentTypeLabel(row) }}
+                </p>
+                <p class="text-sm text-foreground break-words">{{ row.title || row.event_type }}</p>
+                <p class="mt-0.5 text-xs text-muted-foreground break-words" data-testid="sent-meta">
+                  <template v-if="toneSaysSeverity(rowTone(row))"><span :class="['font-medium', TONE_INK[rowTone(row)]]">{{ toneWord(rowTone(row)) }}</span> · </template><span class="font-mono break-all">{{ row.event_type }}</span> · {{ sentOrigin(row) }}
+                </p>
+              </div>
+            </div>
+          </template>
+          <!-- Below 768 px each row is one card that reads as the row does (design-notify-abstraction 13.3). -->
+          <template #card="{ row }">
+            <div class="flex items-start gap-3" data-testid="sent-card" :data-tone="rowTone(row)" :data-state="sentState(row)">
+              <NotifyEventGlyph :icon="presentation(row).icon" :tone="rowTone(row)" />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-start justify-between gap-3">
+                  <p class="min-w-0 text-sm leading-7 font-medium text-foreground break-words">
+                    <span class="sr-only">{{ $t('platform.notifications.sent.severityLead', { severity: toneWord(rowTone(row)) }) }}</span>{{ sentTypeLabel(row) }}
+                  </p>
+                  <span v-if="sentTone(sentState(row)) === 'quiet'" class="shrink-0 text-xs leading-7 text-muted-foreground">{{ $t(`platform.notifications.sent.state.${sentState(row)}`) }}</span>
+                  <Badge v-else :variant="sentBadgeVariant(row)" class="mt-1 shrink-0">{{ $t(`platform.notifications.sent.state.${sentState(row)}`) }}</Badge>
+                </div>
+                <p class="text-sm text-foreground break-words">{{ row.title || row.event_type }}</p>
+                <p class="mt-0.5 text-xs text-muted-foreground break-words">
+                  <template v-if="toneSaysSeverity(rowTone(row))"><span :class="['font-medium', TONE_INK[rowTone(row)]]">{{ toneWord(rowTone(row)) }}</span> · </template><span class="font-mono break-all">{{ row.event_type }}</span> · {{ sentOrigin(row) }} · <span class="tabular" :title="formatDateTime(row.created_at)">{{ formatRelativeTime(row.created_at) }}</span>
+                </p>
+                <p class="mt-0.5 text-xs text-muted-foreground break-words">
+                  {{ sentChannelLabel(row) }}<template v-if="row.role === 'fallback' || row.role === 'test'"> · {{ $t(`platform.notifications.sent.role.${row.role}`) }}</template><template v-if="(row.attempts?.length ?? 0) > 1"> · {{ $t('platform.notifications.sent.attempts', { n: row.attempts?.length ?? 0 }, row.attempts?.length ?? 0) }}</template><template v-if="sentState(row) === 'retrying' && row.next_attempt_at"> · {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(row.next_attempt_at) }) }}</template>
+                </p>
+              </div>
             </div>
           </template>
           <template #cell-channel="{ row }">
@@ -1609,7 +1695,7 @@ async function confirmDeleteRule(): Promise<void> {
     <ObjectSheet
       v-if="layer === 'sent'"
       :open="!!sheet.openId.value"
-      :title="openDelivery ? (openDelivery.title || openDelivery.event_type) : (sheet.openId.value ?? '')"
+      :title="openDelivery ? sentTypeLabel(openDelivery) : (sheet.openId.value ?? '')"
       :subtitle="openDelivery ? `${openDelivery.event_type} · ${sentChannelLabel(openDelivery)}` : undefined"
       :state="sheetState"
       :error="sentQueryState.error.value?.message ?? null"
@@ -1619,8 +1705,15 @@ async function confirmDeleteRule(): Promise<void> {
       @close="sheet.close"
       @retry="sentQueryState.refresh()"
     >
+      <!-- The row's disc, so the open delivery reads as the row (and the push) it came from. -->
+      <template v-if="openDelivery" #leading>
+        <NotifyEventGlyph :icon="presentation(openDelivery).icon" :tone="rowTone(openDelivery)" data-testid="sent-sheet-disc" />
+      </template>
       <div v-if="openDelivery" class="space-y-5 text-sm" data-testid="sent-sheet">
         <div class="flex flex-wrap items-center gap-2">
+          <!-- How bad, in words for critical and warning as on the row; for a screen reader always. -->
+          <span v-if="toneSaysSeverity(rowTone(openDelivery))" :class="['text-sm font-medium', TONE_INK[rowTone(openDelivery)]]" data-testid="sent-sheet-severity">{{ toneWord(rowTone(openDelivery)) }}</span>
+          <span v-else class="sr-only">{{ toneWord(rowTone(openDelivery)) }}</span>
           <span v-if="sentTone(sentState(openDelivery)) === 'quiet'" class="text-sm font-medium">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</span>
           <Badge v-else :variant="sentBadgeVariant(openDelivery)">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</Badge>
           <Badge v-if="openDelivery.role === 'fallback' || openDelivery.role === 'test'" variant="outline">{{ $t(`platform.notifications.sent.role.${openDelivery.role}`) }}</Badge>
@@ -1883,9 +1976,27 @@ async function confirmDeleteRule(): Promise<void> {
 
           <div class="space-y-2 rounded-md border border-border p-3">
             <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.availableEvents') }}</p>
-            <div class="flex flex-wrap gap-1">
-              <Badge v-for="event in EVENT_OPTIONS" :key="event" variant="outline" class="font-mono text-[10px]">{{ event }}</Badge>
-            </div>
+            <dl class="grid gap-x-4 gap-y-2 sm:grid-cols-[max-content_minmax(0,1fr)]" data-testid="rule-event-groups">
+              <dt class="pt-0.5 text-xs text-muted-foreground">{{ $t('platform.notifications.sent.allEvents') }}</dt>
+              <dd class="flex flex-wrap gap-1">
+                <Badge variant="outline" class="font-mono text-[10px]">*</Badge>
+              </dd>
+              <template v-for="group in ruleEventOptionGroups" :key="group.category">
+                <dt class="pt-0.5 text-xs text-muted-foreground">{{ categoryLabel(group) }}</dt>
+                <dd class="flex flex-wrap gap-1">
+                  <Badge
+                    v-for="option in group.options"
+                    :key="option.type"
+                    variant="outline"
+                    class="gap-1 font-mono text-[10px]"
+                    :title="typeLabel(option)"
+                    :data-event="option.type"
+                  >
+                    <NotifyEventGlyph :icon="option.icon" :tone="option.tone" :disc="false" class="size-3" />{{ option.type }}
+                  </Badge>
+                </dd>
+              </template>
+            </dl>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleEventsHint') }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.nodeOfflineHint') }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFailingHint') }}</p>

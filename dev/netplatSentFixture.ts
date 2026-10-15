@@ -21,10 +21,24 @@
  *                  recovery that quiet hours held and withdrew at their end
  *   ?fail=sent     the deliveries read answers 502
  *   ?test=ok       a stored-channel test of Bark urgent succeeds (it fails by default)
+ *
+ * Presentation (slice P, design-notify-abstraction 13): the default rows
+ * cover every tone (critical, warning, notice, quiet, recovered), a title
+ * long enough to wrap, a type nobody catalogued, a type only the server's
+ * catalogue knows (probe.down, whose radar glyph the console cannot draw), a
+ * plugin type and two webhook types. By default every other row carries the
+ * server's category, severity, recovery and icon and the rest carry none, so
+ * one page shows both paths drawing the same disc.
+ *
+ *   ?server=new       every row carries the four fields (a slice P server)
+ *   ?server=old       no row carries them and the catalogue answers 404 (a server before slice P)
+ *   ?fail=catalogue   the catalogue read answers 502; the console falls back to its mirror
  */
-import type { NotifyAttempt, NotifyChannelTestResponse, NotifyDeliveriesQuery, NotifyDeliveriesResponse, NotifyDelivery } from "@/lib/api/index";
+import { ApiError } from "@/lib/api/client";
+import type { NotifyAttempt, NotifyCatalogueResponse, NotifyChannelTestResponse, NotifyDeliveriesQuery, NotifyDeliveriesResponse, NotifyDelivery } from "@/lib/api/index";
+import { FALLBACK_CATALOGUE, catalogueMatch } from "@/views/platform/notifyCatalogueModel";
 
-import { MINUTE, flags, iso } from "./netplatFixture";
+import { MINUTE, delay, flags, iso } from "./netplatFixture";
 import { NOTIFY_CHANNELS } from "./netplatWebhooksFixture";
 
 let seq = 1;
@@ -73,6 +87,17 @@ function fixtureRows(): NotifyDelivery[] {
     row({ event_type: "ssh.login", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "sent", title: "SSH login on [Metix]-DMIT-1", body: "root from 203.0.113.44 (publickey)", attempts: [attempt(3 * 60 * MINUTE, true)] }, 3 * 60 * MINUTE),
     row({ event_type: "inventory.renewal", channel_id: "ch_bark_info", rule_id: "rule_expiry", rule_name: "Machine renewals", outcome: "sent", title: "Lattice renewal: [cd]-Akkocloud-UK-London-KVM renews in 3 days (2026-10-05)", body: "Renews 2026-10-05 at 9.99 USD per month.", attempts: [attempt(9 * 60 * MINUTE, true)] }, 9 * 60 * MINUTE),
     row({ event_type: "proxy.quota", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "failed", reason: "channel deleted before delivery", title: "Lattice proxy quota: alice at 92%" }, 26 * 60 * MINUTE),
+    // Slice P: one row per tone the default list lacked, a wrapping title, and types the console does not know.
+    row({ event_type: "ssh.compromise_suspected", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", title: "SSH login after repeated failures on [Metix]-DMIT-1: root from 198.51.100.23 after 41 failed attempts in 6 minutes, the same address that set off the pressure window on [cd]-LegendVPS-SG-EVO and [cd]-hetzner-hel earlier tonight", body: "root logged in with a password from 198.51.100.23 (AS64500) at 2026-10-15T08:58:12Z. SSH Guard recorded 41 failures from it in the 6 minutes before.", attempts: [attempt(2 * MINUTE + 10_000, true, undefined, undefined, 260)] }, 2 * MINUTE + 12_000),
+    row({ event_type: "monitor.down", channel_id: "ch_bark_info", rule_id: "rule_monitor", rule_name: "Monitors", outcome: "sent", title: "Monitor down: HK relay port on [cd]-hetzner-fsn", body: "tcp 203.0.113.80:443 refused 3 checks in a row.", attempts: [attempt(6 * MINUTE, true)] }, 6 * MINUTE),
+    row({ event_type: "monitor.recovered", channel_id: "ch_bark_info", rule_id: "rule_monitor", rule_name: "Monitors", outcome: "sent", title: "Monitor recovered: HK relay port on [cd]-hetzner-fsn", body: "Up again after 4 min.", attempts: [attempt(2 * MINUTE, true)] }, 2 * MINUTE),
+    row({ event_type: "agent.stalled", channel_id: "ch_bark_info", outcome: "sent", title: "Agent stalled on [cd]-bandwagon-dc6", body: "lattice-agent has not finished a poll in 7 minutes; its last task was a sing-box reload.", attempts: [attempt(15 * MINUTE, true)] }, 15 * MINUTE),
+    row({ event_type: "agent.recovered", channel_id: "ch_bark_info", outcome: "sent", title: "Agent recovered on [cd]-bandwagon-dc6", attempts: [attempt(9 * MINUTE, true)] }, 9 * MINUTE),
+    row({ event_type: "node.online", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", title: "Lattice node online: [cd]-mkcloud-hr-iplc", body: "[cd]-mkcloud-hr-iplc (node_hr) is back after 18 min.", attempts: [attempt(60 * MINUTE, true)] }, 60 * MINUTE),
+    row({ event_type: "probe.down", channel_id: "ch_bark_info", outcome: "sent", title: "Outbound probe failed: hk-relay via [cd]-LegendVPS-SG-EVO", body: "3 of 3 probes timed out after 5 s.", attempts: [attempt(38 * MINUTE, true)] }, 38 * MINUTE),
+    row({ event_type: "cluster.rebalanced", channel_id: "ch_bark_info", outcome: "sent", title: "Something the console has never heard of", attempts: [attempt(4 * 60 * MINUTE, true)] }, 4 * 60 * MINUTE),
+    row({ event_type: "generic", channel_id: "ch_bark_info", outcome: "sent", title: "Lattice: disk usage 91% on lattice-control", attempts: [attempt(5 * 60 * MINUTE, true)] }, 5 * 60 * MINUTE),
+    row({ event_type: "deploy.finished", source: "webhook", source_id: "wh_deploy", source_ref: "dl_wh_deploy_0", channel_id: "ch_bark_info", rule_id: "rule_backup", rule_name: "Backups", outcome: "sent", title: "Deployed docs.example.org", attempts: [attempt(70 * MINUTE, true)] }, 70 * MINUTE),
   ];
   if (flags.get("sent") === "incidents") {
     const until = new Date(Date.now() + 40 * MINUTE).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -100,6 +125,44 @@ function fixtureRows(): NotifyDelivery[] {
 // Newest first, as the server returns them.
 const ROWS: NotifyDelivery[] = flags.get("sent") === "empty" ? [] : fixtureRows().sort((a, b) => b.created_at.localeCompare(a.created_at));
 
+/**
+ * What a slice P server's catalogue answers: the contract's table, a type
+ * newer than this console (probe.down, in a category the console has no
+ * words for, with a glyph it cannot draw) and the operator's webhook types.
+ */
+const SERVER_CATALOGUE: NotifyCatalogueResponse = {
+  categories: [...FALLBACK_CATALOGUE.categories, { id: "probes", label: "Probes" }],
+  types: [
+    ...FALLBACK_CATALOGUE.types,
+    { type: "probe.down", category: "probes", severity: "warning", recovery: false, icon: "radar", description: "An outbound probe failed" },
+  ],
+  patterns: FALLBACK_CATALOGUE.patterns,
+  webhook_types: [
+    { type: "backup.finished", category: "webhooks", severity: "info", recovery: false, icon: "webhook", description: "Inbound webhook nas backup" },
+    { type: "deploy.finished", category: "webhooks", severity: "info", recovery: false, icon: "webhook", description: "Inbound webhook site deploy" },
+  ],
+};
+
+const SERVER_MODE = flags.get("server");
+
+/** The catalogue read: 404 from a server before slice P. */
+export function cataloguePage(): Promise<NotifyCatalogueResponse> {
+  if (SERVER_MODE === "old") return delay(undefined).then(() => Promise.reject(new ApiError(404, "not_found", "not found")));
+  return delay(structuredClone(SERVER_CATALOGUE));
+}
+
+/**
+ * The four fields the server computes from event_type at read time
+ * (lattice-server notify_catalogue.go); here the same lookup over the
+ * fixture catalogue. Which rows carry them follows ?server (see the header).
+ */
+function presented(delivery: NotifyDelivery, index: number): NotifyDelivery {
+  const carries = SERVER_MODE === "new" || (SERVER_MODE !== "old" && index % 2 === 0);
+  if (!carries) return delivery;
+  const { entry } = catalogueMatch(delivery.event_type, SERVER_CATALOGUE, { webhook: delivery.source === "webhook" });
+  return { ...delivery, category: entry.category, severity: entry.severity, recovery: entry.recovery, icon: entry.icon };
+}
+
 export function sentPage(query: NotifyDeliveriesQuery): NotifyDeliveriesResponse {
   const limit = query.limit ?? 500;
   const deliveries = ROWS.filter(
@@ -109,7 +172,7 @@ export function sentPage(query: NotifyDeliveriesQuery): NotifyDeliveriesResponse
       (!query.event_type || d.event_type === query.event_type),
   ).slice(0, limit);
   return {
-    deliveries: deliveries.map((d) => ({ ...d, attempts: d.attempts?.map((a) => ({ ...a })) })),
+    deliveries: deliveries.map((d) => presented({ ...d, attempts: d.attempts?.map((a) => ({ ...a })) }, ROWS.indexOf(d))),
     stored: ROWS.length,
     durable: flags.get("sent") !== "memory",
     max: 1000,

@@ -72,6 +72,7 @@ import type {
   NodeGeoResolveResponse,
   NodeGeoView,
   NodeInventory,
+  NotifyCatalogueResponse,
   NotifyChannelTestResponse,
   NotifyChannelUpsertRequest,
   NotifyChannelView,
@@ -897,6 +898,11 @@ export const api = {
     // The Sent log: the notification outbox, newest first.
     deliveries: (query: NotifyDeliveriesQuery, opts?: RequestOptions) =>
       http.get<NotifyDeliveriesResponse>("/api/notify/deliveries", query as Record<string, unknown>, opts),
+    // The presentation catalogue: each event type's category, severity and
+    // glyph. Servers before slice P answer 404; the console then uses its own
+    // mirror (notifyCatalogueModel).
+    catalogue: (opts?: RequestOptions) =>
+      http.get<NotifyCatalogueResponse>("/api/notify/catalogue", undefined, opts),
     // The control-plane witness: what each witness node last relayed, read
     // against the plans that configured it.
     witness: (opts?: RequestOptions) =>
