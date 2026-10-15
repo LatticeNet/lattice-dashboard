@@ -14,7 +14,7 @@
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
  *                     dns, monitors, tunnels, geo, agents, release, artifacts,
- *                     webhooks, channels, rules, deliveries, sent, users, tokens, oidc,
+ *                     webhooks, channels, rules, deliveries, sent, catalogue, users, tokens, oidc,
  *                     version, capabilities, machines, vpnusers, shares, witness
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
@@ -47,7 +47,7 @@ import { DDNS, ddnsSaveWarnings, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
-import { sentPage, testStoredChannel } from "./netplatSentFixture";
+import { cataloguePage, sentPage, testStoredChannel } from "./netplatSentFixture";
 import { planWitness, witnessStatus } from "./netplatWitnessFixture";
 import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
@@ -422,6 +422,7 @@ export const api = {
       flags.get("sent") === "slow"
         ? delay(undefined, 4000).then(() => read("sent", () => sentPage(query)))
         : read("sent", () => sentPage(query)),
+    catalogue: () => read("catalogue", () => undefined).then(() => cataloguePage()),
     upsertRule: async (input: NotifyRuleUpsertRequest) => {
       await delay(undefined, WRITE_MS);
       const existing = NOTIFY_RULES.find((rule) => rule.id === input.id);

@@ -2375,6 +2375,18 @@ export interface NotifyDelivery {
   event_type: string;
   source: NotifyDeliverySource | string;
   source_id?: string;
+  /** The inbound webhook's own delivery record, for a webhook source. */
+  source_ref?: string;
+  /*
+   * Presentation, computed by the server from event_type at read time
+   * (notify_catalogue.go, design-notify-abstraction 13.1). A server before
+   * slice P sends none of them; notifyCatalogueModel fills them in then.
+   */
+  category?: string;
+  severity?: NotifySeverity | string;
+  recovery?: boolean;
+  /** A lucide icon name in kebab case. */
+  icon?: string;
   rule_id?: string;
   rule_name?: string;
   channel_id?: string;
@@ -2424,6 +2436,41 @@ export interface NotifyDeliveriesResponse {
   durable: boolean;
   max: number;
   floor: number;
+}
+
+/** The closed severity set of design-notify-abstraction section 3. */
+export type NotifySeverity = "info" | "notice" | "warning" | "critical";
+
+/** One event type's presentation (GET /api/notify/catalogue). */
+export interface NotifyCatalogueEntry {
+  type: string;
+  category: string;
+  severity: NotifySeverity | string;
+  recovery: boolean;
+  /** A lucide icon name in kebab case. */
+  icon: string;
+  /** One English line; the console's fallback label. */
+  description: string;
+}
+
+/** An entry that covers a family of types, such as plugin.<id>.message; it names the family, not one type. */
+export interface NotifyCataloguePattern extends Omit<NotifyCatalogueEntry, "type"> {
+  pattern: string;
+  type?: string;
+}
+
+export interface NotifyCatalogueCategory {
+  id: string;
+  label: string;
+}
+
+/** The presentation catalogue (design-notify-abstraction 13.1); servers before slice P answer 404. */
+export interface NotifyCatalogueResponse {
+  categories: NotifyCatalogueCategory[];
+  types: NotifyCatalogueEntry[];
+  patterns: NotifyCataloguePattern[];
+  /** Operator-defined inbound webhook types, each with the webhooks entry's fields. */
+  webhook_types: NotifyCatalogueEntry[];
 }
 
 export interface NotifyChannelTestResponse {

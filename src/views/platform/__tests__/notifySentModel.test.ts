@@ -8,7 +8,6 @@ import {
   parseSentOutcome,
   SENT_LIMIT,
   sentCause,
-  sentEventChoices,
   sentNote,
   sentOccurrences,
   sentQuery,
@@ -79,15 +78,6 @@ test("filters become the server query, and an unknown outcome in the address rea
   assert.equal(parseSentOutcome("planned"), "planned");
   assert.equal(parseSentOutcome("bogus"), "all");
   assert.equal(parseSentOutcome(undefined), "all");
-});
-
-test("the event filter offers known types and any type the rows carry, without the wildcard", () => {
-  assert.deepEqual(
-    sentEventChoices(["*", "node.offline", "monitor.down"], [row({ event_type: "plugin.latticenet.sub-store.message" }), row({ event_type: "node.offline" })]),
-    ["monitor.down", "node.offline", "plugin.latticenet.sub-store.message"],
-  );
-  // A type from the address that no loaded row carries is still offered, so the select can show it.
-  assert.deepEqual(sentEventChoices(["node.offline"], [], "backup.finished"), ["backup.finished", "node.offline"]);
 });
 
 test("a folded not-routed row counts every occurrence and names the latest", () => {

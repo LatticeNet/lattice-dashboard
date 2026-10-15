@@ -345,6 +345,8 @@ defineSlots<
     "no-match"?: () => unknown;
     /** Full-width panel under a row, rendered while `rowExpanded` holds for it. */
     "row-detail"?: (props: { row: T }) => unknown;
+    /** The whole body of a row's card in the narrow "cards" layout, in place of its label and value pairs. */
+    card?: (props: { row: T }) => unknown;
     /** The group row's content: what spans the group. Text only (it sits in a button). */
     group?: (props: { group: RowGroup<T>; collapsed: boolean }) => unknown;
   } & Record<`cell-${string}`, (props: { row: T; value: unknown }) => unknown>
@@ -1177,24 +1179,27 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               @update:model-value="(value) => toggleRow(row, value)"
             />
           </div>
-          <dl class="space-y-2">
-            <div
-              v-for="column in columns"
-              :key="column.key"
-              class="flex items-start justify-between gap-3"
-            >
-              <dt class="shrink-0 text-xs font-medium text-muted-foreground">{{ column.label }}</dt>
-              <dd class="min-w-0 text-right text-sm">
-                <slot
-                  :name="`cell-${column.key}`"
-                  :row="row"
-                  :value="rawValue(row, column)"
-                >
-                  {{ textOf(rawValue(row, column)) }}
-                </slot>
-              </dd>
-            </div>
-          </dl>
+          <!-- A list whose rows read as one sentence (the Sent log) composes its own card; the default is label and value pairs. -->
+          <slot name="card" :row="row">
+            <dl class="space-y-2">
+              <div
+                v-for="column in columns"
+                :key="column.key"
+                class="flex items-start justify-between gap-3"
+              >
+                <dt class="shrink-0 text-xs font-medium text-muted-foreground">{{ column.label }}</dt>
+                <dd class="min-w-0 text-right text-sm">
+                  <slot
+                    :name="`cell-${column.key}`"
+                    :row="row"
+                    :value="rawValue(row, column)"
+                  >
+                    {{ textOf(rawValue(row, column)) }}
+                  </slot>
+                </dd>
+              </div>
+            </dl>
+          </slot>
           <div v-if="isRowExpanded(row)" class="mt-3 border-t border-border pt-3">
             <slot name="row-detail" :row="row" />
           </div>

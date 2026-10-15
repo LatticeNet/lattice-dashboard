@@ -186,20 +186,3 @@ export function sentQuery(filters: SentFilters, limit = SENT_LIMIT): NotifyDeliv
   if (filters.event) query.event_type = filters.event;
   return query;
 }
-
-/**
- * Event types for the filter: the ones the console knows the server sends,
- * plus any the loaded rows carry, so a webhook's or a plugin's type is
- * reachable once it has been seen, plus the one the address asks for, which
- * a filtered empty page would otherwise leave the select unable to show.
- */
-export function sentEventChoices(
-  known: readonly string[],
-  rows: readonly Pick<NotifyDelivery, "event_type">[],
-  current = "",
-): string[] {
-  const all = new Set(known.filter((type) => type !== "*"));
-  for (const row of rows) if (row.event_type) all.add(row.event_type);
-  if (current) all.add(current);
-  return [...all].sort((a, b) => a.localeCompare(b));
-}

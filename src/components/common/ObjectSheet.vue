@@ -140,6 +140,8 @@ useObjectTitle(() => (props.open && showBody.value ? props.title : undefined));
       @close-auto-focus="onCloseAutoFocus"
     >
       <header ref="header" class="flex items-start gap-3 border-b border-border px-5 pt-5 pb-4 pr-12">
+        <!-- What the row leads with (the Sent log's disc), so the open object reads as the row it came from. -->
+        <slot name="leading" />
         <div class="min-w-0 flex-1 space-y-1">
           <DialogTitle
             :class="
