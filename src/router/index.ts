@@ -11,6 +11,7 @@ import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
 import { legacyEvidenceQuery } from "@/views/platform/evidenceModel";
+import { landsOnSsoSecondFactor } from "@/views/auth/loginModel";
 import {
   PLUGIN_VIEW_ROUTE_NAME,
   consoleScrollBehavior,
@@ -196,7 +197,9 @@ installSessionExpiry(router, useAuthStore, setUnauthorizedListener);
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
-  if (!auth.ready) await auth.bootstrap();
+  // Straight back from SSO with a second factor still owed there is no session
+  // to read yet (views/auth/loginModel); completing the factor reads it.
+  if (!auth.ready && !landsOnSsoSecondFactor(to)) await auth.bootstrap();
   if (!to.meta.public && !auth.isAuthenticated) {
     return { name: "login", query: { redirect: to.fullPath } };
   }

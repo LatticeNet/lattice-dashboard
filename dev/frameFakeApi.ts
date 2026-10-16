@@ -33,9 +33,16 @@
  * failure state. Their data calls answer 502, which is enough for the page
  * header, the error notice and a side panel opened from the address
  * (NetGuard's ?open=<node>) to render at their real positions.
+ *
+ * Sign-in straight back from SSO: open
+ * /login?totp_challenge=<32 or more base64url characters>&sso=<fixture>. The
+ * guard skips the session read there, so the second-factor step renders even
+ * though this harness is signed in. ?sso=email, subject or long answer the
+ * pending second-factor read; ?sso=old answers 405 like a server without it,
+ * and no ?sso= answers 404 like an expired challenge.
  */
 import { ApiError } from "@/lib/api/client";
-import type { PluginView } from "@/lib/api/index";
+import type { PendingSecondFactor, PluginView } from "@/lib/api/index";
 
 import { api as netplat } from "./netplatFakeApi";
 import { api as fleet } from "./fleetFakeApi";
@@ -79,6 +86,24 @@ const plugins = {
       : (netplat.plugins.call as (...args: unknown[]) => Promise<unknown>)(id, service, method, ...rest),
 };
 
+const SSO_PENDING: Record<string, PendingSecondFactor> = {
+  email: { provider: "Google", email: "name@example.com" },
+  subject: { provider: "corp-idp", subject: "109876543210987654321" },
+  long: {
+    provider: "Google Workspace",
+    email: "infrastructure.on-call.operator+lattice-console@very-long-subsidiary-name.example.com",
+  },
+};
+
+function pendingSecondFactor(): Promise<PendingSecondFactor> {
+  const fixture = new URLSearchParams(location.search).get("sso") ?? "";
+  if (fixture === "old") return Promise.reject(new ApiError(405, "method_not_allowed", "method not allowed"));
+  const answer = SSO_PENDING[fixture];
+  return answer
+    ? Promise.resolve({ ...answer })
+    : Promise.reject(new ApiError(404, "not_found", "no pending sso sign-in"));
+}
+
 function merge(...sources: Namespace[]): Record<string, Namespace> {
   const out: Record<string, Namespace> = {};
   for (const source of sources) {
@@ -97,7 +122,7 @@ function merge(...sources: Namespace[]): Record<string, Namespace> {
 const merged = merge(netplat as Namespace, fleet as Namespace, evidence as Namespace, platform as Namespace, operations as Namespace, approvals as Namespace);
 Object.assign(merged, {
   plugins,
-  auth: netplat.auth as Namespace,
+  auth: { ...(netplat.auth as Namespace), pendingSecondFactor },
   users: netplat.users as Namespace,
   nodes: fleet.nodes as Namespace,
   tasks: operations.tasks as Namespace,

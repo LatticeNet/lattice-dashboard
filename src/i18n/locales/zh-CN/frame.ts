@@ -547,6 +547,7 @@ export default {
     signingIn: "登录中…",
     totpTitle: "两步验证",
     totpSubtitle: "请输入身份验证器应用中的 6 位验证码。",
+    totpSubtitleSso: "{provider} 已验证你的身份：{identity}。请输入身份验证器应用中的 6 位验证码以完成登录。",
     totpCode: "验证码",
     recoveryCode: "恢复码",
     useRecovery: "使用恢复码",
