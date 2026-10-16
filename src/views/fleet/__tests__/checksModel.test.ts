@@ -11,10 +11,12 @@ import {
   buildPauseOld,
   buildSourcePause,
   buildUpdate,
+  budgetRechecked,
   canEditCheck,
   checkGroup,
   draftChanged,
   draftFromMonitor,
+  draftNeedsCurrentAgent,
   draftProblems,
   emptyDraft,
   identityChanged,
@@ -171,6 +173,8 @@ function httpCheck(over: Partial<MonitorView> = {}): MonitorView {
 }
 
 const M2A = { m2a: true };
+/** A create, or a replacement: the destination rules apply. */
+const NEW = { m2a: true, newCheck: true };
 
 test("ICMP is offered only by an M2a server", () => {
   assert.deepEqual(offeredKinds(false), ["tcp", "http", "tls"]);
@@ -203,7 +207,8 @@ test("ICMP problems: an IPv4 target, packets, the run inside the interval, the p
   assert.deepEqual(draftProblems(base, M2A), []);
   assert.deepEqual(draftProblems({ ...base, target: "example.com" }, M2A), ["target"]);
   assert.deepEqual(draftProblems({ ...base, target: "203.0.113.9:443" }, M2A), ["target"]);
-  assert.deepEqual(draftProblems({ ...base, target: "10.0.0.9" }, M2A), ["destination"]);
+  assert.deepEqual(draftProblems({ ...base, target: "10.0.0.9" }, NEW), ["destination"]);
+  assert.deepEqual(draftProblems({ ...base, target: "10.0.0.9" }, M2A), [], "an edit cannot change the target, so a check saved before the rules stays editable");
   assert.deepEqual(draftProblems({ ...base, packets: 0 }, M2A), ["packets"]);
   assert.deepEqual(draftProblems({ ...base, packets: 11 }, M2A), ["packets"]);
   // (10 - 1) x 200 ms + 9 s = 10.8 s, which does not end before a 10 s interval.
@@ -236,14 +241,32 @@ test("resolution: ICMP to the public IPv4, TCP to the plan's line port or on sav
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "udp_only", target: "probed" }), { state: "refused", reason: "udp_only" });
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint: "203.0.113.12:443", endpoint_note: "last_known", target: "probed" }), { state: "resolved", endpoint: "203.0.113.12:443" });
   assert.deepEqual(resolveNodeTarget("tcp", { public_ip: "203.0.113.12" }), { state: "onSave" });
+  // A path set on ICMP writes no_public_address over the TCP note; the TCP reason is then the server's to give.
+  assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "no_public_address", target: "not_probeable" }, "icmp"), { state: "onSave" });
+  assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "no_public_address", target: "not_probeable" }, "tcp"), { state: "refused", reason: "no_public_address" });
 });
 
-test("the destination rule applies to tcp and http only on an M2a server", () => {
+test("the destination rule applies to tcp and http only on an M2a server, and only to a new check", () => {
   const tcp: CheckDraft = { ...emptyDraft("tcp"), target: "192.168.1.1:22", assignAll: true };
-  assert.deepEqual(draftProblems(tcp), [], "an M1 server dials what M1 dialled");
-  assert.deepEqual(draftProblems(tcp, M2A), ["destination"]);
+  assert.deepEqual(draftProblems(tcp, { m2a: false, newCheck: true }), [], "an M1 server dials what M1 dialled");
+  assert.deepEqual(draftProblems(tcp, NEW), ["destination"]);
+  assert.deepEqual(draftProblems(tcp, M2A), [], "editing a check saved before the rules");
+  assert.deepEqual(draftProblems({ ...tcp, target: "127.1:22" }, NEW), ["destination"], "a numeric host form");
   const http: CheckDraft = { ...emptyDraft("http"), target: "http://localhost:8080/health", assignAll: true };
-  assert.deepEqual(draftProblems(http, M2A), ["destination"]);
+  assert.deepEqual(draftProblems(http, NEW), ["destination"]);
+});
+
+test("the packet budget is re-checked on a new check, and on an edit only when it changes what the budget counts", () => {
+  const m = icmpCheck();
+  const d = draftFromMonitor(m);
+  assert.equal(budgetRechecked(undefined, d, true), true, "a create");
+  assert.equal(budgetRechecked(m, d, true), true, "a replacement");
+  assert.equal(budgetRechecked(m, { ...d, name: "Ping jp again" }, false), false, "a rename");
+  assert.equal(budgetRechecked(m, { ...d, alert: "off" }, false), false);
+  assert.equal(budgetRechecked(m, { ...d, packets: 8 }, false), true);
+  assert.equal(budgetRechecked(m, { ...d, intervalSec: 10 }, false), true);
+  assert.equal(budgetRechecked(m, { ...d, nodeIds: ["sh", "hk"] }, false), true);
+  assert.equal(budgetRechecked(m, { ...d, pausedNodeIds: ["sh"] }, false), true);
 });
 
 test("HTTP problems on an M2a server: the status set and the headers", () => {
@@ -318,6 +341,34 @@ test("sources: the ones whose agent cannot run the method, with the reason", () 
   assert.deepEqual(unsupportedSources({ ...d, type: "tcp" }, nodes, true), []);
   assert.deepEqual(unsupportedSources(d, nodes, false), [], "an M1 server gates nothing");
   assert.deepEqual(draftSources({ assignAll: true, nodeIds: [] }, nodes), ["sh", "mk", "kix"]);
+});
+
+test("an http check with headers or a status set runs only where the agent reports its methods", () => {
+  const nodes = [
+    { id: "sh", name: "cd-hs-sh", online: true, probe_methods: ["http", "icmp", "tcp"] },
+    { id: "mk", name: "mkcloud", online: true, probe_methods: ["http", "tcp"] },
+    { id: "kix", name: "Oracle-KIX-arm", online: true, probe_methods: ["http", "tcp"], probe_refusals: { icmp: "icmp_not_permitted" } },
+  ];
+  const plain: CheckDraft = { ...emptyDraft("http"), target: "https://status.example.com/health", assignAll: false, nodeIds: ["sh", "mk", "kix"] };
+  assert.equal(draftNeedsCurrentAgent(plain), false);
+  assert.deepEqual(unsupportedSources(plain, nodes, true), [], "a plain http check runs on every agent");
+  assert.deepEqual(unsupportedSources({ ...plain, expectStatus: "200-399" }, nodes, true), [], "the default set typed out");
+  const withSet = { ...plain, expectStatus: "200-299,301" };
+  assert.equal(draftNeedsCurrentAgent(withSet), true);
+  assert.deepEqual(unsupportedSources(withSet, nodes, true), [{ id: "mk", reason: "agent_too_old" }], "a host that refuses icmp still runs an M2a agent");
+  const withHeader = { ...plain, headers: draftFromMonitor(httpCheck()).headers };
+  assert.deepEqual(unsupportedSources(withHeader, nodes, true), [{ id: "mk", reason: "agent_too_old" }]);
+  assert.equal(draftNeedsCurrentAgent({ ...plain, headers: [{ ...withHeader.headers[0]!, name: "  " }] }), false, "a row with no name is not a header yet");
+  assert.deepEqual(unsupportedSources(withSet, nodes, false), [], "an M1 server gates nothing");
+});
+
+test("the budget leaves a source out that the caller drops as paused", () => {
+  const others = [icmpCheck({ id: "mon_other", target: "203.0.113.12", node_ids: ["sh"], packets: 10, interval_sec: 10 })];
+  const draft = { packets: 5, intervalSec: 10 };
+  assert.equal(icmpBudget("203.0.113.12", ["sh"], draft, others).pps, 1.5);
+  assert.equal(icmpBudget("203.0.113.12", [], draft, others).pps, 0.5, "every source paused: only the check itself");
+  // A replacement passes no editing id: the check it replaces still runs while the new one is created.
+  assert.equal(icmpBudget("203.0.113.12", ["sh"], draft, [...others, icmpCheck({ id: "mon_ping", target: "203.0.113.12", node_ids: ["sh"], packets: 5, interval_sec: 10 })]).pps, 2);
 });
 
 test("the packet budget sums every enabled icmp check to the address on the same source", () => {

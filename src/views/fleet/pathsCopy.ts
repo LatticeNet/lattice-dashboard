@@ -44,6 +44,8 @@ export function usePathsCopy() {
    */
   function refusalText(reason: string, method: string): string {
     const code = reasonCode(reason);
+    // Every agent runs http; one too old for an http check is too old for its headers or status set.
+    if (code === "agent_too_old" && method === "http") return t("fleet.monitoring.paths.refusal.agent_too_old_http");
     if (code === "agent_too_old") return t("fleet.monitoring.paths.refusal.agent_too_old", { method: method.toUpperCase() });
     if (code === "icmp_not_permitted") return t("fleet.monitoring.paths.refusal.icmp_not_permitted");
     return reasonText(reason);

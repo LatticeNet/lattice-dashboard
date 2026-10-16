@@ -204,16 +204,16 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
         <template v-if="m2a">
+          <!-- Native radios: one tab stop, arrow keys move and choose, as a radio group should. -->
           <div class="grid grid-cols-3 rounded-md border border-input p-1" role="radiogroup" :aria-label="$t('fleet.monitoring.pathSet.methodLabel')" data-testid="path-set-method">
-            <button
+            <label
               v-for="m in PATH_SET_METHODS"
               :key="m || 'tcp'"
-              type="button"
-              role="radio"
-              :aria-checked="draft.method === m"
-              :class="cn('rounded px-2 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', draft.method === m && 'bg-secondary font-medium text-foreground')"
-              @click="setMethod(m)"
-            >{{ methodLabel(m) }}</button>
+              :class="cn('flex cursor-pointer items-center justify-center rounded px-2 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring pointer-coarse:min-h-11', draft.method === m && 'bg-secondary font-medium text-foreground')"
+            >
+              <input type="radio" name="path-set-method" class="sr-only" :value="m" :checked="draft.method === m" @change="setMethod(m)" />
+              {{ methodLabel(m) }}
+            </label>
           </div>
           <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${draft.method || 'tcp'}`) }}</p>
         </template>

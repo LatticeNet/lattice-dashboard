@@ -47,7 +47,7 @@ import { WINDOW_SECONDS } from "@/views/fleet/pathsModel";
 import { seriesStats, seriesFromResponse } from "@/views/fleet/pathSeriesModel";
 
 import { HOUR, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
-import { M2A, SOURCE_ID, SOURCE_NODE, icmpRefusal } from "./latencyFixture";
+import { M2A, SOURCE_ID, SOURCE_NODE, agentPredatesM2a, icmpRefusal } from "./latencyFixture";
 
 export const PATHS_SHAPE = (PARAMS.get("paths") ?? "") as "" | "one" | "three" | "empty" | "old";
 export const FINE_DAYS = PARAMS.get("retention") === "14" ? 14 : 7;
@@ -256,6 +256,8 @@ export function operatorChecks(): MonitorView[] {
     { name: "Accept", value: "application/json" },
   ];
   status.secrets_origin = "https://status.example.com:443";
+  // An agent older than M2a among its sources: its path reads agent_too_old, as the server gates headers.
+  status.node_ids = [...(status.node_ids ?? []), id("[cd]-volcengine-shanghai")];
   const jp = nodeByName("[cd]-xuezhang-jp-nat");
   const ping: MonitorView = {
     id: "mon_ping_jp",
@@ -297,6 +299,9 @@ function operatorReason(check: MonitorView, source: string): string | undefined 
   if (!M2A) return undefined;
   if (check.type === "icmp") return icmpRefusal(allNodes().find((n) => n.id === source));
   if (check.id === "mon_admin_internal") return "destination_refused";
+  // As the server's monitorProbeGate: headers or a status set other than the default need an agent that reports its methods.
+  const current = check.type === "http" && (!!check.headers?.length || (!!check.expect_status && check.expect_status !== "200-399"));
+  if (current && agentPredatesM2a(allNodes().find((n) => n.id === source))) return "agent_too_old";
   return undefined;
 }
 
@@ -449,8 +454,11 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
   // As the server: the method in force from the first bucket with data, then each switch.
   const firstHeard = buckets.find((b) => b.n > 0)?.t ?? from;
   const switched = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini";
-  const method_changes = [{ t: firstHeard, method: switched ? "tcp" : query.monitor && !query.target_node ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : shape.packets ? "icmp" : "tcp" }];
-  if (switched) method_changes.push({ t: Math.floor((NOW / 1000 - 2 * 86400) / step) * step, method: "icmp" });
+  // The method in force at the first bucket heard, then the switch when it falls inside the window.
+  const switchAt = Math.floor((NOW / 1000 - 2 * 86400) / step) * step;
+  const first = switched ? (Number(firstHeard) >= switchAt ? "icmp" : "tcp") : query.monitor && !query.target_node ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : shape.packets ? "icmp" : "tcp";
+  const method_changes = [{ t: firstHeard, method: first }];
+  if (switched && Number(firstHeard) < switchAt) method_changes.push({ t: switchAt, method: "icmp" });
   return { window: query.window, step_seconds: step, from, to, method_changes, buckets };
 }
 

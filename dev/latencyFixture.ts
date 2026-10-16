@@ -77,6 +77,11 @@ export function probeFacts(node: Pick<Node, "name">): Pick<Node, "probe_methods"
   return { probe_methods: ["http", "icmp", "tcp"] };
 }
 
+/** Whether the node's agent predates M2a and so reports no methods. */
+export function agentPredatesM2a(node: Pick<Node, "name"> | undefined): boolean {
+  return !!M2A && !!node && TOO_OLD.has(node.name);
+}
+
 /** Why a node cannot run icmp, as the path reads it; undefined when it can. */
 export function icmpRefusal(node: Pick<Node, "name"> | undefined): string | undefined {
   if (!node) return "agent_too_old";

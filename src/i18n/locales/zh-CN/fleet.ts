@@ -1345,7 +1345,7 @@ export default {
           no_inventory: "这个节点还没有上报资产信息",
           no_results: "还没有结果",
           results_stopped: "结果不再到达",
-          agent_too_old: "源节点的 agent 版本太旧，不支持这种方式",
+          agent_too_old: "源节点的 agent 版本太旧，不能运行这个检查",
           method_refused: "节点拒绝这种探测方式",
           icmp_not_permitted: "源节点的内核不允许它的 agent 发送 ICMP 回显",
           destination_refused: "源节点拒绝了这个地址：它是私有、本机或元数据服务地址，或者某个保密请求头的规则不允许这次请求",
@@ -1379,6 +1379,7 @@ export default {
         },
         refusal: {
           agent_too_old: "agent 太旧，不支持 {method}",
+          agent_too_old_http: "agent 太旧，不支持请求头或状态码集合",
           icmp_not_permitted: "这个节点不允许 ICMP",
         },
         cell: {
@@ -1610,6 +1611,8 @@ export default {
           unsupportedChosen: "已选的 {n} 个源节点不能运行 {method}：{names}。在能运行之前，它的路径显示为未知并附上原因。 | 已选的 {n} 个源节点不能运行 {method}：{names}。在能运行之前，这些路径显示为未知并附上原因。",
           unsupportedAll: "{total} 个节点中有 {n} 个现在不能运行 {method}，在能运行之前它们的路径显示为未知并附上原因。",
           removeUnsupported: "移除它 | 移除它们",
+          methodCurrentHttp: "带请求头或状态码集合的 HTTP",
+          refused: "服务器拒绝了这个检查：{reason}",
           target: {
             node: "一个节点",
             address: "一个地址",
@@ -1635,7 +1638,7 @@ export default {
             saved: "保存为 {set}。",
             default: "留空时 {set} 算通。",
             redirects: "不跟随重定向：3xx 就是结果。",
-            olderAgents: "早于这个版本的 agent 不能判断状态码，也不能发送请求头；检查设置了其中任何一项时，在它们升级之前，这些路径显示为未知（agent 太旧）。",
+            olderAgents: "有 {n} 个节点的 agent 早于这个版本，不能判断状态码，也不能发送请求头，这个检查不会在那里运行；源节点列表里已标出。 | 有 {n} 个节点的 agent 早于这个版本，不能判断状态码，也不能发送请求头，这个检查不会在那里运行；源节点列表里已标出。",
             tooMany: "最多 {max} 项，这里有 {n} 项。",
             notStatus: "{entry} 不是状态码也不是范围。状态码是 100 到 599 的三位数，范围是用连字符连起来的两个状态码。",
             backwards: "{entry} 的范围反了。",
@@ -1654,6 +1657,8 @@ export default {
             localhost: "不会拨 localhost。请用节点的公网名称，或者直接选节点。",
             userinfo: "带用户名或密码的 URL 会被拒绝。请改用保密请求头发送凭据。",
             notIPv4: "ICMP 需要一个 IPv4 地址，例如 203.0.113.9。",
+            numeric: "这个主机是写成数字的地址，例如 2130706433 或 127.1。请写成点分的 IPv4 地址或 IPv6 地址。",
+            notHost: "主机里不能有区域标识（%）或空格。",
           },
           headers: {
             title: "请求头",

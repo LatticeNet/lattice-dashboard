@@ -349,7 +349,7 @@ const plan = computed(() => data.planQuery.data.value);
  * node list's probe_methods, else the plan's pair methods), as M1 reads the
  * paths route: a server without it is offered nothing it cannot take.
  */
-const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value));
+const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
 const shortestIntervalSec = computed(() => {
   const list = (monitorsQuery.data.value ?? []).filter((m) => m.enabled).map((m) => m.interval_sec);
   return list.length ? Math.min(...list) : undefined;

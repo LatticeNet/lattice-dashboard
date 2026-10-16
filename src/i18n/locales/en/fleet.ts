@@ -1361,7 +1361,7 @@ export default {
           no_inventory: "This node has not reported its inventory yet",
           no_results: "No results yet",
           results_stopped: "Results stopped arriving",
-          agent_too_old: "The source's agent is too old for this method",
+          agent_too_old: "The source's agent is too old to run this check",
           method_refused: "The node refuses this method",
           icmp_not_permitted: "The source's kernel does not let its agent send ICMP echoes",
           destination_refused: "The source refused the address: it is private, local or a metadata service, or a secret header's rule forbids the request",
@@ -1395,6 +1395,7 @@ export default {
         },
         refusal: {
           agent_too_old: "agent too old for {method}",
+          agent_too_old_http: "agent too old for headers or a status set",
           icmp_not_permitted: "ICMP not permitted on this node",
         },
         cell: {
@@ -1626,6 +1627,8 @@ export default {
           unsupportedChosen: "{n} chosen source cannot run {method}: {names}. Its path reads unknown with the reason until it can. | {n} chosen sources cannot run {method}: {names}. Their paths read unknown with the reason until they can.",
           unsupportedAll: "{n} of {total} nodes cannot run {method} now; their paths read unknown with the reason until they can.",
           removeUnsupported: "Remove it | Remove them",
+          methodCurrentHttp: "HTTP with headers or a status set",
+          refused: "The server refused this check: {reason}",
           target: {
             node: "A node",
             address: "An address",
@@ -1651,7 +1654,7 @@ export default {
             saved: "Saved as {set}.",
             default: "Empty passes {set}.",
             redirects: "Redirects are not followed: a 3xx is the answer.",
-            olderAgents: "Agents older than this release cannot judge statuses or send headers; until they update, their paths read unknown (agent too old) for a check that sets either.",
+            olderAgents: "{n} node runs an agent older than this release, which cannot judge statuses or send headers, so this check does not run there; the source list marks it. | {n} nodes run agents older than this release, which cannot judge statuses or send headers, so this check does not run there; the source list marks them.",
             tooMany: "At most {max} entries; this list has {n}.",
             notStatus: "{entry} is not a status or a range. A status is three digits from 100 to 599; a range is two of them joined by a hyphen.",
             backwards: "{entry} runs backwards.",
@@ -1670,6 +1673,8 @@ export default {
             localhost: "localhost is never dialled. Use the node's public name, or pick the node.",
             userinfo: "A URL with a user name or password is refused. Send credentials as a secret header instead.",
             notIPv4: "ICMP needs an IPv4 address, such as 203.0.113.9.",
+            numeric: "This host is an address written as a number, such as 2130706433 or 127.1. Write it as a dotted IPv4 address or an IPv6 address.",
+            notHost: "A host cannot contain a zone (%) or a space.",
           },
           headers: {
             title: "Request headers",

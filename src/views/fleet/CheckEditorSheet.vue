@@ -35,7 +35,7 @@ import { Label } from "@/components/ui/label";
 import HeaderRows from "./HeaderRows.vue";
 import NodeTargetPicker from "./NodeTargetPicker.vue";
 import SourcePicker from "./SourcePicker.vue";
-import { EXPECT_STATUS_DEFAULT, destinationProblem, isHttpsUrl, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
+import { EXPECT_STATUS_DEFAULT, agentReportsMethods, destinationProblem, isHttpsUrl, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
 import {
   ALERT_MAX_AFTER,
   CHECK_MAX_INTERVAL_SEC,
@@ -47,9 +47,11 @@ import {
   buildCreate,
   buildPauseOld,
   buildUpdate,
+  budgetRechecked,
   draftChanged,
   draftFromMonitor,
   draftHeaderProblems,
+  draftNeedsCurrentAgent,
   draftProblems,
   draftSources,
   emptyDraft,
@@ -96,6 +98,9 @@ const { refusalText } = usePathsCopy();
 
 const draft = ref<CheckDraft>(emptyDraft());
 const base = ref<CheckDraft>(emptyDraft());
+/** The server's refusal of the last save, shown until the form changes. */
+const saveError = ref<string>();
+watch(draft, () => (saveError.value = undefined), { deep: true });
 let stash: Parameters<typeof switchDraftKind>[2];
 
 function copyDraft(d: CheckDraft): CheckDraft {
@@ -105,7 +110,12 @@ function copyDraft(d: CheckDraft): CheckDraft {
 watch(
   () => props.open,
   (open) => {
-    if (!open) return;
+    saveError.value = undefined;
+    if (!open) {
+      // A typed secret leaves with the sheet; the rest of the form stays drawn while it slides out.
+      draft.value = { ...draft.value, headers: draft.value.headers.map((h) => (h.secret ? { ...h, value: "" } : h)) };
+      return;
+    }
     const start = props.monitor ? draftFromMonitor(props.monitor) : emptyDraft(props.initialType ?? "http");
     draft.value = copyDraft(start);
     base.value = start;
@@ -146,13 +156,20 @@ const nodesById = computed(() => new Map(props.nodes.map((n) => [n.id, n])));
 const planNodes = computed(() => new Map((props.plan?.nodes ?? []).map((n) => [n.node_id, n])));
 const targetNode = computed(() => nodesById.value.get(draft.value.targetNode));
 const nodeResolution = computed(() =>
-  nodeMode.value && draft.value.targetNode ? resolveNodeTarget(draft.value.type, targetNode.value, planNodes.value.get(draft.value.targetNode)) : undefined,
+  nodeMode.value && draft.value.targetNode ? resolveNodeTarget(draft.value.type, targetNode.value, planNodes.value.get(draft.value.targetNode), props.plan?.config?.method) : undefined,
 );
 /** The address the sources would send to: the node's resolution, or the address typed. */
 const address = computed(() => (nodeMode.value ? (nodeResolution.value?.state === "resolved" ? nodeResolution.value.endpoint : "") : draft.value.target.trim()));
-const sourceIds = computed(() => draftSources(draft.value, props.nodes));
-const budget = computed(() => (draft.value.type === "icmp" ? icmpBudget(address.value, sourceIds.value, draft.value, props.monitors ?? [], props.monitor?.id) : undefined));
+/** The sources that would send: a paused source sends nothing, so the server's budget leaves it out. */
+const sendingIds = computed(() => draftSources(draft.value, props.nodes).filter((id) => !draft.value.pausedNodeIds.includes(id)));
+/** A replacement is created while the check it replaces still runs, so the server counts both. */
+const budget = computed(() =>
+  draft.value.type === "icmp" ? icmpBudget(address.value, sendingIds.value, draft.value, props.monitors ?? [], replaces.value ? undefined : props.monitor?.id) : undefined,
+);
+const currentAgent = computed(() => m2a.value && draftNeedsCurrentAgent(draft.value));
 const unsupported = computed(() => (isTls.value ? [] : unsupportedSources(draft.value, props.nodes, m2a.value)));
+/** What the unsupported sources cannot run: for http, only its headers or status set are new. */
+const unsupportedMethod = computed(() => (currentAgent.value && draft.value.type === "http" ? t("fleet.monitoring.checks.editor.methodCurrentHttp") : draft.value.type.toUpperCase()));
 const nameOf = (id: string) => nodesById.value.get(id)?.name || id;
 
 function removeUnsupported(): void {
@@ -165,7 +182,7 @@ const PREVIEW_MAX = 8;
 const sourcePreview = computed(() => {
   if (!nodeMode.value || !draft.value.targetNode || draft.value.assignAll) return [];
   return draft.value.nodeIds.map((id) => {
-    const support = sourceSupport(nodesById.value.get(id), draft.value.type, m2a.value);
+    const support = sourceSupport(nodesById.value.get(id), draft.value.type, m2a.value, currentAgent.value);
     return { id, name: nameOf(id), why: support.ok ? undefined : support.reason };
   });
 });
@@ -174,7 +191,12 @@ const sourcePreview = computed(() => {
 
 const replaces = computed(() => !!props.monitor && identityChanged(props.monitor, draft.value));
 const newCheck = computed(() => !props.monitor || replaces.value);
-const rules = computed(() => ({ m2a: m2a.value, nodeTarget: nodeResolution.value, budgetPps: budget.value?.pps, newCheck: newCheck.value }));
+const rules = computed(() => ({
+  m2a: m2a.value,
+  nodeTarget: nodeResolution.value,
+  budgetPps: budgetRechecked(props.monitor, draft.value, newCheck.value) ? budget.value?.pps : undefined,
+  newCheck: newCheck.value,
+}));
 const problems = computed(() => draftProblems(draft.value, rules.value));
 const targetProblem = computed(() => {
   if (nodeMode.value || !draft.value.target.trim()) return undefined;
@@ -182,6 +204,8 @@ const targetProblem = computed(() => {
   return problems.value.includes("destination") ? "destination" : undefined;
 });
 const destination = computed(() => destinationProblem(draft.value.type, draft.value.target));
+/** Nodes whose agent reports no methods: a check that needs a current agent does not run on them. */
+const olderAgents = computed(() => (currentAgent.value ? props.nodes.filter((n) => !agentReportsMethods(n)).length : 0));
 const offerHttp = computed(() => draft.value.type === "tcp" && /^https?:\/\//i.test(draft.value.target.trim()));
 const suggested = computed(() => suggestName(draft.value.type, draft.value.target, nodeMode.value ? targetNode.value?.name || draft.value.targetNode || undefined : undefined));
 const dirty = computed(() => (props.monitor ? draftChanged(props.monitor, draft.value) : JSON.stringify(draft.value) !== JSON.stringify(base.value)));
@@ -192,8 +216,6 @@ const headerProblemsNow = computed(() => draftHeaderProblems(draft.value, newChe
 const origin = computed(() => (isHttpsUrl(draft.value.target) ? monitorOrigin(draft.value.target) : undefined));
 const runSeconds = computed(() => icmpRunSeconds(Number(draft.value.packets) || 1, Number(draft.value.timeoutSec) || 0));
 const showHttpExpect = computed(() => draft.value.type === "http" && m2a.value);
-/** A status set other than the default, or any header: only agents of this release run such a check. */
-const needsCurrentAgent = computed(() => showHttpExpect.value && (draft.value.headers.length > 0 || (statusSet.value.ok && statusSet.value.canonical !== EXPECT_STATUS_DEFAULT)));
 
 function problemOf(p: string): string {
   return t(`fleet.monitoring.checks.editor.problem.${p}`, {
@@ -259,7 +281,7 @@ async function save(): Promise<void> {
       emit("reload");
       emit("close");
     } else {
-      toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed"));
+      saveError.value = error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed");
     }
   } finally {
     pending.value = false;
@@ -283,7 +305,7 @@ async function replace(): Promise<void> {
     try {
       created = await api.monitors.create(buildCreate(draft.value, props.withAlert, bodyOptions.value));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed"));
+      saveError.value = error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed");
       return;
     }
     const problems: string[] = [];
@@ -385,6 +407,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             :show-pause="editing"
             :m2a="m2a"
             :kind="draft.type"
+            :current="currentAgent"
             :label="$t('fleet.monitoring.checks.editor.step.from')"
           />
           <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.nodeIdsManualHint') }}</p>
@@ -393,8 +416,8 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <p>
               {{
                 draft.assignAll
-                  ? $t('fleet.monitoring.checks.editor.unsupportedAll', { n: unsupported.length, total: nodes.length, method: draft.type.toUpperCase() })
-                  : $t('fleet.monitoring.checks.editor.unsupportedChosen', { n: unsupported.length, method: draft.type.toUpperCase(), names: unsupported.map((u) => nameOf(u.id)).join(', ') }, unsupported.length)
+                  ? $t('fleet.monitoring.checks.editor.unsupportedAll', { n: unsupported.length, total: nodes.length, method: unsupportedMethod })
+                  : $t('fleet.monitoring.checks.editor.unsupportedChosen', { n: unsupported.length, method: unsupportedMethod, names: unsupported.map((u) => nameOf(u.id)).join(', ') }, unsupported.length)
               }}
             </p>
             <button v-if="!draft.assignAll" type="button" class="mt-1 font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" @click="removeUnsupported">
@@ -514,8 +537,8 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           </p>
           <p v-else id="check-status-error" role="alert" class="text-xs text-destructive">{{ statusSetText(statusSet.problem) }}</p>
           <HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="newCheck && editing" />
-          <!-- The server holds such a check from agents that predate M2a (monitorNeedsCurrentAgent); the node list cannot tell which those are. -->
-          <p v-if="needsCurrentAgent" class="text-xs text-muted-foreground" data-testid="check-older-agents">{{ $t('fleet.monitoring.checks.editor.expectStatus.olderAgents') }}</p>
+          <!-- The server sends such a check only to agents that report their methods (monitorNeedsCurrentAgent); From where marks the others. -->
+          <p v-if="olderAgents > 0" class="text-xs text-muted-foreground" data-testid="check-older-agents">{{ $t('fleet.monitoring.checks.editor.expectStatus.olderAgents', { n: olderAgents }, olderAgents) }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
       </fieldset>
@@ -596,6 +619,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       <p v-for="text in problemText" :key="text" role="alert" class="text-xs text-destructive">{{ text }}</p>
     </form>
     <template #actions>
+      <p v-if="saveError" role="alert" class="basis-full text-xs text-destructive" data-testid="check-save-error">{{ $t('fleet.monitoring.checks.editor.refused', { reason: saveError }) }}</p>
       <p v-if="missing.length" class="me-auto text-xs text-muted-foreground" data-testid="check-missing">
         {{ $t('fleet.monitoring.create.missing', { fields: missing.join($t('fleet.monitoring.create.missingJoin')) }) }}
       </p>

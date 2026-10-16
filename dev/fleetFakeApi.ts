@@ -231,7 +231,7 @@ function applyHeaderOps(held: MonitorHeader[] | undefined, ops: NonNullable<Moni
   const same = (a: string, b: string) => canonicalHeaderName(a).toLowerCase() === canonicalHeaderName(b).toLowerCase();
   for (const op of ops) {
     const at = out.findIndex((h) => same(h.name, op.name));
-    if (op.op === "keep" && at < 0) throw new ApiError(409, "conflict", `header ${op.name} is not on the check`);
+    if (op.op === "keep" && at < 0) throw new ApiError(400, "invalid_request", `header ${op.name} is not on the check`);
     if (op.op === "delete") out = out.filter((_, i) => i !== at);
     if (op.op === "set") {
       const next: MonitorHeader = { name: canonicalHeaderName(op.name), value: op.value, ...(op.secret ? { secret: true } : {}) };
@@ -602,6 +602,15 @@ export const api = {
       return delay(viewOf(updated));
     },
     create: (input: MonitorCreateInput) => {
+      // `?fail=create` refuses the save the way the server refuses a node it cannot resolve, a refusal the console cannot foresee.
+      if (FAIL.has("create")) {
+        const message = input.target_node
+          ? `node ${input.target_node} has no public tcp line to connect to: it serves no public TCP line the probe may dial (never SSH or a knock-gated port)`
+          : `target ${input.target ?? ""} is an address in a numeric form; write it as a dotted IPv4 or an IPv6 literal`;
+        return delay(undefined).then(() => {
+          throw new ApiError(400, "invalid_request", message);
+        });
+      }
       const created = { ...input, target: resolveTarget(input), id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString(), ...(PARAMS.has("paths") && !pathsOld() ? { version: 1 } : {}) } as MonitorView;
       if (created.headers) created.headers = created.headers.map((h) => ({ ...h, name: canonicalHeaderName(h.name) }));
       monitors = [...monitors, created];

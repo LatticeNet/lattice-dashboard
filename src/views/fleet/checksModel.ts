@@ -20,7 +20,7 @@
 import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorType, MonitorUpdateInput, MonitorView, Node } from "@/lib/api/types";
 
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
-import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
 
@@ -237,9 +237,13 @@ export interface DraftRules {
   m2a: boolean;
   /** The node target resolved for the method; "refused" blocks the save. */
   nodeTarget?: NodeTargetResolution;
-  /** The packets per second the busiest source would send to this check's address, this check included. */
+  /** The packets per second the busiest source would send to this check's address, this check included; set only when the server re-checks it (budgetRechecked). */
   budgetPps?: number;
-  /** The save creates a check (a create, or a replacement): saved secrets cannot be carried. */
+  /**
+   * The save creates a check (a create, or a replacement): the destination
+   * rules apply, and saved secrets cannot be carried. An edit cannot change
+   * the target, so a check saved before the rules stays editable.
+   */
   newCheck?: boolean;
 }
 
@@ -255,7 +259,7 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
     else if (rules.nodeTarget?.state === "refused") out.push("targetNode");
   } else if (targetError(draft.type, draft.target)) {
     out.push("target");
-  } else if ((rules.m2a || draft.type === "icmp") && destinationProblem(draft.type, draft.target)) {
+  } else if (rules.newCheck && (rules.m2a || draft.type === "icmp") && destinationProblem(draft.type, draft.target)) {
     out.push("destination");
   }
   const interval = Number(draft.intervalSec);
@@ -290,6 +294,17 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
 /** The header problems of an http draft. */
 export function draftHeaderProblems(draft: Pick<CheckDraft, "headers" | "target">, newCheck: boolean): HeaderProblems {
   return headerProblems(draft.headers, { https: isHttpsUrl(draft.target), newCheck });
+}
+
+/**
+ * Whether the server checks the packet budget on this save: a new check
+ * always; an edit only when it changes what the budget counts (the
+ * interval, the packets, the sources or their pauses).
+ */
+export function budgetRechecked(monitor: MonitorView | undefined, draft: CheckDraft, newCheck: boolean): boolean {
+  if (!monitor || newCheck) return true;
+  const body = buildUpdate(monitor, draft, { m2a: true });
+  return ["interval_sec", "packets", "assign_all", "node_ids", "paused_node_ids"].some((key) => key in body);
 }
 
 /**
@@ -441,7 +456,12 @@ export type NodeTargetResolution =
  * only for the nodes the path set targets; for any other node the server
  * resolves it on save and refuses the save with the reason if it cannot.
  */
-export function resolveNodeTarget(kind: string, node: Pick<Node, "public_ip"> | undefined, planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target">): NodeTargetResolution {
+export function resolveNodeTarget(
+  kind: string,
+  node: Pick<Node, "public_ip"> | undefined,
+  planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target">,
+  setMethod?: string,
+): NodeTargetResolution {
   if (kind === "icmp") {
     // The server pings only a public IPv4 the destination rule accepts (latencyPublicIPv4).
     const ip = publicIPv4(planNode?.icmp_target || node?.public_ip);
@@ -449,8 +469,11 @@ export function resolveNodeTarget(kind: string, node: Pick<Node, "public_ip"> | 
   }
   if (kind === "tcp") {
     if (planNode?.endpoint && planNode.target !== "not_probeable") return { state: "resolved", endpoint: planNode.endpoint };
+    // A path set on ICMP writes its own no_public_address over the TCP note, so the TCP reason is the server's to give on save.
+    const icmpNote = setMethod === "icmp" && planNode?.endpoint_note === "no_public_address";
     // A note without an endpoint is the planner saying why the node has no line to dial (udp_only, no_tcp_line, ...).
-    if (planNode && !planNode.endpoint && planNode.endpoint_note) return { state: "refused", reason: planNode.endpoint_note };
+    if (planNode && !planNode.endpoint && planNode.endpoint_note && !icmpNote) return { state: "refused", reason: planNode.endpoint_note };
+    if (icmpNote) return { state: "onSave" };
     if (planNode?.target === "not_probeable") return { state: "refused", reason: "no_tcp_line" };
     return { state: "onSave" };
   }
@@ -462,12 +485,18 @@ export function draftSources(draft: Pick<CheckDraft, "assignAll" | "nodeIds">, n
   return draft.assignAll ? nodes.map((n) => n.id) : [...draft.nodeIds];
 }
 
-/** Chosen sources whose agent cannot run the method, with the reason each path would read. */
-export function unsupportedSources(draft: Pick<CheckDraft, "type" | "assignAll" | "nodeIds">, nodes: readonly Node[], m2a: boolean): { id: string; reason: string }[] {
+/** Whether an http draft uses a field only agents of this release run (checkRulesModel.needsCurrentAgent). */
+export function draftNeedsCurrentAgent(draft: Pick<CheckDraft, "type" | "expectStatus" | "headers">): boolean {
+  return needsCurrentAgent(draft.type, draft.expectStatus, draft.headers.filter((h) => h.name.trim()).length);
+}
+
+/** Chosen sources whose agent cannot run the check, with the reason each path would read. */
+export function unsupportedSources(draft: Pick<CheckDraft, "type" | "assignAll" | "nodeIds" | "expectStatus" | "headers">, nodes: readonly Node[], m2a: boolean): { id: string; reason: string }[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const current = draftNeedsCurrentAgent(draft);
   const out: { id: string; reason: string }[] = [];
   for (const id of draftSources(draft, nodes)) {
-    const support = sourceSupport(byId.get(id), draft.type, m2a);
+    const support = sourceSupport(byId.get(id), draft.type, m2a, current);
     if (!support.ok) out.push({ id, reason: support.reason });
   }
   return out;

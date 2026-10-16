@@ -6,7 +6,9 @@
  * stops its path for good.
  *
  * On an M2a server each row lists the methods its agent runs, and with a
- * `kind` given a node that cannot run it cannot be picked, with the reason.
+ * `kind` given a node that cannot run it cannot be picked, with the reason;
+ * with `current` (an http check with headers or a status set) neither can
+ * a node whose agent predates M2a.
  * One already chosen stays chosen and is flagged: its path reads unknown
  * with that reason, and the editor offers to remove it.
  */
@@ -32,8 +34,10 @@ const props = withDefaults(
     m2a?: boolean;
     /** The method the sources must run; nodes that cannot are not offered. */
     kind?: string;
+    /** The check needs an agent that reports its methods (checkRulesModel.needsCurrentAgent). */
+    current?: boolean;
   }>(),
-  { showPause: false, m2a: false, kind: undefined },
+  { showPause: false, m2a: false, kind: undefined, current: false },
 );
 const selected = defineModel<string[]>({ required: true });
 const paused = defineModel<string[]>("paused", { default: () => [] });
@@ -44,7 +48,7 @@ const query = ref("");
 
 /** Why the node cannot run the kind, as the path would read it; undefined when it can. */
 function whyNot(node: Node): string | undefined {
-  const support = props.kind ? sourceSupport(node, props.kind, props.m2a) : undefined;
+  const support = props.kind ? sourceSupport(node, props.kind, props.m2a, props.current) : undefined;
   return support && !support.ok ? support.reason : undefined;
 }
 
