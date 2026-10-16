@@ -23,7 +23,7 @@ export function useTargetCopy() {
   /** Why a node cannot be resolved for a method. */
   function refusedText(kind: string, reason: string): string {
     const key = `fleet.monitoring.checks.editor.resolve.${reason}`;
-    const known = ["no_public_ipv4", "no_tcp_line", "udp_only", "no_public_address", "no_inventory"];
+    const known = ["no_public_ipv4", "no_tcp_line", "udp_only", "no_public_address", "no_inventory", "no_beacon"];
     return known.includes(reason) ? t(key) : t("fleet.monitoring.checks.editor.resolve.other", { method: kind.toUpperCase(), reason });
   }
 

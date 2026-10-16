@@ -303,6 +303,8 @@ export interface Node {
   probe_methods?: string[];
   /** Kinds the agent implements but this host refuses, each with a reason code ({"icmp": "icmp_not_permitted"}). */
   probe_refusals?: Record<string, string>;
+  /** What the agent last reported about its beacon responder (design 29 M2b); absent for an agent that reports nothing. */
+  beacon?: BeaconFacts | null;
 }
 
 /** One work loop step's outcome, by the agent's clock. */
@@ -1186,7 +1188,7 @@ export interface AuditVerifyResponse {
  * to expiry; the probe fails once fewer than `threshold_days` remain, so the
  * result log turns red before the certificate lapses rather than after.
  */
-export type MonitorType = "tcp" | "http" | "icmp" | "tls";
+export type MonitorType = "tcp" | "http" | "icmp" | "tls" | "beacon";
 
 export interface MonitorView {
   id: string;
@@ -1438,6 +1440,10 @@ export interface LatencyProbeNode {
   icmp_target?: string;
   /** The generated icmp check, while it exists. */
   icmp_monitor_id?: string;
+  /** The advertised endpoint beacon sources send to; empty while the node has no applied, enabled beacon (design 29 M2b). */
+  beacon_target?: string;
+  /** The generated beacon check, while it exists. */
+  beacon_monitor_id?: string;
 }
 
 export interface LatencyProbePairState {
@@ -1568,6 +1574,147 @@ export interface MonitorCreateInput {
   node_ids?: string[];
   alert?: MonitorAlertPolicy;
   alert_after?: number;
+}
+
+/* ---- The measurement beacon (design 29 D3, wire contract D12; lattice-sdk model/beacon.go) ---- */
+
+/** The limits a node.beacon plan fixes and its hash covers. */
+export interface BeaconLimits {
+  source_rate_per_second: number;
+  min_interval_sec: number;
+  packets_per_second_max: number;
+}
+
+/** What a node.beacon plan sets. */
+export interface BeaconSettings {
+  enabled: boolean;
+  /** UDP listen port: random in 40000 to 59999 unless the operator chose one from 1024 to 65535. */
+  port?: number;
+  /** The IPv4 address the agent binds, never the wildcard. */
+  bind?: string;
+  /** The advertised address:port sources send to, an IPv4 literal. */
+  endpoint?: string;
+  limits: BeaconLimits;
+}
+
+export type BeaconPlanAction = "enable" | "disable" | "change";
+
+/** The body of POST /api/nodes/beacon/plan. A zero or empty field takes the default (enable) or keeps the current value (change). */
+export interface BeaconPlanRequest {
+  node_id: string;
+  action: BeaconPlanAction;
+  port?: number;
+  bind?: string;
+  endpoint?: string;
+}
+
+/** One source of a plan's approved set, with the /32s a NetGuard companion admits for it. */
+export interface BeaconPlanSource {
+  node_id: string;
+  name: string;
+  source_id: number;
+  allow?: string[];
+}
+
+/** The NetGuard companion a plan carries when NetGuard manages the node. */
+export interface BeaconNetGuardPlan {
+  port: number;
+  allow: string[];
+  notrack: boolean;
+  binding_version: number;
+  ruleset_sha256: string;
+  ruleset: string;
+}
+
+export type BeaconExposure = "netguard" | "internet";
+
+/** The document a node.beacon approval carries as its plan, as indented JSON. */
+export interface BeaconPlan {
+  kind: string;
+  node_id: string;
+  node_name: string;
+  action: BeaconPlanAction | string;
+  beacon: BeaconSettings;
+  previous?: BeaconSettings | null;
+  sources: BeaconPlanSource[] | null;
+  exposure: BeaconExposure | string;
+  netguard?: BeaconNetGuardPlan | null;
+  base_version: number;
+}
+
+/** A plan lint result: `block` refuses the plan (409), `warn` is shown and kept. */
+export interface BeaconFinding {
+  code: string;
+  severity: "block" | "warn" | string;
+  message: string;
+}
+
+export interface BeaconPlanResponse {
+  approval: ApprovalView;
+  plan: BeaconPlan;
+  findings: BeaconFinding[] | null;
+}
+
+export interface BeaconRotateResponse {
+  node_id: string;
+  epoch: number;
+}
+
+export type BeaconState = "off" | "pending" | "listening" | "refused_by_node" | "not_listening" | "agent_too_old";
+export type BeaconReachState = "pending" | "reachable" | "filtered" | "not_listening" | "no_source";
+
+/** The verdict of the check one source runs after a plan applies. */
+export interface BeaconReachability {
+  state?: BeaconReachState | string;
+  source?: string;
+  monitor_id?: string;
+  checked_at?: string;
+}
+
+/** An agent's report about its responder: off, listening, bind_failed, circuit_open or refused. */
+export interface BeaconFacts {
+  responder: boolean;
+  /** refused_by_node when the agent runs with -no-beacon. */
+  refusal?: string;
+  state?: "off" | "listening" | "bind_failed" | "circuit_open" | "refused" | string;
+  bind?: string;
+  port?: number;
+  epoch?: number;
+  sources?: number;
+  last_auth_at?: string;
+  error?: string;
+}
+
+/** One source of a beacon: approved by the applied plan, using the beacon now, or both. */
+export interface BeaconSourceView {
+  node_id: string;
+  name: string;
+  source_id: number;
+  approved: boolean;
+  current: boolean;
+  /** firewall_pending or beacon_source_pending for a current source the plan did not approve. */
+  reason?: string;
+}
+
+/** GET /api/nodes/beacon?node_id=. It never carries a key. */
+export interface BeaconView {
+  node_id: string;
+  state: BeaconState | string;
+  reason?: string;
+  applied?: BeaconSettings | null;
+  applied_approval_id?: string;
+  applied_at?: string;
+  epoch?: number;
+  rotated_at?: string;
+  last_auth_at?: string;
+  agent?: BeaconFacts | null;
+  reachability?: BeaconReachability;
+  exposure?: BeaconExposure | string;
+  firewall_pending?: boolean;
+  sources: BeaconSourceView[] | null;
+  pending_approval_id?: string;
+  suggested_port?: number;
+  version: number;
 }
 
 export type RenewalCycle = "" | "monthly" | "quarterly" | "semiannual" | "annual" | "custom_days";

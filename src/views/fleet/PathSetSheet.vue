@@ -17,6 +17,10 @@
  * and pins single sources to one, and previews per source which method it
  * will use and how many targets it reaches with it. Against an older server
  * neither is shown nor sent.
+ *
+ * On an M2b server Beacon joins the methods and the pins, Auto prefers it
+ * (design 29 D12), and the preview counts the targets whose beacon plan has
+ * not admitted the source yet.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -38,18 +42,18 @@ import {
   LATENCY_MAX_INTERVAL_SEC,
   LATENCY_MAX_TIMEOUT_SEC,
   LATENCY_MIN_INTERVAL_SEC,
-  PATH_SET_METHODS,
-  SOURCE_PINS,
   draftFromConfig,
   draftProblems,
   draftTargetReason,
   draftToConfig,
   draftsDiffer,
+  pathSetMethods,
   pathSetPreview,
   setPairEnabled,
   sourceMethod,
   setSourceMethod,
   setTargetMode,
+  sourcePins,
   targetMode,
   type LatencyDraft,
   type SourceMethodPreview,
@@ -64,11 +68,20 @@ const props = defineProps<{
   nodes: Node[];
   /** The server speaks M2a: the method and the pins are offered. */
   m2a?: boolean;
+  /** The server speaks M2b: Beacon is among them. */
+  m2b?: boolean;
 }>();
 const emit = defineEmits<{ close: []; saved: [plan: LatencyProbePlan]; reload: [] }>();
 
 const { t } = useI18n();
 const { refusalText } = usePathsCopy();
+const methods = computed(() => pathSetMethods(!!props.m2a && !!props.m2b));
+const pinsFor = (source: string) => sourcePins(!!props.m2a && !!props.m2b, draft.value.sourceMethods[source]);
+/** Auto reads differently once Beacon is in it. */
+const methodHintKey = computed(() => {
+  const m = draft.value.method || "tcp";
+  return m === "auto" && props.m2b ? "autoBeacon" : m;
+});
 
 const base = ref<LatencyDraft>(draftFromConfig(props.plan.config));
 const draft = ref<LatencyDraft>(draftFromConfig(props.plan.config));
@@ -142,28 +155,43 @@ function unreachedNames(row: SourceMethodPreview): string {
 }
 
 /**
- * The source list flags, without disabling, a node that would ping (pinned
- * to ICMP, or following a path set on ICMP) but cannot: a pin to TCP or
- * Auto would make it measure, so it stays pickable.
+ * The source list flags, without disabling, a node that would ping or send
+ * beacon requests (pinned to ICMP or Beacon, or following a path set on one)
+ * but cannot: a pin to TCP or Auto would make it measure, so it stays
+ * pickable.
  */
 const sourceNotes = computed<Record<string, string>>(() => {
   if (!props.m2a) return {};
   const out: Record<string, string> = {};
   for (const node of sourceNodes.value) {
-    if (sourceMethod(draft.value, node.id) !== "icmp") continue;
-    const support = sourceSupport(node, "icmp", true);
-    if (!support.ok) out[node.id] = t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(support.reason, "icmp") });
+    const method = sourceMethod(draft.value, node.id);
+    if (method !== "icmp" && method !== "beacon") continue;
+    const support = sourceSupport(node, method, true);
+    if (!support.ok) out[node.id] = t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(support.reason, method) });
   }
   return out;
 });
 
 /** What the To where list's footnote says the targets are dialled on, by the method. */
-const ruleHint = computed(() => (props.m2a && draft.value.method && draft.value.method !== "tcp" ? t(`fleet.monitoring.pathSet.ruleHint.${draft.value.method}`) : t("fleet.monitoring.latency.config.ruleHint")));
+const ruleHint = computed(() => {
+  const m = draft.value.method;
+  if (!props.m2a || !m || m === "tcp") return t("fleet.monitoring.latency.config.ruleHint");
+  return t(`fleet.monitoring.pathSet.ruleHint.${m === "auto" && props.m2b ? "autoBeacon" : m}`);
+});
+
+/** The targets a source waits on a beacon plan for, by name: the first eight, then a count. */
+function waitingNames(row: SourceMethodPreview): string {
+  const names = row.waitingTargets.slice(0, 8).map(nameOf);
+  const more = row.waitingTargets.length - names.length;
+  return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
+}
 
 /** One line per source: the method it will use and what it reaches with it. */
 function previewLine(row: SourceMethodPreview): string {
-  if (row.refusal) return t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(row.refusal, "icmp") });
+  if (row.refusal) return t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(row.refusal, row.refusalMethod ?? "icmp") });
   const parts: string[] = [];
+  if (row.beacon) parts.push(t("fleet.monitoring.pathSet.preview.beacon", { n: row.beacon }, row.beacon));
+  if (row.beaconWaiting) parts.push(t("fleet.monitoring.pathSet.preview.beaconWaiting", { n: row.beaconWaiting }, row.beaconWaiting));
   if (row.icmp) parts.push(t("fleet.monitoring.pathSet.preview.icmp", { n: row.icmp }, row.icmp));
   if (row.tcp) parts.push(t("fleet.monitoring.pathSet.preview.tcp", { n: row.tcp }, row.tcp));
   if (row.onSave) parts.push(t("fleet.monitoring.pathSet.preview.onSave", { n: row.onSave }, row.onSave));
@@ -236,9 +264,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
         <template v-if="m2a">
           <!-- Native radios: one tab stop, arrow keys move and choose, as a radio group should. -->
-          <div class="grid grid-cols-3 rounded-md border border-input p-1" role="radiogroup" :aria-label="$t('fleet.monitoring.pathSet.methodLabel')" data-testid="path-set-method">
+          <div :class="cn('grid rounded-md border border-input p-1', methods.length > 3 ? 'grid-cols-4' : 'grid-cols-3')" role="radiogroup" :aria-label="$t('fleet.monitoring.pathSet.methodLabel')" data-testid="path-set-method">
             <label
-              v-for="m in PATH_SET_METHODS"
+              v-for="m in methods"
               :key="m || 'tcp'"
               :class="cn('flex cursor-pointer items-center justify-center rounded px-2 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring pointer-coarse:min-h-11', draft.method === m && 'bg-secondary font-medium text-foreground')"
             >
@@ -246,7 +274,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
               {{ methodLabel(m) }}
             </label>
           </div>
-          <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${draft.method || 'tcp'}`) }}</p>
+          <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${methodHintKey}`) }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
         <!-- Its own label, so it does not read as a second method choice under the first. -->
@@ -286,6 +314,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 <span v-if="row.noneTargets.length && !row.refusal" class="block text-xs break-words text-muted-foreground" data-testid="pin-unreached">
                   {{ $t('fleet.monitoring.pathSet.preview.unreached', { names: unreachedNames(row) }) }}
                 </span>
+                <span v-if="row.waitingTargets.length && !row.refusal" class="block text-xs break-words text-warning-text" data-testid="pin-waiting">
+                  {{ $t('fleet.monitoring.pathSet.preview.waiting', { names: waitingNames(row) }) }}
+                </span>
               </span>
               <select
                 :value="draft.sourceMethods[row.source] ?? ''"
@@ -294,11 +325,11 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 @change="(e) => setPin(row.source, (e.target as HTMLSelectElement).value)"
               >
                 <option value="">{{ $t('fleet.monitoring.pathSet.pinFollow', { method: methodLabel(draft.method) }) }}</option>
-                <option v-for="pin in SOURCE_PINS" :key="pin" :value="pin">{{ methodLabel(pin) }}</option>
+                <option v-for="pin in pinsFor(row.source)" :key="pin" :value="pin">{{ methodLabel(pin) }}</option>
               </select>
             </li>
           </ul>
-          <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.pinHint') }}</p>
+          <p class="text-xs text-muted-foreground">{{ m2b ? $t('fleet.monitoring.pathSet.pinHintBeacon') : $t('fleet.monitoring.pathSet.pinHint') }}</p>
         </div>
       </fieldset>
 

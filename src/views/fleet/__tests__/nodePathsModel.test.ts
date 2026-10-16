@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import type { PathView, PathsResponse } from "@/lib/api/types";
+
+import { monitoringQuery, nodePaths, otherEnd, stateCounts, worstFirst } from "../nodePathsModel.ts";
+import { buildPathsMatrix } from "../pathsModel.ts";
+
+function path(over: Partial<PathView>): PathView {
+  return { source: "sh", target_node: "jp", target: "203.0.113.12:50231", monitor_id: "mon_latb_jp", managed: true, method: "beacon", state: "up", p50_ms: 68, samples: 60, expected: 60, ...over };
+}
+
+function matrix(paths: PathView[]) {
+  const response: PathsResponse = {
+    window: "24h",
+    sources: [
+      { node_id: "sh", name: "cd-hs-sh" },
+      { node_id: "fsn", name: "hetzner-fsn" },
+      { node_id: "jp", name: "xuezhang-jp-nat" },
+    ],
+    targets: [
+      { node_id: "jp", name: "xuezhang-jp-nat", country: "JP" },
+      { node_id: "de", name: "hetzner-fsn", country: "DE" },
+      { node_id: "us", name: "racknerd-la", country: "US" },
+    ],
+    paths,
+  };
+  return buildPathsMatrix(response, { checkName: (id) => (id === "mon_ping_jp" ? "Ping xuezhang-jp-nat" : id === "mon_status" ? "Status page" : undefined) });
+}
+
+test("a node's paths split into those that end at it and those that start from it", () => {
+  const m = matrix([
+    path({}),
+    path({ source: "fsn", state: "unknown", reason: "firewall_pending", p50_ms: null }),
+    path({ source: "sh", monitor_id: "mon_ping_jp", managed: false, method: "icmp" }),
+    path({ source: "jp", target_node: "de", monitor_id: "mon_lat_de", method: "tcp", state: "down", p50_ms: null, loss: 1 }),
+    path({ source: "jp", target_node: "us", monitor_id: "mon_lat_us", method: "tcp", p50_ms: 120 }),
+    path({ source: "jp", target_node: undefined, target: "https://status.example.com/health", monitor_id: "mon_status", managed: false, method: "http", p50_ms: 140 }),
+    // Neither: a path from the node to itself, and the beacon's reachability check.
+    path({ source: "jp", target_node: "jp", monitor_id: "mon_lat_jp", method: "tcp" }),
+    path({ source: "sh", monitor_id: "mon_beaconr_jp", managed: false }),
+  ]);
+  const lists = nodePaths(m, "jp");
+  assert.deepEqual(lists.reachedBy.map((p) => [p.source, p.monitorId]), [
+    ["fsn", "mon_latb_jp"],
+    // Two up paths with the same p50 keep a stable order, by their keys.
+    ["sh", "mon_ping_jp"],
+    ["sh", "mon_latb_jp"],
+  ]);
+  assert.deepEqual(lists.reaches.map((p) => p.monitorId), ["mon_lat_de", "mon_status", "mon_lat_us"]);
+  assert.deepEqual(nodePaths(undefined, "jp"), { reachedBy: [], reaches: [] });
+});
+
+test("worst first: down, unknown, paused, up; then the lossiest, then the slowest", () => {
+  const m = matrix([
+    path({ source: "sh", target_node: "us", monitor_id: "a", state: "up", p50_ms: 120 }),
+    path({ source: "sh", target_node: "de", monitor_id: "b", state: "up", p50_ms: 240, loss: 0.02 }),
+    path({ source: "sh", target_node: "jp", monitor_id: "c", state: "unknown", reason: "path_paused", p50_ms: null }),
+    path({ source: "fsn", target_node: "jp", monitor_id: "d", state: "unknown", reason: "beacon_filtered", p50_ms: null }),
+    path({ source: "fsn", target_node: "us", monitor_id: "e", state: "down", p50_ms: null }),
+  ]);
+  assert.deepEqual([...m.paths].sort(worstFirst).map((p) => p.monitorId), ["e", "d", "c", "b", "a"]);
+  assert.deepEqual(stateCounts(m.paths), { up: 2, down: 1, unknown: 1, paused: 1 });
+});
+
+test("the other end is the source when reached, the target when reaching; checks carry their names", () => {
+  const m = matrix([path({}), path({ source: "sh", monitor_id: "mon_ping_jp", managed: false, method: "icmp" })]);
+  const [generated, check] = [m.paths[0]!, m.paths[1]!];
+  assert.deepEqual(otherEnd(generated, "reachedBy"), { name: "cd-hs-sh", check: undefined });
+  assert.deepEqual(otherEnd(check, "reachedBy"), { name: "cd-hs-sh", check: "Ping xuezhang-jp-nat" });
+  assert.deepEqual(otherEnd(generated, "reaches"), { name: "xuezhang-jp-nat", check: undefined });
+  // The check's row is named by the check; its target node keeps its own name for the beacon link.
+  assert.equal(check.targetName, "Ping xuezhang-jp-nat");
+  assert.equal(check.targetNodeName, "xuezhang-jp-nat");
+});
+
+test("the Monitoring link filters by target or by source, quoting names the query would split", () => {
+  assert.equal(monitoringQuery("reachedBy", "xuezhang-jp-nat"), "target:xuezhang-jp-nat");
+  assert.equal(monitoringQuery("reaches", "my node: 2"), 'source:"my node: 2"');
+});

@@ -22,6 +22,7 @@ import {
   parseStatusSet,
   publicIPv4,
   serverSpeaksM2a,
+  serverSpeaksM2b,
   sourceSupport,
 } from "../checkRulesModel.ts";
 
@@ -269,4 +270,23 @@ test("hosts follow the server's checkMonitorHost: zones and spaces, then numeric
 test("a node's public IPv4 for ICMP is a dotted IPv4 the destination rule accepts", () => {
   assert.equal(publicIPv4(" 203.0.113.9 "), "203.0.113.9");
   for (const raw of ["10.0.0.5", "100.64.1.1", "2001:db8::1", "", undefined, "example.com"]) assert.equal(publicIPv4(raw), undefined, String(raw));
+});
+
+/* ---- The beacon (design 29 M2b, D12) ---- */
+
+test("an M2b server is read from its answers: beacon facts, the beacon client, plan beacons, beacon checks", () => {
+  assert.equal(serverSpeaksM2b([{ probe_methods: ["http", "icmp", "tcp"] }]), false, "an M2a answer says nothing about M2b");
+  assert.equal(serverSpeaksM2b([{ probe_methods: ["beacon", "http", "icmp", "tcp"] }]), true);
+  assert.equal(serverSpeaksM2b([{ beacon: { responder: true, state: "off" } }]), true);
+  assert.equal(serverSpeaksM2b([], { nodes: [{ node_id: "jp", name: "jp", region: "outside_mainland", source: false, target: "probed", beacon_target: "203.0.113.12:50231" }], pairs: [], config: { enabled: true, interval_sec: 60, timeout_sec: 5, sources: [], auto_targets: true, version: 1 } }), true);
+  assert.equal(serverSpeaksM2b([], { nodes: [], pairs: [{ source: "sh", target: "jp", enabled: true, active: true, method: "beacon" }], config: { enabled: true, interval_sec: 60, timeout_sec: 5, sources: [], auto_targets: true, version: 1 } }), true);
+  assert.equal(serverSpeaksM2b([], null, [{ type: "beacon" }]), true);
+  assert.equal(serverSpeaksM2b([], null, [{ type: "tcp", managed_by: "beacon" }]), true, "a reachability check");
+  assert.equal(serverSpeaksM2b(undefined, null, [{ type: "icmp" }]), false);
+});
+
+test("a source sends beacon requests only when its agent runs the beacon client", () => {
+  assert.deepEqual(sourceSupport({ probe_methods: ["beacon", "http", "icmp", "tcp"] }, "beacon", true), { ok: true });
+  assert.deepEqual(sourceSupport({ probe_methods: ["http", "icmp", "tcp"] }, "beacon", true), { ok: false, reason: "agent_too_old" });
+  assert.deepEqual(sourceSupport({}, "beacon", true), { ok: false, reason: "agent_too_old" }, "an agent before M2a runs tcp and http only");
 });

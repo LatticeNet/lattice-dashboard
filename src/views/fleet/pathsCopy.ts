@@ -37,6 +37,11 @@ export function usePathsCopy() {
     return code ? t(`fleet.monitoring.paths.reasonShort.${code}`) : reasonText(reason);
   }
 
+  /** A method as the console names it in a sentence: TCP, ICMP, HTTP, TLS, and Beacon as a word rather than a code. */
+  function methodName(method: string): string {
+    return method === "beacon" ? t("fleet.monitoring.checks.editor.methodName.beacon") : method.toUpperCase();
+  }
+
   /**
    * Why a node cannot run a method, short, for a source row (design 29 D9):
    * "agent too old for ICMP", "ICMP not permitted on this node", or the
@@ -46,7 +51,7 @@ export function usePathsCopy() {
     const code = reasonCode(reason);
     // Every agent runs http; one too old for an http check is too old for its headers or status set.
     if (code === "agent_too_old" && method === "http") return t("fleet.monitoring.paths.refusal.agent_too_old_http");
-    if (code === "agent_too_old") return t("fleet.monitoring.paths.refusal.agent_too_old", { method: method.toUpperCase() });
+    if (code === "agent_too_old") return t("fleet.monitoring.paths.refusal.agent_too_old", { method: methodName(method) });
     if (code === "icmp_not_permitted") return t("fleet.monitoring.paths.refusal.icmp_not_permitted");
     return reasonText(reason);
   }
@@ -68,5 +73,5 @@ export function usePathsCopy() {
     return t(`fleet.monitoring.window.long.${window}`);
   }
 
-  return { reasonText, reasonShort, refusalText, whyText, stateLabel, displayLabel, groupLabel, windowLong };
+  return { reasonText, reasonShort, refusalText, methodName, whyText, stateLabel, displayLabel, groupLabel, windowLong };
 }

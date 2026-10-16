@@ -94,7 +94,8 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import ShellText from "@/components/common/ShellText.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
-import NodeLatencyCard from "./NodeLatencyCard.vue";
+import NodeBeaconCard from "./NodeBeaconCard.vue";
+import NodePathsCard from "./NodePathsCard.vue";
 import NodeHistoryCard from "./NodeHistoryCard.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -1886,8 +1887,9 @@ async function saveDebug(): Promise<void> {
 
           <!-- What runs on it. -->
           <div class="min-w-0 space-y-6">
-            <!-- How the latency probes reach it, and how it reaches its targets. -->
-            <NodeLatencyCard :node-id="node.id" />
+            <!-- Which paths reach it and which it reaches (design 29 D7), and its beacon (D3). -->
+            <NodePathsCard :node="node" :nodes="nodesQuery.data.value ?? []" />
+            <NodeBeaconCard :key="node.id" :node="node" />
 
             <!-- DDNS bindings -->
             <Card>

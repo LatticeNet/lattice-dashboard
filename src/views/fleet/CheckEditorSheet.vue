@@ -17,12 +17,19 @@
  * statuses and request headers with write-only secrets, and source gating
  * by the methods each agent runs. Against an older server none of it shows
  * and the bodies are M1's.
+ *
+ * On an M2b server (`m2b`) it adds Beacon (design 29 D12): always a node
+ * target, offered only on nodes with an enabled beacon, sent only from
+ * sources that run the beacon client, and with a target chosen, the sheet
+ * reads that node's beacon to say which sources its plan admits.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
-import { api, type LatencyProbePlan, type MonitorType, type MonitorView, type Node } from "@/lib/api";
+import { RouterLink } from "vue-router";
+
+import { api, type BeaconView, type LatencyProbePlan, type MonitorType, type MonitorView, type Node } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +50,7 @@ import {
   CHECK_MIN_INTERVAL_SEC,
   PACKETS_MAX,
   PACKETS_PER_SECOND_MAX,
+  beaconBudget,
   buildCarryPauses,
   buildCreate,
   buildPauseOld,
@@ -58,6 +66,8 @@ import {
   icmpBudget,
   icmpRunSeconds,
   identityChanged,
+  multiPacket,
+  nodeOnly,
   offeredKinds,
   resolveNodeTarget,
   suggestName,
@@ -84,6 +94,8 @@ const props = defineProps<{
   withAlert: boolean;
   /** The server speaks M2a (checkRulesModel.serverSpeaksM2a). */
   m2a?: boolean;
+  /** The server speaks M2b, the beacon (checkRulesModel.serverSpeaksM2b). */
+  m2b?: boolean;
   /** Every check, for the ICMP packet budget to one address. */
   monitors?: MonitorView[];
   /** The path set plan: the server's own resolution of the nodes it targets. */
@@ -94,7 +106,7 @@ const emit = defineEmits<{ close: []; saved: [id: string]; reload: [] }>();
 
 const { t } = useI18n();
 const { resolutionText, destinationText, statusSetText } = useTargetCopy();
-const { refusalText } = usePathsCopy();
+const { refusalText, reasonShort, methodName } = usePathsCopy();
 
 const draft = ref<CheckDraft>(emptyDraft());
 const base = ref<CheckDraft>(emptyDraft());
@@ -125,10 +137,11 @@ watch(
 );
 
 const m2a = computed(() => !!props.m2a);
+const m2b = computed(() => m2a.value && !!props.m2b);
 const editing = computed(() => !!props.monitor);
 const isTls = computed(() => isServerEvaluated(draft.value.type));
 const kinds = computed(() => {
-  const list = offeredKinds(m2a.value);
+  const list = offeredKinds(m2a.value, m2b.value);
   // A check of a kind this server no longer offers still shows its own.
   return props.monitor && !list.includes(props.monitor.type as MonitorType) ? [...list, props.monitor.type as MonitorType] : list;
 });
@@ -136,6 +149,9 @@ const kinds = computed(() => {
 /** Node targets need the node list and an M2a server. */
 const offerNodeTarget = computed(() => m2a.value && props.canReadNodes && takesNodeTarget(draft.value.type));
 const nodeMode = computed(() => offerNodeTarget.value && usesNodeTarget(draft.value));
+/** A beacon check has no address to choose instead, so no choice is drawn. */
+const showTargetMode = computed(() => offerNodeTarget.value && !nodeOnly(draft.value.type));
+const isBeacon = computed(() => draft.value.type === "beacon");
 
 function setKind(kind: MonitorType): void {
   const next = switchDraftKind(draft.value, kind, stash);
@@ -163,9 +179,46 @@ const address = computed(() => (nodeMode.value ? (nodeResolution.value?.state ==
 /** The sources that would send: a paused source sends nothing, so the server's budget leaves it out. */
 const sendingIds = computed(() => draftSources(draft.value, props.nodes).filter((id) => !draft.value.pausedNodeIds.includes(id)));
 /** A replacement is created while the check it replaces still runs, so the server counts both. */
-const budget = computed(() =>
-  draft.value.type === "icmp" ? icmpBudget(address.value, sendingIds.value, draft.value, props.monitors ?? [], replaces.value ? undefined : props.monitor?.id) : undefined,
+const budget = computed(() => {
+  const editingId = replaces.value ? undefined : props.monitor?.id;
+  if (draft.value.type === "icmp") return icmpBudget(address.value, sendingIds.value, draft.value, props.monitors ?? [], editingId);
+  if (isBeacon.value) return beaconBudget(draft.value.targetNode, sendingIds.value, draft.value, props.monitors ?? [], editingId);
+  return undefined;
+});
+
+/*
+ * The chosen target's beacon, for which sources its plan admits (design 29
+ * D12): a source the plan has not approved reads firewall pending (under
+ * NetGuard) or source pending until a change plan on the target is approved.
+ * Read once per chosen node; a failed read only drops the per-source note.
+ */
+const targetBeacon = ref<BeaconView>();
+let beaconRead: AbortController | undefined;
+watch(
+  () => (props.open && isBeacon.value && m2b.value ? draft.value.targetNode : ""),
+  (nodeId) => {
+    beaconRead?.abort();
+    targetBeacon.value = undefined;
+    if (!nodeId) return;
+    const controller = new AbortController();
+    beaconRead = controller;
+    api.nodes.beacon
+      .get(nodeId, { signal: controller.signal })
+      .then((view) => {
+        if (!controller.signal.aborted && view && typeof view === "object" && view.node_id === nodeId) targetBeacon.value = view;
+      })
+      .catch(() => undefined);
+  },
+  { immediate: true },
 );
+/** Why a source would wait on the target's plan, or undefined when its plan admits it (or nothing is known). */
+function beaconWaiting(source: string): string | undefined {
+  const view = targetBeacon.value;
+  if (!isBeacon.value || !view) return undefined;
+  const entry = (view.sources ?? []).find((s) => s.node_id === source);
+  if (entry?.approved) return undefined;
+  return entry?.reason || (view.exposure === "netguard" ? "firewall_pending" : "beacon_source_pending");
+}
 const currentAgent = computed(() => m2a.value && draftNeedsCurrentAgent(draft.value));
 const unsupported = computed(() => (isTls.value ? [] : unsupportedSources(draft.value, props.nodes, m2a.value)));
 /** The unsupported sources by name: the first eight, then a count. */
@@ -175,7 +228,7 @@ const unsupportedNames = computed(() => {
   return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
 });
 /** What the unsupported sources cannot run: for http, only its headers or status set are new. */
-const unsupportedMethod = computed(() => (currentAgent.value && draft.value.type === "http" ? t("fleet.monitoring.checks.editor.methodCurrentHttp") : draft.value.type.toUpperCase()));
+const unsupportedMethod = computed(() => (currentAgent.value && draft.value.type === "http" ? t("fleet.monitoring.checks.editor.methodCurrentHttp") : methodName(draft.value.type)));
 const nameOf = (id: string) => nodesById.value.get(id)?.name || id;
 
 function removeUnsupported(): void {
@@ -189,7 +242,7 @@ const sourcePreview = computed(() => {
   if (!nodeMode.value || !draft.value.targetNode || draft.value.assignAll) return [];
   return draft.value.nodeIds.map((id) => {
     const support = sourceSupport(nodesById.value.get(id), draft.value.type, m2a.value, currentAgent.value);
-    return { id, name: nameOf(id), why: support.ok ? undefined : support.reason };
+    return { id, name: nameOf(id), why: support.ok ? undefined : support.reason, waiting: support.ok ? beaconWaiting(id) : undefined };
   });
 });
 
@@ -221,10 +274,13 @@ const headerProblemsNow = computed(() => draftHeaderProblems(draft.value, newChe
 // Secrets are bound to an https origin only; an http URL has none to name.
 const origin = computed(() => (isHttpsUrl(draft.value.target) ? monitorOrigin(draft.value.target) : undefined));
 const runSeconds = computed(() => icmpRunSeconds(Number(draft.value.packets) || 1, Number(draft.value.timeoutSec) || 0));
+/** The wording of a multi-packet problem: echoes for ICMP, signed requests for a beacon. */
+const BEACON_PROBLEMS: Record<string, string> = { runLength: "runLengthBeacon", packets: "packetsBeacon", budget: "budgetBeacon" };
 const showHttpExpect = computed(() => draft.value.type === "http" && m2a.value);
 
 function problemOf(p: string): string {
-  return t(`fleet.monitoring.checks.editor.problem.${p}`, {
+  const key = isBeacon.value ? (BEACON_PROBLEMS[p] ?? p) : p;
+  return t(`fleet.monitoring.checks.editor.problem.${key}`, {
     min: CHECK_MIN_INTERVAL_SEC,
     max: CHECK_MAX_INTERVAL_SEC,
     timeout: CHECK_MAX_TIMEOUT_SEC,
@@ -382,7 +438,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             </span>
           </label>
         </div>
-        <p class="text-xs text-muted-foreground">{{ m2a ? $t('fleet.monitoring.checks.editor.kindLaterBeacon') : $t('fleet.monitoring.checks.editor.kindLater') }}</p>
+        <p v-if="!m2b" class="text-xs text-muted-foreground">{{ m2a ? $t('fleet.monitoring.checks.editor.kindLaterBeacon') : $t('fleet.monitoring.checks.editor.kindLater') }}</p>
         <p v-if="replaces" class="rounded-md bg-warning/10 px-2.5 py-2 text-xs text-warning-text" role="status" data-testid="check-replaces">
           {{ $t('fleet.monitoring.checks.editor.replacesNote') }}
         </p>
@@ -441,7 +497,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       <!-- 3. To where -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.to') }}</legend>
-        <div v-if="offerNodeTarget" class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.checks.editor.step.to')" data-testid="target-mode">
+        <div v-if="showTargetMode" class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.checks.editor.step.to')" data-testid="target-mode">
           <button type="button" :class="cn(SEGMENT, nodeMode && 'bg-secondary font-medium text-foreground')" :aria-pressed="nodeMode" @click="setTargetMode('node')">
             {{ $t('fleet.monitoring.checks.editor.target.node') }}
           </button>
@@ -454,11 +510,19 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.target.nodeHint.${draft.type}`) }}</p>
           <p v-if="nodeResolution?.state === 'refused'" id="check-target-error" role="alert" class="text-xs text-destructive" data-testid="target-refused">
             {{ $t('fleet.monitoring.checks.editor.target.refused', { name: targetNode?.name || draft.targetNode, reason: resolutionText(draft.type, nodeResolution) }) }}
+            <!-- A beacon is enabled on the node's own page, through a plan. -->
+            <RouterLink
+              v-if="isBeacon && draft.targetNode"
+              :to="{ name: 'node-detail', params: { id: draft.targetNode }, hash: '#node-beacon' }"
+              class="ms-1 font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              data-testid="target-open-beacon"
+            >{{ $t('fleet.monitoring.checks.editor.target.openBeacon') }}</RouterLink>
           </p>
           <!-- What every chosen source will dial, before saving. -->
           <ul v-if="sourcePreview.length && nodeResolution && nodeResolution.state !== 'refused'" class="grid gap-1 rounded-md bg-muted/40 p-2.5 text-xs" data-testid="target-preview" :aria-label="$t('fleet.monitoring.checks.editor.target.previewLabel')">
-            <li v-for="row in sourcePreview.slice(0, PREVIEW_MAX)" :key="row.id" :class="cn('break-words', row.why && 'text-warning-text')">
+            <li v-for="row in sourcePreview.slice(0, PREVIEW_MAX)" :key="row.id" :class="cn('break-words', (row.why || row.waiting) && 'text-warning-text')">
               <template v-if="row.why">{{ $t('fleet.monitoring.checks.editor.target.previewCannot', { source: row.name, why: refusalText(row.why, draft.type) }) }}</template>
+              <template v-else-if="row.waiting">{{ $t('fleet.monitoring.checks.editor.target.previewWaiting', { source: row.name, node: targetNode?.name || draft.targetNode, why: reasonShort(row.waiting) }) }}</template>
               <template v-else-if="nodeResolution.state === 'resolved'">
                 {{ $t(`fleet.monitoring.checks.editor.target.preview.${draft.type}`, { source: row.name, node: targetNode?.name || draft.targetNode, endpoint: nodeResolution.endpoint, n: draft.packets }) }}
               </template>
@@ -512,9 +576,9 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.thresholdHint', { days: draft.thresholdDays }) }}</p>
           <p v-if="problems.includes('threshold')" id="check-threshold-error" role="alert" class="text-xs text-destructive">{{ problemOf('threshold') }}</p>
         </template>
-        <template v-else-if="draft.type === 'icmp'">
+        <template v-else-if="multiPacket(draft.type)">
           <div class="grid max-w-48 gap-1.5">
-            <Label for="check-packets">{{ $t('fleet.monitoring.checks.editor.packets') }}</Label>
+            <Label for="check-packets">{{ isBeacon ? $t('fleet.monitoring.checks.editor.packetsBeacon') : $t('fleet.monitoring.checks.editor.packets') }}</Label>
             <Input
               id="check-packets"
               v-model.number="draft.packets"
@@ -525,7 +589,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
               :aria-describedby="problems.includes('packets') ? 'check-packets-error' : 'check-packets-hint'"
             />
           </div>
-          <p id="check-packets-hint" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.expect.icmp') }}</p>
+          <p id="check-packets-hint" class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
           <p v-if="problems.includes('packets')" id="check-packets-error" role="alert" class="text-xs text-destructive">{{ problemOf('packets') }}</p>
         </template>
         <template v-else-if="showHttpExpect">
@@ -582,7 +646,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             />
           </div>
         </div>
-        <p v-if="draft.type === 'icmp' && !problems.includes('runLength')" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.runLength', { run: formatSeconds(runSeconds) }) }}</p>
+        <p v-if="multiPacket(draft.type) && !problems.includes('runLength')" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.runLength', { run: formatSeconds(runSeconds) }) }}</p>
         <p v-if="problems.includes('interval')" id="check-interval-error" role="alert" class="text-xs text-destructive">{{ problemOf('interval') }}</p>
         <p v-if="problems.includes('timeout') || problems.includes('timeoutVsInterval') || problems.includes('runLength')" id="check-timeout-error" role="alert" class="text-xs text-destructive">
           {{ problemOf(problems.includes('timeout') ? 'timeout' : problems.includes('runLength') ? 'runLength' : 'timeoutVsInterval') }}

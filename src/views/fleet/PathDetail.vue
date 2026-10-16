@@ -79,6 +79,10 @@ const unmeasured = computed(() => {
   return p?.state === "unknown" && p.reason && !isChosenUnknown(p.reason) ? p.reason : undefined;
 });
 
+/** Beacon reasons the target's Beacon card explains and fixes: no beacon, not admitted, refused, not listening, filtered. */
+const BEACON_ON_TARGET = new Set(["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "beacon_not_listening", "beacon_filtered"]);
+const beaconFixOnTarget = computed(() => !!unmeasured.value && BEACON_ON_TARGET.has(unmeasured.value));
+
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */
 const zoom = ref<{ from: number; to: number } | null>(null);
@@ -260,6 +264,13 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
         <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
       </p>
       <p v-else-if="unmeasured === 'icmp_filtered'" class="text-xs text-muted-foreground" data-testid="path-next">{{ $t('fleet.monitoring.paths.sheet.filteredNext') }}</p>
+      <!-- A beacon reason whose fix is on the target: its Beacon card on the node page (design 29 D12). -->
+      <p v-else-if="beaconFixOnTarget && path?.targetNode" class="text-xs text-muted-foreground" data-testid="path-next">
+        <RouterLink
+          :to="{ name: 'node-detail', params: { id: path.targetNode }, hash: '#node-beacon' }"
+          class="font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+        >{{ $t('fleet.monitoring.paths.sheet.beaconNext', { name: path.targetNodeName || path.targetNode }) }}</RouterLink>
+      </p>
     </div>
 
     <p

@@ -48,6 +48,11 @@ export interface PathsDataOptions {
   checkName: (monitorId: string) => string | undefined;
   nodeName: (nodeId: string) => string | undefined;
   controlPlane: () => string;
+  /**
+   * Read the retention settings and the path set plan too (Monitoring's
+   * editors need them). The node page's Paths card reads the matrix only.
+   */
+  extras?: boolean;
 }
 
 export function usePathsData(options: PathsDataOptions): PathsData {
@@ -55,7 +60,7 @@ export function usePathsData(options: PathsDataOptions): PathsData {
 
   const settingsQuery = useAsyncData<MonitorSettings | null | undefined>(
     async (signal) => {
-      if (!options.canRead.value || source.value === "legacy") return null;
+      if (!options.canRead.value || source.value === "legacy" || options.extras === false) return null;
       try {
         const body = await api.monitors.settings.get({ signal });
         // Anything but the settings object (an HTML fallback) is a server without them.
@@ -100,7 +105,7 @@ export function usePathsData(options: PathsDataOptions): PathsData {
   });
 
   const planQuery = useAsyncData<LatencyProbePlan | undefined>(
-    (signal) => (options.canRead.value ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
+    (signal) => (options.canRead.value && options.extras !== false ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
     { pollInterval: 30000, immediate: options.canRead.value },
   );
 

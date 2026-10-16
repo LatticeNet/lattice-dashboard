@@ -439,6 +439,17 @@ export const PATH_SET_METHODS = ["", "icmp", "auto"] as const;
 /** The values a source pin may hold. */
 export const SOURCE_PINS = ["tcp", "icmp", "auto"] as const;
 
+/** The methods on an M2b server, Beacon among them (design 29 D12). */
+export function pathSetMethods(m2b: boolean): string[] {
+  return m2b ? ["", "icmp", "beacon", "auto"] : [...PATH_SET_METHODS];
+}
+
+/** The pins on an M2b server; a source already pinned to a method keeps it offered. */
+export function sourcePins(m2b: boolean, held?: string): string[] {
+  const pins: string[] = m2b ? ["tcp", "icmp", "beacon", "auto"] : [...SOURCE_PINS];
+  return held && !pins.includes(held) ? [...pins, held] : pins;
+}
+
 function normalizeSetMethod(raw: string | undefined): string {
   const value = (raw ?? "").trim();
   return value === "tcp" ? "" : value;
@@ -515,19 +526,29 @@ export function sourceMethod(draft: Pick<LatencyDraft, "method" | "sourceMethods
 
 export interface SourceMethodPreview {
   source: string;
-  /** tcp, icmp or auto. */
+  /** tcp, icmp, beacon or auto. */
   method: string;
   pinned: boolean;
-  /** Set when the method needs icmp and the source's agent cannot run it: every path of the source reads unknown with it. */
+  /** Set when the method needs icmp or the beacon client and the source's agent cannot run it: every path of the source reads unknown with it. */
   refusal?: string;
-  /** Targets each method reaches; `none` reach nothing (no public IPv4, no TCP line), `onSave` are resolved by the server on save. */
+  /** The method the refusal is about (icmp or beacon). */
+  refusalMethod?: string;
+  /** Targets each method reaches; `none` reach nothing (no public IPv4, no TCP line, no beacon), `onSave` are resolved by the server on save. */
   icmp: number;
   tcp: number;
+  beacon: number;
+  /** Targets whose beacon would answer once a change plan on the target admits this source (design 29 D12: firewall pending, source pending). */
+  beaconWaiting: number;
   none: number;
   onSave: number;
   /** The targets counted in `none`, by node id, in the plan's order. */
   noneTargets: string[];
+  /** The targets counted in `beaconWaiting`. */
+  waitingTargets: string[];
 }
+
+/** Reasons a pinned beacon pair waits on the target's plan rather than failing outright. */
+const BEACON_WAITING = new Set(["firewall_pending", "beacon_source_pending"]);
 
 /**
  * Which method each source will use and how many of the draft's targets it
@@ -538,17 +559,31 @@ export interface SourceMethodPreview {
  * is known only for nodes the plan already targets; for the others the
  * server resolves it on save.
  */
-export function pathSetPreview(draft: LatencyDraft, plan: Pick<LatencyProbePlan, "nodes" | "source_notes">, nodes: readonly Node[]): SourceMethodPreview[] {
+export function pathSetPreview(
+  draft: LatencyDraft,
+  plan: Pick<LatencyProbePlan, "nodes" | "source_notes"> & Partial<Pick<LatencyProbePlan, "pairs" | "config">>,
+  nodes: readonly Node[],
+): SourceMethodPreview[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const disabled = (pn: LatencyProbeNode) => pn.target_reason === "node_disabled" || plan.source_notes?.[pn.node_id] === "node_disabled";
   const targets = plan.nodes.filter((pn) => draftTargetReason(draft, pn, disabled(pn)).target);
+  const pairs = new Map((plan.pairs ?? []).map((p) => [`${p.source}~${p.target}`, p]));
+  const stored = plan.config ? draftFromConfig(plan.config) : undefined;
   return draft.sources.map((source) => {
     const method = sourceMethod(draft, source);
     const support = sourceSupport(byId.get(source), "icmp", true);
-    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, none: 0, onSave: 0, noneTargets: [] };
-    if (method === "icmp" && !support.ok) row.refusal = support.reason;
+    const client = sourceSupport(byId.get(source), "beacon", true);
+    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, beacon: 0, beaconWaiting: 0, none: 0, onSave: 0, noneTargets: [], waitingTargets: [] };
+    if (method === "icmp" && !support.ok) [row.refusal, row.refusalMethod] = [support.reason, "icmp"];
+    if (method === "beacon" && !client.ok) [row.refusal, row.refusalMethod] = [client.reason, "beacon"];
+    // The plan's pairs carry the server's verdict for the stored configuration: whether a target's beacon admits this
+    // source and listens (the pair probes by beacon with no reason), and whether Auto kept a pair on TCP because ICMP
+    // reads filtered there (design 29 D12). A pair the plan does not hold yet has no verdict.
+    const storedAuto = stored ? sourceMethod(stored, source) === "auto" : false;
     for (const pn of targets) {
       if (pn.node_id === source) continue;
+      const pair = pairs.get(`${source}~${pn.node_id}`);
+      const beaconAdmits = !!pn.beacon_target && pair?.method === "beacon" && !pair.reason;
       const ipv4 = !!publicIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip);
       // A line port the plan knows; none when the plan says why there is none; else the server resolves it on save.
       const tcp = pn.endpoint && pn.target !== "not_probeable" ? "yes" : pn.target === "not_probeable" || pn.endpoint_note ? "none" : "onSave";
@@ -564,7 +599,17 @@ export function pathSetPreview(draft: LatencyDraft, plan: Pick<LatencyProbePlan,
       if (method === "icmp") {
         if (support.ok && ipv4) row.icmp += 1;
         else unreached();
-      } else if (method === "auto" && support.ok && ipv4) {
+      } else if (method === "beacon") {
+        if (!client.ok || !pn.beacon_target) unreached();
+        else if (beaconAdmits) row.beacon += 1;
+        else if (!pair || !pair.reason || BEACON_WAITING.has(pair.reason)) {
+          // A source the target's plan has not approved: its key and, under NetGuard, its rule wait for a change plan.
+          row.beaconWaiting += 1;
+          row.waitingTargets.push(pn.node_id);
+        } else unreached();
+      } else if (method === "auto" && client.ok && beaconAdmits) {
+        row.beacon += 1;
+      } else if (method === "auto" && support.ok && ipv4 && !(storedAuto && pair?.method === "tcp")) {
         row.icmp += 1;
       } else {
         viaTcp();
