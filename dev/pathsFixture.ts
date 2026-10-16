@@ -279,7 +279,8 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         method: SWITCH && node?.name === "[cd]-gomami-hk-turin-mini" ? "icmp" : "tcp",
       };
       if (target.target === "not_probeable") {
-        paths.push({ ...base, target: "", state: "unknown", reason: target.endpoint_note ?? "no_tcp_line", samples: 0, expected: 0, prev: null });
+        // The server says not_probeable whatever the plan's note (udp_only, no_public_address, no_tcp_line).
+        paths.push({ ...base, target: "", monitor_id: "", state: "unknown", reason: "not_probeable", samples: 0, expected: 0, prev: null });
         continue;
       }
       if (!plan.config.enabled) {

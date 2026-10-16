@@ -25,10 +25,14 @@ const emit = defineEmits<{ close: []; saved: [settings: MonitorSettings]; reload
 
 const { t } = useI18n();
 const days = ref(props.settings.fine_retention_days);
+/** The version the sheet was opened at: a poll landing while it is open must not let a save skip the 409. */
+const baseVersion = ref(props.settings.version);
 watch(
   () => props.open,
   (open) => {
-    if (open) days.value = props.settings.fine_retention_days;
+    if (!open) return;
+    days.value = props.settings.fine_retention_days;
+    baseVersion.value = props.settings.version;
   },
   { immediate: true },
 );
@@ -45,7 +49,7 @@ async function save(): Promise<void> {
   if (!valid.value || !dirty.value || !props.canAdmin) return;
   pending.value = true;
   try {
-    const next = await api.monitors.settings.update({ version: props.settings.version, fine_retention_days: Number(days.value) });
+    const next = await api.monitors.settings.update({ version: baseVersion.value, fine_retention_days: Number(days.value) });
     toast.success(t("fleet.monitoring.retention.toast.saved", { days: next.fine_retention_days }));
     emit("saved", next);
     emit("close");

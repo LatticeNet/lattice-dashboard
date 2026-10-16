@@ -241,7 +241,8 @@ function menuFor(monitor: MonitorView): RowMenuItem[] {
       key: "edit",
       label: t("fleet.monitoring.checks.actions.edit"),
       icon: Pencil,
-      hidden: !props.canAdmin,
+      // Until the paths read says which server this is, Edit is neither offered nor refused.
+      hidden: !props.canAdmin || props.data.source.value === "unknown",
       disabled: !canEditCheck(monitor, serverEdits.value),
       reason: canEditCheck(monitor, serverEdits.value) ? undefined : t("fleet.monitoring.checks.editUnavailable"),
       run: () => emit("edit", monitor),
@@ -465,10 +466,11 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
 
         <section v-if="sourceRows.length" class="space-y-1.5" :aria-label="$t('fleet.monitoring.checks.sheet.sources')">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.sources') }}</h3>
-          <ul class="divide-y divide-border rounded-md border border-border" role="listbox" :aria-label="$t('fleet.monitoring.checks.sheet.sources')" data-testid="check-sources">
-            <li v-for="row in sourceRows" :key="row.source" role="option" :aria-selected="row.source === chosenSource">
+          <ul class="divide-y divide-border rounded-md border border-border" data-testid="check-sources">
+            <li v-for="row in sourceRows" :key="row.source">
               <button
                 type="button"
+                :aria-pressed="row.source === chosenSource"
                 :class="cn('grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', row.source === chosenSource && 'bg-muted')"
                 @click="chosenSource = row.source"
               >
@@ -513,7 +515,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           </Button>
         </template>
         <template v-else>
-          <Badge v-if="!canEditCheck(selected, serverEdits)" variant="outline" class="me-auto">{{ $t('fleet.monitoring.checks.editUnavailable') }}</Badge>
+          <Badge v-if="data.source.value === 'legacy'" variant="outline" class="me-auto">{{ $t('fleet.monitoring.checks.editUnavailable') }}</Badge>
           <Button variant="outline" size="sm" type="button" class="text-destructive" :disabled="deletePending" @click="requestDelete(selected)">
             <Trash2 class="size-4" aria-hidden="true" />
             {{ $t('common.actions.delete') }}

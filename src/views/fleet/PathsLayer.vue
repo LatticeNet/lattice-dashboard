@@ -62,6 +62,8 @@ const emit = defineEmits<{
   pathSet: [];
   createCheck: [];
   openCheck: [id: string];
+  /** A check changed (a source paused or resumed): the page rereads the monitors with the paths. */
+  changed: [];
 }>();
 
 const { t } = useI18n();
@@ -215,12 +217,12 @@ async function togglePause(): Promise<void> {
       await api.monitors.update(buildSourcePause(openMonitor.value, p.source, pause));
     }
     toast.success(pause ? t("fleet.monitoring.paths.toast.paused") : t("fleet.monitoring.paths.toast.resumed"));
-    props.data.refresh();
   } catch (error) {
     const status = (error as { status?: number }).status;
     toast.error(status === 409 ? t("fleet.monitoring.paths.toast.conflict") : error instanceof Error ? error.message : t("fleet.monitoring.paths.toast.failed"));
-    props.data.refresh();
   } finally {
+    // The pause state and the version the next click sends come from the monitors list: reread it with the paths.
+    emit("changed");
     pending.value = false;
   }
 }
@@ -353,6 +355,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                               :aria-label="cellLabel(cell.path)"
                               :data-cell="cell.path.state"
                               :data-path="cell.path.key"
+                              :data-row-key="cell.path.key"
                               @click="(e) => openCell(cell.path!, e.currentTarget as HTMLElement)"
                             >
                               <span :class="cn('absolute inset-y-1.5 start-1 w-[3px] rounded-full', railClass(cell.path))" aria-hidden="true" />
@@ -404,6 +407,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                           :aria-label="cellLabel(cell.path)"
                           :data-cell="cell.path.state"
                           :data-path="cell.path.key"
+                              :data-row-key="cell.path.key"
                           @click="(e) => openCell(cell.path!, e.currentTarget as HTMLElement)"
                         >
                           <span :class="cn('absolute inset-y-2 start-1 w-[3px] rounded-full', railClass(cell.path))" aria-hidden="true" />

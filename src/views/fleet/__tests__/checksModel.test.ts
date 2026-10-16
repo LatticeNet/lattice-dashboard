@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { MonitorView } from "@/lib/api/types";
 
 import {
+  buildCarryPauses,
   buildCreate,
   buildPauseOld,
   buildSourcePause,
@@ -93,6 +94,14 @@ test("create: tls carries a threshold and no nodes; agent checks carry their sou
   assert.deepEqual(tls, { name: "TLS example.com:443", type: "tls", target: "example.com:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false });
   const http = buildCreate({ ...draftFromMonitor(monitor()), nodeIds: ["hk", "sh"] }, true);
   assert.deepEqual(http, { name: "Status page", type: "http", target: "https://status.example.com/health", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: ["hk", "sh"], alert: "down" });
+});
+
+test("a replacement keeps the pauses of the sources it still runs on", () => {
+  const draft = { ...draftFromMonitor(monitor({ paused_node_ids: ["hk"] })), target: "https://status.example.com/v2", nodeIds: ["sh", "hk"] };
+  assert.deepEqual(buildCarryPauses({ id: "mon_new", version: 1 }, draft), { id: "mon_new", version: 1, paused_node_ids: ["hk"] });
+  assert.deepEqual(buildCarryPauses({ id: "mon_new" }, { ...draft, nodeIds: ["sh"] }), undefined, "a source taken off drops its pause");
+  assert.equal(buildCarryPauses({ id: "mon_new", version: 1 }, { ...draft, pausedNodeIds: [] }), undefined);
+  assert.equal(buildCarryPauses({ id: "mon_new", version: 1 }, { ...draft, type: "tls" }), undefined);
 });
 
 test("pause one source of a check", () => {

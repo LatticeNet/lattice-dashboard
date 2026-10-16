@@ -8,7 +8,7 @@
  * before design 29 answers a generated path from the latency series route and
  * has no series for an operator check, which then shows its runs only.
  */
-import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { computed, defineAsyncComponent, defineComponent, h, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
@@ -31,8 +31,16 @@ import {
 } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 
-// The chart and uPlot load with the first sheet that draws one, not with the page.
-const PathChart = defineAsyncComponent(() => import("./PathChart.vue"));
+// The chart and uPlot load with the first sheet that draws one, not with the page. A chunk
+// that fails to load (a tab left open across a deploy) says so instead of leaving a blank.
+const ChartLoadFailed = defineComponent({
+  name: "PathChartLoadFailed",
+  setup() {
+    const { t } = useI18n();
+    return () => h("p", { class: "rounded-md border border-border p-3 text-xs text-destructive", role: "alert" }, t("fleet.monitoring.paths.sheet.chartFailed"));
+  },
+});
+const PathChart = defineAsyncComponent({ loader: () => import("./PathChart.vue"), errorComponent: ChartLoadFailed });
 
 const props = defineProps<{
   address: PathAddress;

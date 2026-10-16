@@ -409,8 +409,18 @@ watch(
     const u = plot.value;
     if (!u) return;
     activeIdx.value = -1;
-    // Resetting scales lands on the full window (the x range maps the data extent to it).
-    u.setData(columns());
+    // A poll brings the same window a minute later: a zoom that still fits stays where the
+    // operator put it. Otherwise resetting the scales lands on the full window (the x range
+    // maps the data extent to it).
+    const min = u.scales.x?.min;
+    const max = u.scales.x?.max;
+    const [from, to] = fullRange.value;
+    if (zoomed.value && min !== undefined && max !== undefined && min >= from && max <= to) {
+      u.setData(columns(), false);
+      u.setScale("x", { min, max });
+    } else {
+      u.setData(columns());
+    }
   },
 );
 

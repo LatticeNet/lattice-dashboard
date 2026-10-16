@@ -1445,6 +1445,7 @@ export default {
           noSeries: "This control plane keeps no history for this check yet; its latest runs are below.",
           seriesFailed: "History not read: {reason}",
           seriesEmpty: "No history in this window yet.",
+          chartFailed: "The chart did not load. Reload the page to fetch it again.",
           table: "Buckets as a table ({n})",
           tableCaption: "{path}, one row per bucket, newest first",
           col: {
@@ -1606,6 +1607,7 @@ export default {
           saved: "Check saved",
           replaced: "New check started; {name} is paused and keeps its history",
           pauseOldFailed: "The new check started, but {name} was not paused: {reason}",
+          carryFailed: "The new check started, but the sources you had paused run on it: {reason}",
           conflict: "Someone changed this check since it was read. Reloaded; try again.",
           failed: "The check was not saved",
         },

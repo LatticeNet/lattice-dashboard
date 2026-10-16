@@ -1429,6 +1429,7 @@ export default {
           noSeries: "这个控制面还没有保存这个检查的历史，下面是它最近的运行。",
           seriesFailed: "没有读到历史：{reason}",
           seriesEmpty: "这个时间窗内还没有历史。",
+          chartFailed: "图表没有加载出来。请刷新页面重新获取。",
           table: "以表格查看各时间桶（{n}）",
           tableCaption: "{path}，每行一个时间桶，最新的在前",
           col: {
@@ -1590,6 +1591,7 @@ export default {
           saved: "检查已保存",
           replaced: "新检查已开始运行；{name} 已暂停并保留历史",
           pauseOldFailed: "新检查已开始运行，但 {name} 没有暂停：{reason}",
+          carryFailed: "新检查已开始运行，但你暂停过的源节点仍在运行它：{reason}",
           conflict: "读取之后有人改过这个检查。已重新加载，请再试一次。",
           failed: "检查没有保存",
         },

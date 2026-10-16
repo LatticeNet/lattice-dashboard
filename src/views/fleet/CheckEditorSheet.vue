@@ -31,6 +31,7 @@ import {
   CHECK_MAX_INTERVAL_SEC,
   CHECK_MAX_TIMEOUT_SEC,
   CHECK_MIN_INTERVAL_SEC,
+  buildCarryPauses,
   buildCreate,
   buildPauseOld,
   buildUpdate,
@@ -152,30 +153,44 @@ async function save(): Promise<void> {
   }
 }
 
-/** The method or target changed: create the new check, then pause the old one. */
+/**
+ * The method or target changed: create the new check, pause on it the sources
+ * the operator had paused (the create route starts every check unpaused),
+ * then pause the old one. Only a failed create stops the switch; a later step
+ * that fails is named in the message, and the sheet goes to the new check.
+ */
 async function replace(): Promise<void> {
   const old = props.monitor;
   if (!old) return;
   replaceOpen.value = false;
   pending.value = true;
-  let createdId: string | undefined;
   try {
-    const created = await api.monitors.create(buildCreate(draft.value, props.withAlert));
-    createdId = created.id;
-    await api.monitors.update(buildPauseOld(old));
-    toast.success(t("fleet.monitoring.checks.toast.replaced", { name: old.name || old.id }));
+    let created: MonitorView;
+    try {
+      created = await api.monitors.create(buildCreate(draft.value, props.withAlert));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed"));
+      return;
+    }
+    const problems: string[] = [];
+    const reasonOf = (error: unknown) => (error instanceof Error ? error.message : "");
+    const carry = buildCarryPauses(created, draft.value);
+    if (carry) {
+      try {
+        await api.monitors.update(carry);
+      } catch (error) {
+        problems.push(t("fleet.monitoring.checks.toast.carryFailed", { reason: reasonOf(error) }));
+      }
+    }
+    try {
+      await api.monitors.update(buildPauseOld(old));
+    } catch (error) {
+      problems.push(t("fleet.monitoring.checks.toast.pauseOldFailed", { name: old.name || old.id, reason: reasonOf(error) }));
+    }
+    if (problems.length) toast.error(problems.join(" "));
+    else toast.success(t("fleet.monitoring.checks.toast.replaced", { name: old.name || old.id }));
     emit("saved", created.id);
     emit("close");
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "";
-    if (createdId) {
-      // The new check exists; only the pause failed. Say so, and go to the new check.
-      toast.error(t("fleet.monitoring.checks.toast.pauseOldFailed", { name: old.name || old.id, reason }));
-      emit("saved", createdId);
-      emit("close");
-    } else {
-      toast.error(reason || t("fleet.monitoring.checks.toast.failed"));
-    }
   } finally {
     pending.value = false;
   }

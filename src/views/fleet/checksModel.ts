@@ -197,6 +197,19 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreat
   return base;
 }
 
+/**
+ * The pauses a replacement keeps, as an edit of the check just created: the
+ * create route starts every check unpaused, so the sources the operator had
+ * paused are paused again on the new check. Undefined when there are none.
+ */
+export function buildCarryPauses(created: Pick<MonitorView, "id" | "version">, draft: CheckDraft): MonitorUpdateInput | undefined {
+  if (isServerEvaluated(draft.type)) return undefined;
+  const chosen = new Set(draft.nodeIds);
+  const paused = uniqueSorted(draft.pausedNodeIds).filter((id) => draft.assignAll || chosen.has(id));
+  if (!paused.length) return undefined;
+  return { id: created.id, version: created.version ?? 1, paused_node_ids: paused };
+}
+
 /** The body that pauses a check whose replacement was just created; its history stays. */
 export function buildPauseOld(monitor: MonitorView): MonitorUpdateInput {
   return { id: monitor.id, version: monitor.version ?? 0, enabled: false };

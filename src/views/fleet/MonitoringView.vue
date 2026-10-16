@@ -52,7 +52,7 @@ import TopologyLayer from "./TopologyLayer.vue";
 import WindowControl from "./WindowControl.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
-import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
+import { DEFAULT_WINDOW, LEGACY_WINDOWS, MONITORING_LAYERS, legacyMonitoringRedirect, legacyWindow, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
 
 const auth = useAuthStore();
@@ -135,9 +135,11 @@ const data = usePathsData({
 });
 /** The control shows the window the reads use, so a link naming another marks the one actually read. */
 const windowModel = computed<MonitorWindow>({
-  get: () => data.window.value,
+  get: () => (layer.value === "topology" ? legacyWindow(data.window.value) : data.window.value),
   set: (value) => (windowParam.value = value),
 });
+/** Topology draws from the latency rollups, which keep 1h, 24h and 7d; it offers only those. */
+const windowsOffered = computed(() => (layer.value === "topology" ? data.offered.value.filter((w) => LEGACY_WINDOWS.includes(w)) : data.offered.value));
 const matrix = computed(() => data.matrix.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
@@ -258,9 +260,11 @@ function openCheck(id: string): void {
   owned.push({ ...owned.query(), view: "checks", open: id, path: undefined });
 }
 
-function onCheckSaved(id: string): void {
-  refreshAll();
+/** The new or edited check opens once the list holds it, so its sheet never says it is gone. */
+async function onCheckSaved(id: string): Promise<void> {
+  await monitorsQuery.refresh();
   openCheck(id);
+  data.refresh();
 }
 
 const plan = computed(() => data.planQuery.data.value);
@@ -289,7 +293,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         <ProofLine v-if="canReadMonitors && layer !== 'topology'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template v-if="canReadMonitors" #actions>
-        <WindowControl v-if="layer !== 'incidents'" v-model="windowModel" :offered="data.offered.value" :label="$t('fleet.monitoring.window.label')" />
+        <WindowControl v-if="layer !== 'incidents'" v-model="windowModel" :offered="windowsOffered" :label="$t('fleet.monitoring.window.label')" />
         <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="pathSetOpen = true">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
@@ -331,6 +335,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         @path-set="pathSetOpen = true"
         @create-check="openCreate()"
         @open-check="openCheck"
+        @changed="refreshAll"
       />
 
       <ChecksLayer
