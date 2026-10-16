@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, canEditCheck, checkGroup } from "./checksModel";
+import { CHECK_GROUP_ORDER, canEditCheck, checkGroup, latestCertExpiry } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -183,9 +183,8 @@ const DAY_MS = 86_400_000;
 /** Whole days until the certificate a tls check last read expires; undefined for other checks. */
 function certDaysLeft(monitor: MonitorView): number | undefined {
   if (monitor.type !== "tls") return undefined;
-  const at = monitor.latest?.find((l) => l.cert_not_after)?.cert_not_after;
-  const expires = at ? Date.parse(at) : NaN;
-  return Number.isNaN(expires) ? undefined : Math.floor((expires - Date.now()) / DAY_MS);
+  const expires = latestCertExpiry(monitor.latest);
+  return expires === undefined ? undefined : Math.floor((expires - Date.now()) / DAY_MS);
 }
 
 /** A check's newest failure on one source, from the list's newest results. */

@@ -34,7 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import PathDetail from "./PathDetail.vue";
-import { buildSourcePause, canEditCheck, sourcePaused } from "./checksModel";
+import { buildSourcePause, canEditCheck, latestCertExpiry, sourcePaused } from "./checksModel";
 import { draftFromConfig, draftToConfig, formatLoss, formatMs, pairEnabledIn, setPairEnabled } from "./latencyModel";
 import {
   PATHS_QUERY_EXAMPLES,
@@ -127,9 +127,8 @@ const DAY_MS = 86_400_000;
 /** Days left on the certificate a tls check last read, from the monitors list's newest results. */
 function certLeft(path: PathItem): string | undefined {
   if (path.method !== "tls") return undefined;
-  const at = props.monitors.find((m) => m.id === path.monitorId)?.latest?.find((l) => l.cert_not_after)?.cert_not_after;
-  const expires = at ? Date.parse(at) : NaN;
-  if (Number.isNaN(expires)) return undefined;
+  const expires = latestCertExpiry(props.monitors.find((m) => m.id === path.monitorId)?.latest);
+  if (expires === undefined) return undefined;
   const days = Math.floor((expires - Date.now()) / DAY_MS);
   return days < 0 ? t("fleet.monitoring.checks.certExpired") : t("fleet.monitoring.checks.certLeft", { n: days });
 }

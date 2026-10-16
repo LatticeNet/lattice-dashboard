@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { Badge } from "@/components/ui/badge";
 
+import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
 import { seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
 import {
@@ -186,10 +187,8 @@ const reasonLine = computed(() => {
 const DAY_MS = 86_400_000;
 /** The expiry the newest run that completed a handshake read, for a tls check. */
 const cert = computed(() => {
-  const at = runs.value.find((r) => r.cert_not_after)?.cert_not_after;
-  if (!at) return undefined;
-  const expires = Date.parse(at);
-  if (Number.isNaN(expires)) return undefined;
+  const expires = latestCertExpiry(runs.value);
+  if (expires === undefined) return undefined;
   return { date: formatDateTime(expires), days: Math.floor((expires - Date.now()) / DAY_MS) };
 });
 

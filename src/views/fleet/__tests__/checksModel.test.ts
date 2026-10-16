@@ -4,6 +4,8 @@ import { test } from "node:test";
 import type { MonitorView } from "@/lib/api/types";
 
 import {
+  certExpiry,
+  latestCertExpiry,
   buildCarryPauses,
   buildCreate,
   buildPauseOld,
@@ -130,4 +132,20 @@ test("switching kind keeps the agent assignment aside through tls and hands it b
   assert.equal(back.stash, undefined);
   const sideways = switchDraftKind(start, "http");
   assert.deepEqual(sideways.draft.nodeIds, ["hk", "sh"]);
+});
+
+test("certificate expiry: Go's zero time is no expiry, so tcp and http runs and failed handshakes never read as expired", () => {
+  assert.equal(certExpiry("0001-01-01T00:00:00Z"), undefined);
+  assert.equal(certExpiry(undefined), undefined);
+  assert.equal(certExpiry(""), undefined);
+  assert.equal(certExpiry("not a date"), undefined);
+  assert.equal(certExpiry("2026-12-01T00:00:00Z"), Date.parse("2026-12-01T00:00:00Z"));
+  const runs = [
+    { cert_not_after: "0001-01-01T00:00:00Z" },
+    { cert_not_after: "2026-12-01T00:00:00Z" },
+    { cert_not_after: "2026-11-01T00:00:00Z" },
+  ];
+  assert.equal(latestCertExpiry(runs), Date.parse("2026-12-01T00:00:00Z"));
+  assert.equal(latestCertExpiry([{ cert_not_after: "0001-01-01T00:00:00Z" }, {}]), undefined);
+  assert.equal(latestCertExpiry(undefined), undefined);
 });
