@@ -3,10 +3,11 @@
  * Monitoring's Topology layer: every path the console knows about, drawn
  * once (topologyModel): the control plane and each node's heartbeat, the
  * latency probes from their sources, relay to exit chains, and the checks
- * an operator made. Filters for the paths shown (?topo=) and the window
- * (?window=, shared with the Latency layer); hover or focus for the numbers
- * and when they were heard; click for the node sheet (?peek=), the pair's
- * series on the Latency layer, or the monitor sheet (?open=, the page's).
+ * an operator made. Filters for the paths shown (?topo=); the window is the
+ * page's (?window=), read here from the latency rollups at the nearest window
+ * they keep (1h, 24h or 7d); hover or focus for the numbers and when they
+ * were heard; click for the node sheet (?peek=), the path sheet on Paths, or
+ * the check sheet on Checks.
  *
  * Under 768 px the same model reads as a list of paths. On a touch screen
  * wider than that the list is the default and the graph is one tap away
@@ -42,7 +43,8 @@ import { Button } from "@/components/ui/button";
 
 import TopologyGraph from "./TopologyGraph.vue";
 import TopologyList from "./TopologyList.vue";
-import { LATENCY_WINDOWS, LOSS_ATTENTION, pairKey } from "./latencyModel";
+import { LOSS_ATTENTION } from "./latencyModel";
+import { encodePathKey, legacyWindow, parseWindow } from "./pathsModel";
 import {
   COLLAPSE_AT,
   TOPOLOGY_LAYERS,
@@ -67,7 +69,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  layer: [layer: "latency" | "monitors"];
+  layer: [layer: "paths" | "checks"];
   refreshPage: [];
   /** The page owns the monitor sheet (?open=). */
   openMonitor: [id: string, el: HTMLElement | null];
@@ -96,10 +98,8 @@ const chainsQuery = useAsyncData<LineChainView[]>(
   { pollInterval: canReadChains.value ? 60000 : 0, immediate: canReadChains.value },
 );
 
-const windowParam = bindQueryParam<LatencyWindow>(props.owned, "window", {
-  parse: (raw) => (LATENCY_WINDOWS.includes(raw as LatencyWindow) ? (raw as LatencyWindow) : "1h"),
-  format: (value) => (value === "1h" ? undefined : value),
-});
+/** The page's window, read at the nearest window the latency rollups keep. */
+const windowParam = computed<LatencyWindow>(() => legacyWindow(parseWindow(props.owned.query().window)));
 const layerParam = bindQueryParam<TopologyLayer>(props.owned, "topo", {
   parse: (raw) => (TOPOLOGY_LAYERS.includes(raw as TopologyLayer) ? (raw as TopologyLayer) : "all"),
   format: (value) => (value === "all" ? undefined : value),
@@ -235,7 +235,7 @@ type LayerEmpty = { title: string; description: string; action?: { label: string
 const layerEmpty = computed<LayerEmpty>(() => {
   switch (emptyKind(model.value, statuses.value)) {
     case "noSources":
-      return { title: t("fleet.monitoring.topology.empty.noSourcesTitle"), description: t("fleet.monitoring.topology.empty.noSourcesDescription"), action: { label: t("fleet.monitoring.topology.empty.openLatency"), run: () => emit("layer", "latency") } };
+      return { title: t("fleet.monitoring.topology.empty.noSourcesTitle"), description: t("fleet.monitoring.topology.empty.noSourcesDescription"), action: { label: t("fleet.monitoring.topology.empty.openLatency"), run: () => emit("layer", "paths") } };
     case "chainsDenied":
       return { title: t("fleet.monitoring.topology.empty.noChainAccessTitle"), description: t("fleet.monitoring.topology.empty.noChainAccessDescription") };
     case "chainsFailed":
@@ -249,7 +249,7 @@ const layerEmpty = computed<LayerEmpty>(() => {
     case "monitorsFailed":
       return { title: t("fleet.monitoring.topology.empty.monitorsFailedTitle"), description: readReason("monitors"), action: { label: t("common.actions.retry"), run: () => void props.monitorsQuery.refresh() } };
     case "noChecks":
-      return { title: t("fleet.monitoring.topology.empty.noChecksTitle"), description: t("fleet.monitoring.topology.empty.noChecksDescription"), action: { label: t("fleet.monitoring.topology.empty.openMonitors"), run: () => emit("layer", "monitors") } };
+      return { title: t("fleet.monitoring.topology.empty.noChecksTitle"), description: t("fleet.monitoring.topology.empty.noChecksDescription"), action: { label: t("fleet.monitoring.topology.empty.openMonitors"), run: () => emit("layer", "checks") } };
     case "noNodes":
       return { title: t("fleet.monitoring.topology.empty.noNodesTitle"), description: t("fleet.monitoring.topology.empty.noNodesDescription") };
     default:
@@ -291,7 +291,7 @@ const peek = bindRouteOpen(props.owned, "peek");
 const nodeSheetError = computed(() => (props.nodesQuery.error.value ? proofReason(props.nodesQuery.error.value) : null));
 
 function openPair(source: string, target: string): void {
-  props.owned.push({ ...props.owned.query(), view: "latency", pair: pairKey(source, target), peek: undefined, topo: undefined, as: undefined });
+  props.owned.push({ ...props.owned.query(), view: "paths", path: encodePathKey({ source, targetNode: target }), peek: undefined, topo: undefined, as: undefined });
 }
 
 function openMonitor(id: string, el: HTMLElement | null): void {
@@ -342,18 +342,6 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
             @click="layerParam = tab.value"
           >
             {{ tab.label }}
-          </button>
-        </div>
-        <div class="flex rounded-md border border-border p-0.5 text-xs" role="group" :aria-label="$t('fleet.monitoring.latency.windowLabel')" data-testid="topology-window">
-          <button
-            v-for="w in LATENCY_WINDOWS"
-            :key="w"
-            type="button"
-            :class="cn(SEGMENT, 'font-mono', windowParam === w ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
-            :aria-pressed="windowParam === w"
-            @click="windowParam = w"
-          >
-            {{ $t(`fleet.monitoring.latency.window.${w}`) }}
           </button>
         </div>
         <div v-if="wide" class="flex rounded-md border border-border p-0.5 text-xs md:ms-auto" role="group" :aria-label="$t('fleet.monitoring.topology.viewLabel')" data-testid="topology-presentation">

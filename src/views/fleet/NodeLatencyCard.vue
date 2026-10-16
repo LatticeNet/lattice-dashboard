@@ -138,7 +138,7 @@ const PairList = defineComponent({
             h("li", { key: line.key, class: cn(row, "py-1.5") }, [
               h(
                 RouterLink,
-                { to: { name: "monitoring", query: { view: "latency", pair: line.key } }, class: "flex min-w-0 items-center hover:underline max-[420px]:col-span-2 pointer-coarse:min-h-11", title: line.otherName },
+                { to: { name: "monitoring", query: { view: "paths", path: line.key } }, class: "flex min-w-0 items-center hover:underline max-[420px]:col-span-2 pointer-coarse:min-h-11", title: line.otherName },
                 () => h("span", { class: "truncate" }, line.otherName),
               ),
               h("span", { class: cn("text-end max-[420px]:text-start", cellTone(line.hour)) }, [
@@ -197,7 +197,7 @@ const reasonText = computed(() => {
           </section>
         </template>
         <RouterLink
-          :to="{ name: 'monitoring', query: { view: 'latency' } }"
+          :to="{ name: 'monitoring', query: { view: 'paths' } }"
           class="inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
         >{{ $t('fleet.monitoring.latency.node.open') }}</RouterLink>
       </DataState>

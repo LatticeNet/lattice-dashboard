@@ -136,31 +136,26 @@ test("switching between two agent types leaves the assignment alone", () => {
   assert.deepEqual(switchMonitorType("tcp", "tcp", picked, undefined).state, picked);
 });
 
-test("MonitoringView switches type through the reducer instead of overwriting", () => {
-  const view = readFileSync(new URL("../MonitoringView.vue", import.meta.url), "utf8");
-  const watcher = view.slice(view.indexOf("watch(monitorType,"), view.indexOf("const isCertWatch"));
-  assert.ok(watcher.length > 0, "MonitoringView no longer watches monitorType");
-  assert.match(watcher, /switchMonitorType\(/);
-  assert.doesNotMatch(
-    watcher,
-    /selectedNodeIds\.value = \[\]/,
-    "the watcher still empties the node list on its own",
-  );
-  assert.doesNotMatch(watcher, /assignAll\.value = true/, "the watcher still forces assign-all");
+test("the check editor switches method through the reducer instead of overwriting", () => {
+  const view = readFileSync(new URL("../CheckEditorSheet.vue", import.meta.url), "utf8");
+  const start = view.indexOf("function setKind(");
+  const handler = view.slice(start, view.indexOf("\n}\n", start));
+  assert.ok(start >= 0 && handler.length > 0, "CheckEditorSheet no longer switches method in setKind");
+  assert.match(handler, /switchDraftKind\(/);
+  assert.doesNotMatch(handler, /nodeIds: \[\]/, "the switch still empties the node list on its own");
+  assert.doesNotMatch(handler, /assignAll: true/, "the switch still forces every node");
 });
 
 test("the target error is announced, not left as an unexplained invalid field", () => {
   // aria-invalid on its own says "invalid" and stops, which is the one word the
   // operator already knows. The sentence that says a certificate watch takes
   // host:port has to reach the reader who cannot see the red border.
-  const view = readFileSync(new URL("../MonitoringView.vue", import.meta.url), "utf8");
-  // The type select now comes first (the empty state opens Create with a
-  // type chosen), so the field runs from the input to the end of its error.
-  const start = view.indexOf('id="monitor-target"');
-  const field = view.slice(start, view.indexOf("</p>", view.indexOf('id="monitor-target-error"', start)) + 4);
-  assert.ok(start >= 0 && field.length > 0, "MonitoringView no longer has a target field with its error");
-  assert.match(field, /:aria-describedby="targetProblem \? 'monitor-target-error' : undefined"/);
-  assert.match(field, /id="monitor-target-error"/);
+  const view = readFileSync(new URL("../CheckEditorSheet.vue", import.meta.url), "utf8");
+  const start = view.indexOf('id="check-target"');
+  const field = view.slice(start, view.indexOf("</p>", view.indexOf('id="check-target-error"', start)) + 4);
+  assert.ok(start >= 0 && field.length > 0, "CheckEditorSheet no longer has a target field with its error");
+  assert.match(field, /:aria-describedby="targetProblem \? 'check-target-error' : undefined"/);
+  assert.match(field, /id="check-target-error"/);
   assert.match(field, /role="alert"/);
 });
 

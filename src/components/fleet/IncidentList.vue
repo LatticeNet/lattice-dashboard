@@ -291,7 +291,7 @@ function ageLine(incident: Incident): string {
 }
 
 function openTarget(incident: Incident): RouteLocationRaw | undefined {
-  if (incident.kind === "monitor.down" && incident.monitor_id) return { name: "monitoring", query: { view: "monitors", open: incident.monitor_id } };
+  if (incident.kind === "monitor.down" && incident.monitor_id) return { name: "monitoring", query: { view: "checks", open: incident.monitor_id } };
   if (incident.node_id) return { name: "node-detail", params: { id: incident.node_id } };
   return undefined;
 }

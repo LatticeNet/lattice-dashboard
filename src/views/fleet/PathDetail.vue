@@ -1,0 +1,267 @@
+<script setup lang="ts">
+/**
+ * One path, read (design 29 D8): its state and why, the window's figures,
+ * the path chart, the buckets as a table, and its latest raw runs.
+ *
+ * Shared by the path sheet on Paths and the check sheet on Checks, which own
+ * the actions. The series comes from GET /api/monitors/series; a server from
+ * before design 29 answers a generated path from the latency series route and
+ * has no series for an operator check, which then shows its runs only.
+ */
+import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+
+import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
+import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { useAsyncData } from "@/composables/useAsyncData";
+import { Badge } from "@/components/ui/badge";
+
+import { formatLoss, formatMs } from "./latencyModel";
+import { seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import {
+  availability,
+  formatDeltaLoss,
+  formatDeltaMs,
+  legacyWindow,
+  pathDelta,
+  type PathAddress,
+  type PathItem,
+  type PathsSource,
+} from "./pathsModel";
+import { usePathsCopy } from "./pathsCopy";
+
+// The chart and uPlot load with the first sheet that draws one, not with the page.
+const PathChart = defineAsyncComponent(() => import("./PathChart.vue"));
+
+const props = defineProps<{
+  address: PathAddress;
+  path?: PathItem;
+  window: MonitorWindow;
+  source: PathsSource;
+  compact: boolean;
+  /** "cd-hs-sh to xuezhang-jp-nat", for the chart's accessible name. */
+  title: string;
+}>();
+
+const { t } = useI18n();
+const { reasonText, stateLabel, windowLong } = usePathsCopy();
+
+const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
+/** The range the chart is zoomed to, whose figures replace the window's. */
+const zoom = ref<{ from: number; to: number } | null>(null);
+
+const seriesQuery = useAsyncData<PathSeries | null>(
+  async (signal) => {
+    const a = props.address;
+    if (props.source === "legacy") {
+      if (!a.targetNode) return null;
+      return seriesFromLatency(await api.monitors.latency.series(a.source, a.targetNode, legacyWindow(props.window), { signal }));
+    }
+    const query = a.targetNode && !a.monitorId ? { source: a.source, target_node: a.targetNode, window: props.window } : { source: a.source, monitor: a.monitorId, window: props.window };
+    return seriesFromResponse(await api.monitors.series(query, { signal }));
+  },
+  { pollInterval: 60000, immediate: false },
+);
+
+const resultsQuery = useAsyncData<MonitorResult[]>(
+  (signal) => (monitorId.value ? api.monitors.results(monitorId.value, { signal }).then((r) => unwrap(r, "results")) : Promise.resolve([])),
+  { pollInterval: 30000, immediate: false },
+);
+
+watch(
+  () => [props.address.source, props.address.targetNode, props.address.monitorId, props.window, props.source] as const,
+  () => {
+    seriesQuery.data.value = undefined;
+    seriesQuery.error.value = undefined;
+    zoom.value = null;
+    // The paths read decides which server this is first; reading the series before that would ask the wrong route.
+    if (props.source !== "unknown") void seriesQuery.refresh();
+  },
+  { immediate: true },
+);
+watch(
+  monitorId,
+  () => {
+    resultsQuery.data.value = undefined;
+    void resultsQuery.refresh();
+  },
+  { immediate: true },
+);
+
+/* ---- Figures ---- */
+
+const series = computed(() => seriesQuery.data.value ?? undefined);
+
+interface Figure {
+  key: string;
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "destructive";
+}
+
+const figures = computed<Figure[]>(() => {
+  const s = series.value;
+  const zoomed = zoom.value && s ? s.points.filter((p) => p.t + s.stepSec > zoom.value!.from && p.t < zoom.value!.to) : undefined;
+  const fromBuckets = zoomed ?? (props.path ? undefined : s?.points);
+  const stats = fromBuckets
+    ? seriesStats(fromBuckets)
+    : props.path
+      ? { p50Ms: props.path.p50Ms, p95Ms: props.path.p95Ms, jitterMs: props.path.jitterMs, loss: props.path.loss, availability: availability(props.path), samples: props.path.samples, expected: props.path.expected }
+      : undefined;
+  if (!stats) return [];
+  const delta = !zoomed && props.path ? pathDelta(props.path) : {};
+  const none = t("common.misc.none");
+  return [
+    { key: "p50", label: "p50", value: stats.p50Ms !== undefined ? formatMs(stats.p50Ms) : none, sub: delta.p50Ms !== undefined ? formatDeltaMs(delta.p50Ms) : undefined },
+    { key: "p95", label: "p95", value: stats.p95Ms !== undefined ? formatMs(stats.p95Ms) : none },
+    { key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), value: stats.jitterMs !== undefined ? formatMs(stats.jitterMs) : none },
+    {
+      key: "loss",
+      label: t("fleet.monitoring.paths.stats.loss"),
+      value: stats.loss !== undefined ? formatLoss(stats.loss) : none,
+      // A stray lost run in a week is not an alarm; a loss of one percent or more is.
+      tone: (stats.loss ?? 0) >= 0.01 ? "destructive" : undefined,
+      sub: delta.loss !== undefined ? formatDeltaLoss(delta.loss) : undefined,
+    },
+    { key: "availability", label: t("fleet.monitoring.paths.stats.availability"), value: stats.availability !== undefined ? formatAvailability(stats.availability) : none },
+    { key: "samples", label: t("fleet.monitoring.paths.stats.samples"), value: t("fleet.monitoring.paths.stats.samplesValue", { n: stats.samples, expected: stats.expected }) },
+  ];
+});
+
+function formatAvailability(share: number): string {
+  if (share >= 1) return "100%";
+  if (share >= 0.999) return ">99.9%";
+  return `${(Math.floor(share * 1000) / 10).toFixed(1)}%`;
+}
+
+const figuresCaption = computed(() => {
+  if (zoom.value) return t("fleet.monitoring.paths.stats.zoomed", { from: formatDateTime(zoom.value.from * 1000), to: formatDateTime(zoom.value.to * 1000) });
+  const hasDelta = props.path?.prev && (props.path.prev.p50Ms !== undefined || props.path.prev.loss !== undefined);
+  return hasDelta ? t("fleet.monitoring.paths.stats.windowDelta", { window: windowLong(props.window) }) : t("fleet.monitoring.paths.stats.window", { window: windowLong(props.window) });
+});
+
+const tone = computed<"success" | "destructive" | "muted">(() => (props.path?.state === "up" ? "success" : props.path?.state === "down" ? "destructive" : "muted"));
+
+/* ---- Runs ---- */
+
+const RUNS_SHOWN = 20;
+const runs = computed(() =>
+  (resultsQuery.data.value ?? [])
+    .filter((r) => (r.node_id ?? "") === props.address.source)
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    .slice(0, RUNS_SHOWN),
+);
+
+/* ---- Table view ---- */
+
+const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
+</script>
+
+<template>
+  <div class="space-y-5 text-sm">
+    <!-- State and why: the first thing the sheet says. -->
+    <div class="space-y-1">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge v-if="path" :variant="path.state === 'up' ? 'success' : path.state === 'down' ? 'destructive' : 'secondary'" data-testid="path-state">
+          {{ stateLabel(path.state) }}
+        </Badge>
+        <span v-if="path?.lastAt" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.lastRun', { age: formatRelativeTime(path.lastAt) }) }}</span>
+        <span v-else-if="path" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.noRun') }}</span>
+      </div>
+      <p v-if="path && path.state !== 'up'" :class="cn('text-sm', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
+        {{ reasonText(path.reason) }}
+      </p>
+    </div>
+
+    <section v-if="figures.length" class="space-y-1.5" :aria-label="figuresCaption">
+      <p class="text-xs text-muted-foreground">{{ figuresCaption }}</p>
+      <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
+        <div v-for="f in figures" :key="f.key" class="min-w-0">
+          <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>
+          <dd :class="cn('font-mono font-medium tabular', f.tone === 'destructive' && 'text-destructive')">{{ f.value }}</dd>
+          <dd v-if="f.sub" class="font-mono text-[11px] text-muted-foreground tabular">{{ f.sub }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="space-y-2" :aria-label="$t('fleet.monitoring.paths.sheet.chart')">
+      <p v-if="seriesQuery.error.value" class="rounded-md border border-border p-3 text-xs text-destructive" role="alert">
+        {{ $t('fleet.monitoring.paths.sheet.seriesFailed', { reason: seriesQuery.error.value.message }) }}
+        <button type="button" class="ms-1 font-medium text-foreground underline underline-offset-2" @click="seriesQuery.refresh()">{{ $t('common.actions.retry') }}</button>
+      </p>
+      <p v-else-if="seriesQuery.data.value === null" class="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground" data-testid="path-no-series">
+        {{ $t('fleet.monitoring.paths.sheet.noSeries') }}
+      </p>
+      <div v-else-if="!series" :class="cn('rounded-md bg-muted/30', compact ? 'h-[19rem]' : 'h-[17.5rem]')" aria-busy="true">
+        <span class="sr-only">{{ $t('common.proof.reading') }}</span>
+      </div>
+      <p v-else-if="series.points.length === 0" class="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.seriesEmpty') }}</p>
+      <PathChart
+        v-else
+        :series="series"
+        :tone="tone"
+        :method="path?.method ?? 'tcp'"
+        :compact="compact"
+        :height="compact ? 200 : 228"
+        :label="$t('fleet.monitoring.paths.sheet.chartLabel', { path: title, window: windowLong(window) })"
+        :class="seriesQuery.refreshing.value && 'opacity-70'"
+        @zoom="(range) => (zoom = range)"
+      />
+      <details v-if="series && series.points.length" class="group rounded-md border border-border" data-testid="path-table">
+        <summary class="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:py-3">
+          {{ $t('fleet.monitoring.paths.sheet.table', { n: series.points.length }) }}
+        </summary>
+        <div class="max-h-80 overflow-auto border-t border-border">
+          <table class="w-full text-xs">
+            <caption class="sr-only">{{ $t('fleet.monitoring.paths.sheet.tableCaption', { path: title }) }}</caption>
+            <thead class="sticky top-0 bg-card text-muted-foreground">
+              <tr>
+                <th scope="col" class="px-3 py-1.5 text-start font-medium">{{ $t('fleet.monitoring.paths.sheet.col.time') }}</th>
+                <th scope="col" class="px-2 py-1.5 text-end font-medium">p50</th>
+                <th scope="col" class="px-2 py-1.5 text-end font-medium">p95</th>
+                <th scope="col" class="px-2 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.jitter') }}</th>
+                <th scope="col" class="px-2 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.loss') }}</th>
+                <th scope="col" class="px-3 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.samples') }}</th>
+              </tr>
+            </thead>
+            <tbody class="font-mono tabular">
+              <tr v-for="p in tableRows" :key="p.t" class="border-t border-border/60">
+                <td class="whitespace-nowrap px-3 py-1">{{ formatDateTime(p.t * 1000) }}</td>
+                <template v-if="p.missing">
+                  <td colspan="4" class="px-2 py-1 text-end font-sans text-muted-foreground">{{ $t('fleet.monitoring.chart.noData') }}</td>
+                </template>
+                <template v-else>
+                  <td class="px-2 py-1 text-end">{{ formatMs(p.p50Ms) || '' }}</td>
+                  <td class="px-2 py-1 text-end">{{ formatMs(p.p95Ms) || '' }}</td>
+                  <td class="px-2 py-1 text-end">{{ formatMs(p.jitterMs) || '' }}</td>
+                  <td :class="cn('px-2 py-1 text-end', (p.loss ?? 0) > 0 && 'text-destructive')">{{ p.n > 0 ? formatLoss(p.loss ?? 0) : '' }}</td>
+                </template>
+                <td class="px-3 py-1 text-end">{{ p.n }}/{{ p.expected }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section class="space-y-2" :aria-label="$t('fleet.monitoring.paths.sheet.runs')">
+      <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runs') }}</h3>
+      <p v-if="resultsQuery.error.value" class="text-xs text-destructive">{{ resultsQuery.error.value.message }}</p>
+      <ul v-else-if="runs.length" class="divide-y divide-border rounded-md border border-border" data-testid="path-runs">
+        <li v-for="run in runs" :key="run.at" class="grid grid-cols-[minmax(0,1fr)_auto_2.5rem] items-baseline gap-x-3 px-3 py-1.5 text-xs">
+          <span class="min-w-0 text-muted-foreground">{{ formatDateTime(run.at) }}</span>
+          <span class="font-mono tabular">{{ run.latency_ms !== undefined ? formatMs(run.latency_ms) : '' }}</span>
+          <span :class="cn('text-end font-medium', run.success ? 'text-foreground' : 'text-destructive')">{{ run.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
+          <span v-if="run.error" class="col-span-3 break-words text-destructive">{{ run.error }}</span>
+        </li>
+      </ul>
+      <p v-else-if="resultsQuery.data.value !== undefined" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runsEmpty') }}</p>
+    </section>
+
+    <p v-if="path" class="text-xs text-muted-foreground" data-testid="path-endpoint">
+      {{ $t('fleet.monitoring.paths.sheet.endpoint', { method: path.method.toUpperCase(), target: path.target || $t('common.misc.none') }) }}
+    </p>
+  </div>
+</template>
