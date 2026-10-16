@@ -77,6 +77,8 @@ export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
 export function lastSampleText(t: Translate, locale: string, last: TopoLastSample | undefined, now: number): string {
   if (!last) return t("fleet.monitoring.topology.card.lastNone");
   const age = formatAge(now - last.at, locale);
+  // A probe path says when it last heard, not how that run went.
+  if (last.ok === undefined) return t("fleet.monitoring.topology.card.lastHeard", { age });
   if (!last.ok) return t("fleet.monitoring.topology.card.lastFail", { age });
   if (last.ms === undefined) return t("fleet.monitoring.topology.card.lastOkNoValue", { age });
   return t("fleet.monitoring.topology.card.lastOk", { age, value: formatMs(last.ms) });

@@ -23,6 +23,7 @@
 import type { LatencySeries, MonitorDegradedRule, MonitorWindow, PathBaseline, PathSeriesResponse } from "@/lib/api/types";
 
 import { chartCeiling } from "@/views/fleet/latencyModel";
+import { degradedDraftFrom, degradedSummary, type DegradedField } from "@/views/fleet/degradedRuleModel";
 import { WINDOW_SECONDS } from "@/views/fleet/pathsModel";
 
 /* ------------------------------------------------------------------ */
@@ -109,15 +110,6 @@ export interface PathSeries {
   previousOffsetSec?: number;
 }
 
-/** The degraded rule's thresholds with the defaults filled in (lattice-sdk MonitorDegradedRule defaults). */
-export interface DegradedRuleView {
-  lossPercent: number;
-  lossFactor: number;
-  latencyFactor: number;
-  latencyMarginMs: number;
-}
-
-export const DEGRADED_RULE_DEFAULTS: DegradedRuleView = { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 };
 /** lattice-sdk PathBaselineMinHours: a path is judged once its baseline holds this many hourly buckets with runs. */
 export const BASELINE_MIN_HOURS = 24;
 
@@ -130,18 +122,13 @@ export interface SeriesBaseline {
   loss?: number;
   triggerP50Ms?: number;
   triggerLoss?: number;
-  rule: DegradedRuleView;
+  /** The thresholds in force, defaults filled in (degradedRuleModel's rule, one place for the defaults). */
+  rule: Record<DegradedField, number>;
 }
 
 /** A rule as sent, defaults filled in where a field is absent or zero. */
-export function ruleView(rule: MonitorDegradedRule | null | undefined): DegradedRuleView {
-  const pick = (v: number | undefined, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
-  return {
-    lossPercent: pick(rule?.loss_percent, DEGRADED_RULE_DEFAULTS.lossPercent),
-    lossFactor: pick(rule?.loss_factor, DEGRADED_RULE_DEFAULTS.lossFactor),
-    latencyFactor: pick(rule?.latency_factor, DEGRADED_RULE_DEFAULTS.latencyFactor),
-    latencyMarginMs: pick(rule?.latency_margin_ms, DEGRADED_RULE_DEFAULTS.latencyMarginMs),
-  };
+export function ruleView(rule: MonitorDegradedRule | null | undefined): Record<DegradedField, number> {
+  return degradedSummary(degradedDraftFrom(rule));
 }
 
 /** The server's baseline, read. A trigger is kept only once the baseline is ready, as the server sends it. */

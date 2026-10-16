@@ -24,7 +24,7 @@ import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, 
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
-import { defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedForSave, degradedProblems, effectiveAlert, pagesDown, type DegradedDraft, type DegradedField } from "@/views/fleet/degradedRuleModel";
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedForSave, degradedProblems, effectiveAlert, pagesDown, type DegradedDraft, type DegradedField } from "@/views/fleet/degradedRuleModel";
 
 import {
   AGENT_DEFAULT_INTERVAL_SEC,
@@ -74,9 +74,7 @@ export function takesNodeTarget(kind: string): boolean {
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
 export const CHECK_MAX_TIMEOUT_SEC = 300;
-/** lattice-sdk MonitorAlertAfterDefault and MonitorAlertAfterMax. */
-export const ALERT_DEFAULT_AFTER = 2;
-export const ALERT_MAX_AFTER = 20;
+export { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER };
 
 /**
  * The certificate expiry a result read, in epoch milliseconds, or undefined

@@ -131,6 +131,10 @@ export function degradedSummary(draft: DegradedDraft): Record<DegradedField, num
 
 export const ALERT_POLICIES: readonly MonitorAlertPolicy[] = ["off", "down", "down_and_degraded"];
 
+/** lattice-sdk MonitorAlertAfterDefault and MonitorAlertAfterMax, which checks and the path set share. */
+export const ALERT_DEFAULT_AFTER = 2;
+export const ALERT_MAX_AFTER = 20;
+
 /**
  * What a check does when it fails (model.EffectiveMonitorAlert): empty reads
  * as `down` on an operator check, as it always has, and as `off` on the path

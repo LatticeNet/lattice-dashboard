@@ -206,7 +206,7 @@ test("freshness is the server's: a path it reads up stays up whatever the node l
 
 test("the last sample rides on the edge with its time", () => {
   const m = buildTopology(input());
-  assert.deepEqual(edge(m, "probe:sh~hk").last, { at: NOW - 20_000, ok: true });
+  assert.deepEqual(edge(m, "probe:sh~hk").last, { at: NOW - 20_000, ok: undefined }, "a path says when it last heard, not how that run went");
   assert.equal(edge(m, "probe:sh~us2").last!.ok, false);
 });
 

@@ -14,7 +14,7 @@ import { DropdownMenuCheckboxItem, DropdownMenuItemIndicator } from "reka-ui";
 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
-import { DEFAULT_DRAWN_SOURCES, type TopoSourceChoice } from "./topologyModel";
+import { DEFAULT_DRAWN_SOURCES, formatDrawnSources, type TopoSourceChoice } from "./topologyModel";
 
 const props = defineProps<{ choices: TopoSourceChoice[] }>();
 const emit = defineEmits<{ update: [ids: string[]] }>();
@@ -22,10 +22,7 @@ const emit = defineEmits<{ update: [ids: string[]] }>();
 const { t } = useI18n();
 
 const drawn = computed(() => props.choices.filter((c) => c.drawn).map((c) => c.node.id));
-const isDefault = computed(() => {
-  const defaults = props.choices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id);
-  return drawn.value.length === defaults.length && drawn.value.every((id) => defaults.includes(id));
-});
+const isDefault = computed(() => formatDrawnSources(drawn.value, props.choices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id)) === undefined);
 
 function toggle(id: string, on: boolean): void {
   const next = on ? [...drawn.value, id] : drawn.value.filter((x) => x !== id);

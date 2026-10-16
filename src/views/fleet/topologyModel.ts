@@ -32,7 +32,7 @@ import { nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 import { REGION_ORDER, regionOf, regionRank, type RegionKey } from "@/lib/regions";
 import type { QueryValue } from "@/components/common/tableUrlState";
 import { quietAfterMs } from "@/views/fleet/latencyModel";
-import { displayState, reachBySource, reasonCode, type PathDisplay, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
+import { displayState, reasonCode, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
 
 export { REGION_ORDER, regionOf, regionRank, quietAfterMs, type RegionKey };
 
@@ -98,7 +98,8 @@ export type TopoEdgeState = ProbeState | ChainState | CheckState;
 
 export interface TopoLastSample {
   at: number;
-  ok: boolean;
+  /** The outcome, when it is known: a check's newest result has one; a probe path only says when it last heard. */
+  ok?: boolean;
   ms?: number;
   error?: string;
 }
@@ -256,10 +257,13 @@ export function formatDrawnSources(ids: readonly string[] | undefined, defaults:
 
 /**
  * The path set's sources in its order, then any other source with a path to
- * a node; from the matrix alone when the plan is not read.
+ * a node; from the matrix alone when the plan is not read. A source the plan
+ * notes (deleted or disabled) probes nothing and is left out, so it never
+ * takes one of the default four places.
  */
-export function probeSourceOrder(plan: Pick<LatencyProbePlan, "config"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
-  const probing = new Set((matrix?.paths ?? []).filter((p) => p.targetNode && !p.rowKey.startsWith("@") && p.source).map((p) => p.source));
+export function probeSourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_notes"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
+  const noted = new Set(Object.keys(plan?.source_notes ?? {}));
+  const probing = new Set((matrix?.paths ?? []).filter((p) => p.targetNode && !p.rowKey.startsWith("@") && p.source && !noted.has(p.source)).map((p) => p.source));
   const out: string[] = [];
   for (const id of plan?.config.sources ?? []) if (probing.has(id) && !out.includes(id)) out.push(id);
   for (const column of matrix?.sources ?? []) if (probing.has(column.nodeId) && !out.includes(column.nodeId)) out.push(column.nodeId);
@@ -274,6 +278,30 @@ export function drawnSources(order: readonly string[], chosen: readonly string[]
 
 /** Reasons a path has nothing to dial on its target: no edge is drawn, and the row says "not probed". */
 const NOTHING_TO_DIAL = new Set(["not_probeable", "no_tcp_line", "udp_only", "no_public_address", "no_inventory"]);
+
+/** A path Topology draws as a probe: one the path set generated to a node, with something to dial. */
+function isDrawnProbe(path: Pick<PathItem, "targetNode" | "rowKey" | "state" | "reason">): boolean {
+  if (!path.targetNode || path.rowKey.startsWith("@")) return false;
+  return !(path.state === "unknown" && NOTHING_TO_DIAL.has(reasonCode(path.reason) ?? path.reason ?? ""));
+}
+
+/**
+ * Each source's reach as the drawing counts it (the picker's line): its
+ * drawn probes by state, so "12 of 12 up" matches the fan, and a target with
+ * nothing to dial is not counted as a problem.
+ */
+export function drawnReach(matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): Map<string, SourceReach> {
+  const out = new Map<string, SourceReach>();
+  for (const column of matrix?.sources ?? []) out.set(column.nodeId, { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 });
+  for (const path of matrix?.paths ?? []) {
+    if (!isDrawnProbe(path)) continue;
+    const reach = out.get(path.source);
+    if (!reach) continue;
+    reach[displayState(path)] += 1;
+    reach.total += 1;
+  }
+  return out;
+}
 
 /** A chain row's status in the four words the drawing uses. */
 export function chainState(row: Pick<LineChainView, "status" | "attempt">): ChainState {
@@ -385,7 +413,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   const sources: TopoNode[] = [];
   const order = probeSourceOrder(plan, matrix);
   const drawn = drawnSources(order, input.drawnSources);
-  const reachOf = new Map((matrix ? reachBySource(matrix) : []).map((r) => [r.source, r]));
+  const reachOf = drawnReach(matrix);
   const sourceName = new Map((matrix?.sources ?? []).map((s) => [s.nodeId, s.name]));
   const sourceChoices: TopoSourceChoice[] = order.map((id) => {
     const node = ensure(id);
@@ -400,9 +428,8 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     const drawnSet = new Set(drawn);
     for (const path of matrix.cells.values()) {
       // Your checks stay checks: a probe is a path the path set generated to a node.
-      if (!path.targetNode || path.rowKey.startsWith("@") || !drawnSet.has(path.source)) continue;
-      if (path.state === "unknown" && NOTHING_TO_DIAL.has(reasonCode(path.reason) ?? path.reason ?? "")) continue;
-      const target = ensure(path.targetNode);
+      if (!isDrawnProbe(path) || !drawnSet.has(path.source)) continue;
+      const target = ensure(path.targetNode!);
       if (target.name === target.id && path.targetNodeName) target.name = path.targetNodeName;
       if (!target.country && path.country) {
         target.country = path.country;
@@ -414,7 +441,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         id: `probe:${path.source}~${path.targetNode}`,
         kind: "probe",
         from: path.source,
-        to: path.targetNode,
+        to: path.targetNode!,
         state,
         severity: edgeSeverity("probe", state),
         p50Ms: path.p50Ms,
@@ -426,7 +453,8 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         method: path.method,
         monitorId: path.monitorId || undefined,
       };
-      if (path.lastAt !== undefined) edge.last = { at: path.lastAt, ok: state !== "down" };
+      // The matrix says when the path last heard; only a down path's newest outcome is known (it failed).
+      if (path.lastAt !== undefined) edge.last = { at: path.lastAt, ok: state === "down" ? false : undefined };
       edges.push(edge);
       counts.paths += 1;
       if (state === "down" || state === "degraded" || state === "unknown" || state === "paused") counts[state] += 1;

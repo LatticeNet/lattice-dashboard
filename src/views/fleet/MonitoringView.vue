@@ -376,10 +376,27 @@ const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, mo
 const m2b = computed(() => serverSpeaksM2b(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
 /**
  * Whether the server judges degraded (design 29 D13): its matrix carries
- * `degraded_at`. Only then do the editors offer down and degraded and the
+ * `degraded_at`, or a check or the path set already holds an M3 field (so an
+ * editor opened before the first paths read, or while it fails, still shows
+ * a stored down_and_degraded and its thresholds). Once seen it stays seen for
+ * the page. Only then do the editors offer down and degraded and the
  * thresholds.
  */
-const m3 = computed(() => data.source.value === "paths" && !!matrix.value?.judgesDegraded);
+const m3Seen = ref(false);
+watch(
+  () =>
+    !!matrix.value?.judgesDegraded ||
+    (monitorsQuery.data.value ?? []).some((m) => m.alert === "down_and_degraded" || !!m.degraded) ||
+    (() => {
+      const config = data.planQuery.data.value?.config;
+      return !!config && (config.alert !== undefined || config.alert_after !== undefined || !!config.degraded);
+    })(),
+  (seen) => {
+    if (seen) m3Seen.value = true;
+  },
+  { immediate: true },
+);
+const m3 = computed(() => data.source.value !== "legacy" && m3Seen.value);
 /** A source's agent version, said on a path whose agent is too old. */
 const agentOf = (id: string) => (nodesQuery.data.value ?? []).find((n) => n.id === id)?.agent_version;
 const shortestIntervalSec = computed(() => {

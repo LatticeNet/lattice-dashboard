@@ -54,6 +54,7 @@ import {
   PROBE_TONE,
   TOPOLOGY_LAYERS,
   buildTopology,
+  formatDrawnSources,
   parseDrawnSources,
   layerEmpty as emptyKind,
   missingReads,
@@ -170,11 +171,10 @@ const model = computed(() =>
 );
 const windowLabel = computed(() => windowLong(props.data.window.value));
 
-/** The picker's choice: the default written as nothing, so the bare address stays bare. */
+/** The picker's choice (in the path set's order): the default written as nothing, so the bare address stays bare. */
 function drawSources(ids: string[]): void {
   const defaults = model.value.sourceChoices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id);
-  const same = ids.length === defaults.length && ids.every((id) => defaults.includes(id));
-  sourcesParam.value = ids.length === 0 || same ? undefined : ids;
+  sourcesParam.value = parseDrawnSources(formatDrawnSources(ids, defaults));
 }
 
 function refreshAll(): void {

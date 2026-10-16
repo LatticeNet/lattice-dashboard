@@ -53,8 +53,6 @@ import {
   draftTargetReason,
   draftToConfig,
   draftsDiffer,
-  LATENCY_ALERT_DEFAULT_AFTER,
-  LATENCY_ALERT_MAX_AFTER,
   pathSetMethods,
   pathSetPreview,
   setPairEnabled,
@@ -68,7 +66,7 @@ import {
   type TargetMode,
 } from "./latencyModel";
 import { sourceSupport } from "./checkRulesModel";
-import { effectiveAlert, pagesDown } from "./degradedRuleModel";
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, effectiveAlert, pagesDown } from "./degradedRuleModel";
 import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
@@ -275,7 +273,8 @@ const problemText = computed(() =>
 
 /** The policy in force: a path set nobody set reads Off, as the server reads it. */
 const alert = computed(() => effectiveAlert(draft.value.alert, true));
-const alertAfterShown = computed(() => (draft.value.alertAfter > 0 ? draft.value.alertAfter : LATENCY_ALERT_DEFAULT_AFTER));
+/** The run count in force for the line below the field: a stored zero reads as two. */
+const alertAfterShown = computed(() => (draft.value.alertAfter > 0 ? draft.value.alertAfter : ALERT_DEFAULT_AFTER));
 function setAlert(next: "off" | "down" | "down_and_degraded"): void {
   // A path set stored without a policy already reads Off: choosing Off changes nothing to save.
   draft.value = { ...draft.value, alert: next === "off" && !base.value.alert ? "" : next };
@@ -446,10 +445,11 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         </label>
         <div class="flex flex-wrap items-center gap-2.5 ps-6.5">
           <Input
-            :model-value="alertAfterShown"
+            :model-value="draft.alertAfter > 0 || Number.isNaN(draft.alertAfter) ? draft.alertAfter : ''"
             type="number"
             min="1"
-            :max="LATENCY_ALERT_MAX_AFTER"
+            :max="ALERT_MAX_AFTER"
+            :placeholder="String(ALERT_DEFAULT_AFTER)"
             class="h-8 w-20"
             :disabled="!pagesDown(alert)"
             :aria-label="$t('fleet.monitoring.checks.editor.alertAfter')"
@@ -459,7 +459,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           />
           <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRunsBefore') }}</span>
         </div>
-        <p v-if="problems.includes('alertAfter')" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checks.editor.problem.alertAfter', { after: LATENCY_ALERT_MAX_AFTER }) }}</p>
+        <p v-if="problems.includes('alertAfter')" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checks.editor.problem.alertAfter', { after: ALERT_MAX_AFTER }) }}</p>
         <p class="text-xs text-muted-foreground" data-testid="path-set-alert-line">{{ alertLine }}</p>
         <DegradedRuleFields :model-value="draft.degraded" id-prefix="path-set-degraded" @update:model-value="(v) => (draft = { ...draft, degraded: v })" />
       </fieldset>

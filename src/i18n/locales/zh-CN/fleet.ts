@@ -2506,6 +2506,7 @@ export default {
           last: "最后一次",
           lastOk: "{age}前，{value}",
           lastOkNoValue: "{age}前，通过",
+          lastHeard: "{age}前",
           lastFail: "{age}前，失败",
           lastNone: "还没有",
           method: "用 {method} 测量",

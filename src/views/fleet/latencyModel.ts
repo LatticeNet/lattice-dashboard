@@ -29,7 +29,7 @@ import type {
 import { latencyClass } from "@/lib/latency";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
-import { degradedDraftFrom, degradedForSave, degradedProblems, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, degradedDraftFrom, degradedForSave, degradedProblems, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
@@ -527,14 +527,11 @@ export function draftToConfig(draft: LatencyDraft): LatencyProbeConfig {
   // Design 29 D13: sent only when set, for the same reason, and kept by every save that
   // rebuilds the configuration (a pause from the path sheet included), so none drops them.
   if (draft.alert) config.alert = draft.alert;
-  if (draft.alertAfter > 0 && draft.alertAfter !== LATENCY_ALERT_DEFAULT_AFTER) config.alert_after = draft.alertAfter;
+  if (draft.alertAfter > 0 && draft.alertAfter !== ALERT_DEFAULT_AFTER) config.alert_after = draft.alertAfter;
   const degraded = degradedForSave(draft.degraded);
   if (degraded) config.degraded = degraded;
   return config;
 }
-
-/** lattice-sdk: a path set's alert_after of zero reads as two. */
-export const LATENCY_ALERT_DEFAULT_AFTER = 2;
 
 /** Pin one source's method, or follow the path set's again with undefined. */
 export function setSourceMethod(draft: LatencyDraft, source: string, method: string | undefined): LatencyDraft {
@@ -695,14 +692,11 @@ export function draftProblems(draft: LatencyDraft): DraftProblem[] {
   else if (!out.includes("interval") && timeout >= interval) out.push("timeoutVsInterval");
   if ((draft.alert === "down" || draft.alert === "down_and_degraded") && draft.alertAfter !== 0) {
     const after = Number(draft.alertAfter);
-    if (!Number.isInteger(after) || after < 1 || after > LATENCY_ALERT_MAX_AFTER) out.push("alertAfter");
+    if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
   }
   if (degradedProblems(draft.degraded).length) out.push("degraded");
   return out;
 }
-
-/** lattice-sdk MonitorAlertAfterMax, which the path set shares. */
-export const LATENCY_ALERT_MAX_AFTER = 20;
 
 /**
  * Whether a node would be a target under the draft, and why, by the same rule

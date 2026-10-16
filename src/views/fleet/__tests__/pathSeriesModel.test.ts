@@ -5,7 +5,6 @@ import type { PathSeriesResponse } from "@/lib/api/types";
 
 import {
   BASELINE_MIN_HOURS,
-  DEGRADED_RULE_DEFAULTS,
   baselineGuides,
   baselinePending,
   chartCeilingMs,
@@ -322,7 +321,7 @@ test("baseline: read with its triggers and the rule in force; the guides are the
   assert.equal(s.baseline!.p50Ms, 64);
   assert.equal(s.baseline!.triggerP50Ms, 128);
   assert.equal(s.baseline!.triggerLoss, 0.02);
-  assert.deepEqual(s.baseline!.rule, DEGRADED_RULE_DEFAULTS);
+  assert.deepEqual(s.baseline!.rule, { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 });
   assert.deepEqual(baselineGuides(s.baseline), [
     { kind: "median", ms: 64 },
     { kind: "trigger", ms: 128 },
@@ -364,7 +363,7 @@ test("baseline: a latency trigger needs a 7-day p50; a rule fills its defaults",
   assert.equal(s.triggerP50Ms, undefined);
   assert.deepEqual(baselineGuides(s), []);
   assert.deepEqual(ruleView({ loss_percent: 5, latency_margin_ms: 0 }), { lossPercent: 5, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 });
-  assert.deepEqual(ruleView(null), DEGRADED_RULE_DEFAULTS);
+  assert.deepEqual(ruleView(null), { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 });
 });
 
 test("previous: one entry per point, aligned by bucket; a step the console filled and a step with no run are null", () => {

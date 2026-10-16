@@ -371,7 +371,7 @@ function probeRows(edge: TopoEdge): CardRow[] {
     tone: (edge.loss ?? 0) > 0 ? "text-destructive" : undefined,
   });
   if (edge.expected) rows.push({ label: t("fleet.monitoring.topology.card.heard"), value: t("fleet.monitoring.topology.card.heardValue", { heard: edge.samples ?? 0, expected: edge.expected, window: props.windowLabel }) });
-  rows.push({ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last && !edge.last.ok ? "text-destructive" : undefined });
+  rows.push({ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last?.ok === false ? "text-destructive" : undefined });
   return rows;
 }
 

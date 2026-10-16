@@ -2526,6 +2526,7 @@ export default {
           last: "last sample",
           lastOk: "{age} ago, {value}",
           lastOkNoValue: "{age} ago, passed",
+          lastHeard: "{age} ago",
           lastFail: "{age} ago, failed",
           lastNone: "none yet",
           method: "measured with {method}",
