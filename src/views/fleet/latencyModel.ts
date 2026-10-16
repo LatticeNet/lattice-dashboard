@@ -27,6 +27,7 @@ import type {
   Node,
 } from "@/lib/api/types";
 import { latencyClass } from "@/lib/latency";
+import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
@@ -543,6 +544,8 @@ export interface SourceMethodPreview {
   onSave: number;
   /** The targets counted in `none`, by node id, in the plan's order. */
   noneTargets: string[];
+  /** Why a target in `none` is not reached, where the method names it (a beacon that cannot answer, or none enabled). */
+  noneReasons: Record<string, string>;
   /** The targets counted in `beaconWaiting`. */
   waitingTargets: string[];
 }
@@ -573,7 +576,7 @@ export function pathSetPreview(
     const method = sourceMethod(draft, source);
     const support = sourceSupport(byId.get(source), "icmp", true);
     const client = sourceSupport(byId.get(source), "beacon", true);
-    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, beacon: 0, beaconWaiting: 0, none: 0, onSave: 0, noneTargets: [], waitingTargets: [] };
+    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, beacon: 0, beaconWaiting: 0, none: 0, onSave: 0, noneTargets: [], noneReasons: {}, waitingTargets: [] };
     if (method === "icmp" && !support.ok) [row.refusal, row.refusalMethod] = [support.reason, "icmp"];
     if (method === "beacon" && !client.ok) [row.refusal, row.refusalMethod] = [client.reason, "beacon"];
     // The plan's pairs carry the server's verdict for the stored configuration: whether a target's beacon admits this
@@ -587,9 +590,10 @@ export function pathSetPreview(
       const ipv4 = !!publicIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip);
       // A line port the plan knows; none when the plan says why there is none; else the server resolves it on save.
       const tcp = pn.endpoint && pn.target !== "not_probeable" ? "yes" : pn.target === "not_probeable" || pn.endpoint_note ? "none" : "onSave";
-      const unreached = () => {
+      const unreached = (reason?: string) => {
         row.none += 1;
         row.noneTargets.push(pn.node_id);
+        if (reason) row.noneReasons[pn.node_id] = reason;
       };
       const viaTcp = () => {
         if (tcp === "yes") row.tcp += 1;
@@ -600,13 +604,17 @@ export function pathSetPreview(
         if (support.ok && ipv4) row.icmp += 1;
         else unreached();
       } else if (method === "beacon") {
-        if (!client.ok || !pn.beacon_target) unreached();
+        // A beacon its agent cannot answer on (refused, too old, socket down) is not fixed by a plan: it is not reached, with why.
+        const block = beaconTargetBlock(byId.get(pn.node_id));
+        if (!client.ok) unreached();
+        else if (!pn.beacon_target) unreached("beacon_not_enabled");
         else if (beaconAdmits) row.beacon += 1;
+        else if (block) unreached(block);
         else if (!pair || !pair.reason || BEACON_WAITING.has(pair.reason)) {
           // A source the target's plan has not approved: its key and, under NetGuard, its rule wait for a change plan.
           row.beaconWaiting += 1;
           row.waitingTargets.push(pn.node_id);
-        } else unreached();
+        } else unreached(pair.reason);
       } else if (method === "auto" && client.ok && beaconAdmits) {
         row.beacon += 1;
       } else if (method === "auto" && support.ok && ipv4 && !(storedAuto && pair?.method === "tcp")) {

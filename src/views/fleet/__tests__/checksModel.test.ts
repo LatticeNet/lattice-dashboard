@@ -33,6 +33,7 @@ import {
   offeredKinds,
   resolveNodeTarget,
   unsupportedSources,
+  unpickableNote,
   usesNodeTarget,
   withPathVerdict,
   type CheckDraft,
@@ -451,7 +452,17 @@ test("a beacon check always targets a node and resolves to its advertised endpoi
   const draft = emptyDraft("beacon");
   assert.equal(draft.targetMode, "node");
   assert.equal(usesNodeTarget({ type: "beacon", targetMode: "address" }), true, "no address mode exists for a beacon");
-  assert.deepEqual(resolveNodeTarget("beacon", { public_ip: "203.0.113.12" }, { beacon_target: "203.0.113.12:50231" }), { state: "resolved", endpoint: "203.0.113.12:50231" });
+  const listening = { public_ip: "203.0.113.12", beacon: { responder: true, state: "listening" } };
+  assert.deepEqual(resolveNodeTarget("beacon", listening, { beacon_target: "203.0.113.12:50231" }), { state: "resolved", endpoint: "203.0.113.12:50231" });
+  // The server saves a check to any enabled beacon; one that cannot answer carries a note, and the first two are not offered.
+  const noted = (beacon?: { responder?: boolean; refusal?: string; state?: string }) => resolveNodeTarget("beacon", { public_ip: "203.0.113.12", beacon }, { beacon_target: "203.0.113.12:50231" });
+  assert.deepEqual(noted({ responder: true, refusal: "refused_by_node", state: "refused" }), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_refused" });
+  assert.deepEqual(noted(undefined), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_agent_too_old" });
+  assert.deepEqual(noted({ responder: true, state: "circuit_open" }), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_not_listening" });
+  assert.equal(unpickableNote(noted({ responder: true, refusal: "refused_by_node" })), true);
+  assert.equal(unpickableNote(noted(undefined)), true);
+  assert.equal(unpickableNote(noted({ responder: true, state: "bind_failed" })), false, "a socket that is down can come back; the check may be written now");
+  assert.equal(unpickableNote(noted({ responder: true, state: "off" })), false, "a beacon still opening is not blocked");
   assert.deepEqual(resolveNodeTarget("beacon", { public_ip: "203.0.113.12" }, {}), { state: "refused", reason: "no_beacon" });
   assert.deepEqual(resolveNodeTarget("beacon", { public_ip: "203.0.113.12" }), { state: "refused", reason: "no_beacon" });
   const switched = switchDraftKind({ ...emptyDraft("http"), target: "https://status.example.com" }, "beacon").draft;

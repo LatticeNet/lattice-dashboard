@@ -15,7 +15,7 @@ import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 
-import { resolveNodeTarget, type NodeTargetResolution } from "./checksModel";
+import { resolveNodeTarget, unpickableNote, type NodeTargetResolution } from "./checksModel";
 import { useTargetCopy } from "./checksCopy";
 
 const props = defineProps<{
@@ -33,6 +33,16 @@ const query = ref("");
 
 function resolution(node: Node): NodeTargetResolution {
   return resolveNodeTarget(props.kind, node, props.planNodes.get(node.id));
+}
+/** A node that cannot be picked: refused for the method, or a beacon that cannot answer until the node changes. */
+/** Why a beacon target answers nobody now, shown in the warning tone. */
+function noteOf(node: Node): string | undefined {
+  const r = resolution(node);
+  return r.state === "resolved" ? r.note : undefined;
+}
+function unpickable(node: Node): boolean {
+  const r = resolution(node);
+  return r.state === "refused" || unpickableNote(r);
 }
 
 const groups = computed(() => {
@@ -84,7 +94,7 @@ onMounted(() =>
           :class="
             cn(
               'flex items-center gap-2 border-b border-border/60 px-2.5 py-1.5 last:border-b-0 pointer-coarse:min-h-11',
-              resolution(node).state === 'refused' && node.id !== selected ? 'cursor-not-allowed' : 'cursor-pointer',
+              unpickable(node) && node.id !== selected ? 'cursor-not-allowed' : 'cursor-pointer',
               node.id === selected && 'bg-primary/10',
             )
           "
@@ -96,18 +106,22 @@ onMounted(() =>
             class="accent-[var(--primary)]"
             :value="node.id"
             :checked="node.id === selected"
-            :disabled="resolution(node).state === 'refused' && node.id !== selected"
+            :disabled="unpickable(node) && node.id !== selected"
             :aria-describedby="`${name}-${node.id}`"
             @change="selected = node.id"
           />
           <span class="min-w-0 flex-1">
-            <span :class="cn('block truncate text-sm', resolution(node).state === 'refused' && node.id !== selected && 'text-muted-foreground')" :title="node.name || node.id">
+            <span :class="cn('block truncate text-sm', unpickable(node) && node.id !== selected && 'text-muted-foreground')" :title="node.name || node.id">
               {{ node.name || node.id }}
               <span v-if="node.geo?.country" class="ms-1 font-mono text-xs text-muted-foreground">{{ node.geo.country }}</span>
             </span>
             <span
               :id="`${name}-${node.id}`"
-              :class="cn('block text-xs break-words', resolution(node).state === 'resolved' ? 'font-mono text-muted-foreground' : resolution(node).state === 'refused' && node.id === selected ? 'text-destructive' : 'text-muted-foreground')"
+              :class="cn(
+                'block text-xs break-words',
+                resolution(node).state === 'resolved' && 'font-mono',
+                unpickable(node) && node.id === selected ? 'text-destructive' : noteOf(node) ? 'text-warning-text' : 'text-muted-foreground',
+              )"
             >{{ resolutionText(kind, resolution(node)) }}</span>
           </span>
         </label>

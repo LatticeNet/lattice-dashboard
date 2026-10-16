@@ -22,6 +22,7 @@ import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorT
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
 import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
+import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
 
 import {
@@ -491,7 +492,8 @@ export function sourcePaused(monitor: Pick<MonitorView, "paused_node_ids">, sour
 /* ------------------------------------------------------------------ */
 
 export type NodeTargetResolution =
-  | { state: "resolved"; endpoint: string }
+  /** `note` says why the target answers nobody now although the server takes it (a beacon refused, too old or not listening). */
+  | { state: "resolved"; endpoint: string; note?: string }
   | { state: "refused"; reason: string }
   /** The server resolves it when the check is saved; the console cannot tell the line port beforehand. */
   | { state: "onSave" };
@@ -505,7 +507,7 @@ export type NodeTargetResolution =
  */
 export function resolveNodeTarget(
   kind: string,
-  node: Pick<Node, "public_ip"> | undefined,
+  node: Pick<Node, "public_ip" | "beacon"> | undefined,
   planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target" | "beacon_target">,
   setMethod?: string,
 ): NodeTargetResolution {
@@ -516,7 +518,12 @@ export function resolveNodeTarget(
   }
   if (kind === "beacon") {
     // The server resolves a beacon check to the node's advertised endpoint, which the plan carries while an applied plan enables it.
-    return planNode?.beacon_target ? { state: "resolved", endpoint: planNode.beacon_target } : { state: "refused", reason: "no_beacon" };
+    if (!planNode?.beacon_target) return { state: "refused", reason: "no_beacon" };
+    // The server saves a check to any enabled beacon; one whose agent refuses it, has no responder or has no socket
+    // answers no source until that changes, which the note says (and the picker does not offer the first two).
+    const block = beaconTargetBlock(node);
+    const note = block === "refused_by_node" ? "beacon_refused" : block === "agent_too_old" ? "beacon_agent_too_old" : block;
+    return note ? { state: "resolved", endpoint: planNode.beacon_target, note } : { state: "resolved", endpoint: planNode.beacon_target };
   }
   if (kind === "tcp") {
     if (planNode?.endpoint && planNode.target !== "not_probeable") return { state: "resolved", endpoint: planNode.endpoint };
@@ -625,4 +632,9 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
     return { stash: undefined, draft: { ...draft, type: next, ...back, nodeIds: [...back.nodeIds], targetMode: nodeOnly(next) ? "node" : draft.targetMode } };
   }
   return { draft: { ...draft, type: next, targetMode: nodeOnly(next) ? "node" : draft.targetMode }, stash };
+}
+
+/** A note that keeps a node out of the target picker: its beacon cannot answer until the node itself changes. */
+export function unpickableNote(resolution: NodeTargetResolution | undefined): boolean {
+  return resolution?.state === "resolved" && (resolution.note === "beacon_refused" || resolution.note === "beacon_agent_too_old");
 }

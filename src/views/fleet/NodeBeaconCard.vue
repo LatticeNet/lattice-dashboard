@@ -247,7 +247,8 @@ const reachLine = computed(() => {
     case "not_listening":
       return { text: t("fleet.monitoring.beacon.reach.not_listening", { source, age, endpoint: applied.value?.endpoint ?? "" }), warn: true };
     case "no_source":
-      return { text: t("fleet.monitoring.beacon.reach.no_source"), warn: true };
+      // The server checks from an approved, current, online source with the client: say which half is missing.
+      return { text: t(sources.value.active.length ? "fleet.monitoring.beacon.reach.no_source" : "fleet.monitoring.beacon.reach.noAdmitted"), warn: true };
     default:
       return undefined;
   }
@@ -396,7 +397,7 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             <p v-if="companionState.reason" class="font-mono break-words text-foreground">{{ companionState.reason }}</p>
             <p class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.companion.failed') }}</p>
             <p class="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <button v-if="actions.change" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-companion-replan" @click="openPlan('change')">
+              <button v-if="actions.change && !view.pending_approval_id" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-companion-replan" @click="openPlan('change')">
                 {{ $t('fleet.monitoring.beacon.waiting.action') }}
               </button>
               <RouterLink
@@ -424,7 +425,14 @@ const DD_TEXT = "min-w-0 text-xs break-words";
                 ? $t('fleet.monitoring.beacon.waiting.firewall', { names: waitingNames }, waiting.length)
                 : $t('fleet.monitoring.beacon.waiting.plan', { names: waitingNames }, waiting.length) }}
             </p>
-            <button v-if="actions.change" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-waiting-plan" @click="openPlan('change')">
+            <!-- A plan already waits: review it rather than file another. -->
+            <RouterLink
+              v-if="view.pending_approval_id"
+              :to="{ name: 'approvals', query: { open: view.pending_approval_id } }"
+              class="inline-block font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              data-testid="beacon-waiting-review"
+            >{{ $t('fleet.monitoring.beacon.waiting.review') }}</RouterLink>
+            <button v-else-if="actions.change" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-waiting-plan" @click="openPlan('change')">
               {{ $t('fleet.monitoring.beacon.waiting.action') }}
             </button>
           </div>
@@ -446,7 +454,7 @@ const DD_TEXT = "min-w-0 text-xs break-words";
 
           <!-- What this session may do. -->
           <div v-if="anyAction" class="flex flex-wrap gap-2" data-testid="beacon-actions">
-            <Button v-if="actions.enable" size="sm" :disabled="!!actions.enableBlocked" data-testid="beacon-enable" @click="openPlan('enable')">
+            <Button v-if="actions.enable" size="sm" :variant="view.pending_approval_id ? 'outline' : 'default'" :disabled="!!actions.enableBlocked" data-testid="beacon-enable" @click="openPlan('enable')">
               <Power class="size-4" aria-hidden="true" />
               {{ $t('fleet.monitoring.beacon.actions.enable') }}
             </Button>
@@ -463,6 +471,9 @@ const DD_TEXT = "min-w-0 text-xs break-words";
               {{ $t('fleet.monitoring.beacon.actions.disable') }}
             </Button>
           </div>
+          <p v-if="view.pending_approval_id && (actions.enable || actions.change)" class="text-xs text-muted-foreground" data-testid="beacon-another-plan">
+            {{ $t('fleet.monitoring.beacon.actions.anotherPlan') }}
+          </p>
           <p v-if="actions.missing.length" class="text-xs text-muted-foreground" data-testid="beacon-missing-scopes">
             {{ $t('fleet.monitoring.beacon.actions.missing', { scopes: actions.missing.join(', ') }) }}
           </p>

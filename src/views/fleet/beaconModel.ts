@@ -160,6 +160,21 @@ export function notListeningCause(view: Pick<BeaconView, "agent"> | undefined): 
   return { kind, error: facts?.error?.trim() || undefined };
 }
 
+/**
+ * Why a node's enabled beacon cannot answer anyone, whatever its plan
+ * admits, from its agent's report as the server reads it (beaconView): the
+ * node refuses a beacon, its agent has no responder (an agent before M2b
+ * reports nothing), or the socket is down. Undefined when it answers or is
+ * still opening, which a plan does not fix either way.
+ */
+export function beaconTargetBlock(node: Pick<Node, "beacon"> | undefined): "refused_by_node" | "agent_too_old" | "beacon_not_listening" | undefined {
+  const facts = node?.beacon ?? undefined;
+  if (facts?.refusal) return "refused_by_node";
+  if (!facts?.responder) return "agent_too_old";
+  if (facts.state === "bind_failed" || facts.state === "circuit_open") return "beacon_not_listening";
+  return undefined;
+}
+
 export interface BeaconSources {
   /** Approved by the applied plan and using the beacon now. */
   active: BeaconSourceView[];
@@ -561,6 +576,26 @@ export function refusedFindings(error: unknown): BeaconFinding[] {
   if (e?.status !== 409) return [];
   const findings = (e.body as { findings?: BeaconFinding[] } | undefined)?.findings;
   return Array.isArray(findings) ? sortFindings(findings) : [];
+}
+
+export type BeaconFormField = "port" | "bind" | "endpointAddress" | "endpointPort";
+
+/**
+ * The form field a refused plan is about, so the sheet marks it beside the
+ * server's words: a blocking finding on the port (sshd, a sing-box inbound,
+ * the knock, WireGuard) or the bind address (the WireGuard overlay), else
+ * the field the server's 400 names (beaconSettingsFor, buildBeaconPlan).
+ * Undefined when the refusal is about the plan as a whole.
+ */
+export function refusalField(message: string | undefined, findings: readonly BeaconFinding[] = []): BeaconFormField | undefined {
+  const blocking = findings.filter((f) => f.severity === "block");
+  if (blocking.some((f) => f.code.startsWith("port_"))) return "port";
+  if (blocking.some((f) => f.code.startsWith("bind_"))) return "bind";
+  const m = (message ?? "").trim().toLowerCase();
+  if (/^bind\b|ipv4 address to bind/.test(m)) return "bind";
+  if (/^endpoint\b|name the endpoint/.test(m)) return "endpointAddress";
+  if (/^port\b/.test(m)) return "port";
+  return undefined;
 }
 
 /** How many addresses the NetGuard companion admits, counted once each. */

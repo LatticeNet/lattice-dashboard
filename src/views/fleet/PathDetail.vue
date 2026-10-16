@@ -15,14 +15,14 @@ import { RouterLink } from "vue-router";
 
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { Badge } from "@/components/ui/badge";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
-import { methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
 import { isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
 import {
   availability,
@@ -69,7 +69,7 @@ const props = defineProps<{
 const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
-const { whyText, stateLabel, windowLong, reasonText, reasonShort } = usePathsCopy();
+const { whyText, stateLabel, windowLong, reasonText, reasonShort, methodName } = usePathsCopy();
 /** Agent updates needs node:admin; without it the sheet names the version and links nowhere. */
 const canUpdateAgents = computed(() => useAuthStore().can("node:admin"));
 
@@ -178,6 +178,27 @@ const figuresCaption = computed(() => {
   if (zoom.value) return t("fleet.monitoring.paths.stats.zoomed", { from: formatDateTime(zoom.value.from * 1000), to: formatDateTime(zoom.value.to * 1000) });
   const hasDelta = props.path?.prev && (props.path.prev.p50Ms !== undefined || props.path.prev.loss !== undefined);
   return hasDelta ? t("fleet.monitoring.paths.stats.windowDelta", { window: windowLong(props.window) }) : t("fleet.monitoring.paths.stats.window", { window: windowLong(props.window) });
+});
+
+/**
+ * The window's figures span every method that measured it. After a switch
+ * (Auto moving a NAT node from TCP to Beacon, or back to ICMP after its
+ * 24 hour retry) the sheet says how much of the window the earlier method
+ * measured, so a loss from before the switch is not read as the current
+ * method's.
+ */
+const mixedNote = computed(() => {
+  const s = series.value;
+  const current = props.path?.method;
+  if (zoom.value || !s || !current) return "";
+  const mix = earlierMethods(s, current);
+  if (!mix) return "";
+  return t("fleet.monitoring.paths.stats.mixed", {
+    span: formatDuration(mix.seconds),
+    methods: mix.methods.map(methodName).join(", "),
+    method: methodName(current),
+    age: formatRelativeTime(mix.since * 1000),
+  });
 });
 
 const tone = computed<"success" | "destructive" | "muted">(() => (props.path?.state === "up" ? "success" : props.path?.state === "down" ? "destructive" : "muted"));
@@ -292,6 +313,7 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
           @update:model-value="(w) => emit('window', w)"
         />
       </div>
+      <p v-if="mixedNote" class="text-xs break-words text-muted-foreground" data-testid="path-stats-mixed">{{ mixedNote }}</p>
       <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
         <div v-for="f in figures" :key="f.key" class="min-w-0">
           <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>

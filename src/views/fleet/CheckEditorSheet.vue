@@ -247,6 +247,29 @@ const sourcePreview = computed(() => {
   });
 });
 
+/**
+ * With a beacon target read, how many of the sources its plan admits and how
+ * many wait for a change plan there, with every node as with chosen ones.
+ */
+const beaconAdmission = computed(() => {
+  if (!isBeacon.value || !nodeMode.value || !draft.value.targetNode || !targetBeacon.value) return undefined;
+  const ids = draft.value.assignAll ? props.nodes.map((n) => n.id) : draft.value.nodeIds;
+  let admitted = 0;
+  let waiting = 0;
+  for (const id of ids) {
+    if (id === draft.value.targetNode || !sourceSupport(nodesById.value.get(id), draft.value.type, m2a.value, currentAgent.value).ok) continue;
+    if (beaconWaiting(id)) waiting += 1;
+    else admitted += 1;
+  }
+  return { admitted, waiting };
+});
+
+/** Why the chosen beacon answers nobody now, in words. */
+const targetNote = computed(() => {
+  const r = nodeResolution.value;
+  return r?.state === "resolved" && r.note ? t(`fleet.monitoring.checks.editor.resolve.note.${r.note}`) : "";
+});
+
 /* ---- Rules ---- */
 
 const replaces = computed(() => !!props.monitor && identityChanged(props.monitor, draft.value));
@@ -531,6 +554,35 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             </li>
             <li v-if="sourcePreview.length > PREVIEW_MAX" class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.target.previewMore', { n: sourcePreview.length - PREVIEW_MAX }) }}</li>
           </ul>
+          <!-- A chosen beacon that answers nobody now: the server saves the check, and its paths read unknown until the node changes. -->
+          <p v-if="targetNote" role="status" class="text-xs break-words text-warning-text" data-testid="target-note">
+            {{ $t('fleet.monitoring.checks.editor.target.noted', { name: targetNode?.name || draft.targetNode, note: targetNote }) }}
+            <RouterLink
+              :to="{ name: 'node-detail', params: { id: draft.targetNode }, hash: '#node-beacon' }"
+              class="ms-1 font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+            >{{ $t('fleet.monitoring.checks.editor.target.openTargetBeacon') }}</RouterLink>
+          </p>
+          <!-- Which sources the target's beacon plan admits, with every node as with chosen ones (D12: the rest wait for a change plan there). -->
+          <div
+            v-if="beaconAdmission && (draft.assignAll || beaconAdmission.waiting > 0)"
+            :class="cn('rounded-md px-2.5 py-2 text-xs', beaconAdmission.waiting > 0 ? 'bg-warning/10 text-warning-text' : 'bg-muted/40 text-muted-foreground')"
+            role="status"
+            data-testid="beacon-admission"
+          >
+            <p class="break-words">
+              {{
+                beaconAdmission.waiting > 0
+                  ? $t('fleet.monitoring.checks.editor.target.admissionWaiting', { node: targetNode?.name || draft.targetNode, admitted: beaconAdmission.admitted, n: beaconAdmission.waiting }, beaconAdmission.waiting)
+                  : $t('fleet.monitoring.checks.editor.target.admissionAll', { node: targetNode?.name || draft.targetNode, n: beaconAdmission.admitted }, beaconAdmission.admitted)
+              }}
+            </p>
+            <RouterLink
+              v-if="beaconAdmission.waiting > 0"
+              :to="{ name: 'node-detail', params: { id: draft.targetNode }, hash: '#node-beacon' }"
+              class="mt-1 inline-block font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              data-testid="beacon-admission-open"
+            >{{ $t('fleet.monitoring.checks.editor.target.openTargetBeacon') }}</RouterLink>
+          </div>
         </template>
         <!-- A node target this session cannot list nodes for: shown, not editable. -->
         <p v-else-if="usesNodeTarget(draft) && monitor?.target_node" class="font-mono text-xs break-all" data-testid="target-node-fixed">

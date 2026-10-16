@@ -16,6 +16,8 @@ import {
   companionAllowCount,
   defaultBind,
   beaconForbidden,
+  beaconTargetBlock,
+  refusalField,
   companionApprovalToRead,
   companionOutcome,
   defaultEndpointAddress,
@@ -370,4 +372,30 @@ test("a reachability check is known by its manager or its id, and is not a path"
   assert.equal(isReachabilityCheck({ monitor_id: "mon_beaconr_jp" }), true);
   assert.equal(isReachabilityCheck({ id: "mon_latb_jp", managed_by: "latency" }), false);
   assert.equal(isReachabilityCheck(undefined), false);
+});
+
+test("a target's beacon that no plan can fix is read from its agent's report, in the server's order", () => {
+  assert.equal(beaconTargetBlock({ beacon: { responder: true, refusal: "refused_by_node", state: "refused" } }), "refused_by_node");
+  assert.equal(beaconTargetBlock({ beacon: undefined }), "agent_too_old", "an agent before M2b reports nothing");
+  assert.equal(beaconTargetBlock({ beacon: { responder: false, state: "off" } }), "agent_too_old");
+  assert.equal(beaconTargetBlock({ beacon: { responder: true, state: "bind_failed" } }), "beacon_not_listening");
+  assert.equal(beaconTargetBlock({ beacon: { responder: true, state: "circuit_open" } }), "beacon_not_listening");
+  assert.equal(beaconTargetBlock({ beacon: { responder: true, state: "listening" } }), undefined);
+  assert.equal(beaconTargetBlock({ beacon: { responder: true, state: "off" } }), undefined, "a beacon still opening waits, it is not blocked");
+});
+
+test("a refusal marks the field it is about, from a blocking finding or the server's words", () => {
+  const block = (code: string) => [{ code, severity: "block", message: "" }];
+  assert.equal(refusalField("plan blocked by lint findings", block("port_sshd")), "port");
+  assert.equal(refusalField("plan blocked by lint findings", block("port_singbox_inbound")), "port");
+  assert.equal(refusalField("plan blocked by lint findings", block("bind_wireguard")), "bind");
+  assert.equal(refusalField("plan blocked", [{ code: "port_sshd", severity: "warn", message: "" }]), undefined, "a warning blocks nothing");
+  assert.equal(refusalField("endpoint 198.51.100.40:50231 is not one of the node's addresses (its public IPv4, its primary interface address or a provider edge its lines declare)"), "endpointAddress");
+  assert.equal(refusalField("endpoint: beacon: not an IPv4 literal"), "endpointAddress");
+  assert.equal(refusalField("the node has no public IPv4 to advertise; name the endpoint (address:port)"), "endpointAddress");
+  assert.equal(refusalField("bind: beacon: address refused"), "bind");
+  assert.equal(refusalField("the node reports no IPv4 address to bind; name one with bind"), "bind");
+  assert.equal(refusalField("port must be 1024 to 65535"), "port");
+  assert.equal(refusalField("the node's beacon is already enabled; plan a change instead"), undefined, "about the plan as a whole");
+  assert.equal(refusalField(undefined), undefined);
 });

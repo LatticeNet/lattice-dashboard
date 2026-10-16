@@ -74,7 +74,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; saved: [plan: LatencyProbePlan]; reload: [] }>();
 
 const { t } = useI18n();
-const { refusalText } = usePathsCopy();
+const { refusalText, reasonShort } = usePathsCopy();
 const methods = computed(() => pathSetMethods(!!props.m2a && !!props.m2b));
 const pinsFor = (source: string) => sourcePins(!!props.m2a && !!props.m2b, draft.value.sourceMethods[source]);
 /** Auto reads differently once Beacon is in it. */
@@ -149,9 +149,16 @@ const unknownPaths = computed(() => methodPreview.value.reduce((sum, row) => sum
 
 /** The targets a source cannot reach, by name: the first eight, then a count. */
 function unreachedNames(row: SourceMethodPreview): string {
-  const names = row.noneTargets.slice(0, 8).map(nameOf);
-  const more = row.noneTargets.length - names.length;
-  return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
+  // A target a plan cannot fix says why (no beacon, refused, too old, not listening), once per reason.
+  const shown = row.noneTargets.slice(0, 8);
+  const groups = new Map<string, string[]>();
+  for (const id of shown) {
+    const reason = row.noneReasons[id] ?? "";
+    groups.set(reason, [...(groups.get(reason) ?? []), nameOf(id)]);
+  }
+  const text = [...groups].map(([reason, names]) => (reason ? `${names.join(", ")} (${reasonShort(reason)})` : names.join(", "))).join("; ");
+  const more = row.noneTargets.length - shown.length;
+  return more > 0 ? `${text} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : text;
 }
 
 /**

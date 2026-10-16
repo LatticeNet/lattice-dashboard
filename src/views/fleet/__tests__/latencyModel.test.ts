@@ -379,8 +379,8 @@ test("the preview follows D12's order: Beacon where the plan admits the source, 
   };
   const nodes = [
     { id: "sh", name: "cd-hs-sh", online: true, public_ip: "203.0.113.1", probe_methods: ["beacon", "http", "icmp", "tcp"] },
-    { id: "jp", name: "gomami-jp", online: true, public_ip: "203.0.113.3" },
-    { id: "de", name: "de-fsn", online: true, public_ip: "203.0.113.9" },
+    { id: "jp", name: "gomami-jp", online: true, public_ip: "203.0.113.3", beacon: { responder: true, state: "listening" as const } },
+    { id: "de", name: "de-fsn", online: true, public_ip: "203.0.113.9", beacon: { responder: true, state: "listening" as const } },
     { id: "sg", name: "sg-1", online: true, public_ip: "203.0.113.8" },
     { id: "us", name: "us-nat", online: true },
     { id: "hk", name: "hk-relay", online: true },
@@ -392,6 +392,15 @@ test("the preview follows D12's order: Beacon where the plan admits the source, 
   const pinned = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, nodes)[0]!;
   // jp admits sh; de has a beacon that has not admitted sh yet; the rest have no beacon.
   assert.deepEqual([pinned.beacon, pinned.beaconWaiting, pinned.none, pinned.waitingTargets], [1, 1, 3, ["de"]]);
+  assert.deepEqual(pinned.noneReasons, { sg: "beacon_not_enabled", us: "beacon_not_enabled", hk: "beacon_not_enabled" }, "a target without a beacon says so");
+  // A beacon that cannot answer is not waiting on a plan: no plan fixes it, so it is not reached, with why.
+  const withDe = (beacon?: { responder?: boolean; refusal?: string; state?: string }) => nodes.map((n) => (n.id === "de" ? { ...n, beacon } : n));
+  const refused = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, withDe({ responder: true, refusal: "refused_by_node", state: "listening" as const }))[0]!;
+  assert.deepEqual([refused.beaconWaiting, refused.none, refused.noneReasons.de], [0, 4, "refused_by_node"]);
+  const tooOld = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, withDe(undefined))[0]!;
+  assert.equal(tooOld.noneReasons.de, "agent_too_old", "an agent that reports no beacon has no responder");
+  const down = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, withDe({ responder: true, state: "bind_failed" as const }))[0]!;
+  assert.equal(down.noneReasons.de, "beacon_not_listening");
 
   const old = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, [{ ...nodes[0]!, probe_methods: ["http", "icmp", "tcp"] }, ...nodes.slice(1)])[0]!;
   assert.deepEqual([old.refusal, old.refusalMethod, old.beacon, old.none], ["agent_too_old", "beacon", 0, 5]);

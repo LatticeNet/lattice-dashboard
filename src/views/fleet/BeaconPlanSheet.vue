@@ -14,16 +14,17 @@
  * plan text with its SHA-256. A plan a finding blocks (409) is refused with
  * the findings, in the form.
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { FilePlus2, RefreshCw, ShieldAlert } from "lucide-vue-next";
 
-import { api, type BeaconFinding, type BeaconPlanAction, type BeaconPlanResponse, type BeaconView, type Node } from "@/lib/api";
+import { api, unwrap, type BeaconFinding, type BeaconPlanAction, type BeaconPlanResponse, type BeaconView, type Node } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import ScriptView from "@/components/common/ScriptView.vue";
@@ -47,11 +48,13 @@ import {
   formFor,
   plannedSettings,
   readBeaconPlan,
+  refusalField,
   refusedFindings,
   settingsRows,
   shortHash,
   sortFindings,
   type BeaconForm,
+  type BeaconFormField,
   type BeaconFormProblem,
   type EndpointAddress,
 } from "./beaconModel";
@@ -71,7 +74,14 @@ const form = ref<BeaconForm>(formFor(props.action, props.view, props.node));
 const stage = ref<"form" | "filed">("form");
 const pending = ref(false);
 const refusal = ref<string>();
+/** The field a refusal is about, marked beside the server's words. */
+const refusalAt = ref<BeaconFormField>();
 const blocked = ref<BeaconFinding[]>([]);
+/** The form as it opened, so closing over typed edits asks first, as the check editor does. */
+const opened = ref("");
+/** "Another address" says what is missing only once something was typed there. */
+const otherTouched = ref(false);
+const discardOpen = ref(false);
 const filed = ref<BeaconPlanResponse>();
 const digest = ref("");
 const showText = ref(false);
@@ -81,8 +91,11 @@ watch(
   (open) => {
     if (!open) return;
     form.value = formFor(props.action, props.view, props.node);
+    opened.value = JSON.stringify(form.value);
+    otherTouched.value = false;
     stage.value = "form";
     refusal.value = undefined;
+    refusalAt.value = undefined;
     blocked.value = [];
     filed.value = undefined;
     digest.value = "";
@@ -93,8 +106,10 @@ watch(
 // A refusal answers the form it was given; a changed form is another request.
 watch(form, () => {
   refusal.value = undefined;
+  refusalAt.value = undefined;
   blocked.value = [];
 }, { deep: true });
+const dirty = computed(() => stage.value === "form" && JSON.stringify(form.value) !== opened.value);
 
 const name = computed(() => props.node.name || props.node.id);
 const title = computed(() => (stage.value === "filed" ? t("fleet.monitoring.beacon.plan.filed.title") : t(`fleet.monitoring.beacon.plan.title.${props.action}`, { name: name.value })));
@@ -114,6 +129,21 @@ function problemText(p: BeaconFormProblem | undefined): string {
       return t(p.code === "needed" ? "fleet.monitoring.beacon.plan.problem.endpointPortNeeded" : "fleet.monitoring.beacon.plan.problem.endpointPort");
   }
 }
+
+/**
+ * The line under a field: what the form refuses, else that the server
+ * refused the plan over it (its words are in the body). An empty "Another
+ * address" says so only once something was typed there.
+ */
+function fieldError(field: BeaconFormField): string {
+  const p = problemOf(field);
+  const untouched = p?.field === "endpointAddress" && p.code === "missing" && form.value.endpointAddress === OTHER_ADDRESS && !otherTouched.value;
+  if (p && !untouched) return problemText(p);
+  return refusalAt.value === field ? t("fleet.monitoring.beacon.plan.refusedHere") : "";
+}
+/** The preview cannot say what opens, or where sources send, until the fields it depends on are fixed. */
+const opensUnknown = computed(() => !!problemOf("port") || !!problemOf("bind"));
+const sendUnknown = computed(() => !!problemOf("endpointAddress") || !!problemOf("endpointPort") || (!!problemOf("port") && !form.value.endpointPort.trim()));
 
 const isChange = computed(() => props.action === "change");
 const applied = computed(() => props.view.applied ?? undefined);
@@ -144,17 +174,22 @@ async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   pending.value = true;
   refusal.value = undefined;
+  refusalAt.value = undefined;
   blocked.value = [];
   let response: BeaconPlanResponse;
   try {
     response = await api.nodes.beacon.plan(buildBeaconPlanRequest(props.node, props.action, form.value, props.view));
   } catch (error) {
     const findings = refusedFindings(error);
+    const message = error instanceof Error ? error.message : String(error);
+    refusalAt.value = beaconForbidden(error) ? undefined : refusalField(message, findings);
     if (findings.length) blocked.value = findings;
     // D12: a plan names every source with its addresses, so a session that cannot read one of them is refused.
     else if (beaconForbidden(error)) refusal.value = t("fleet.monitoring.beacon.plan.forbidden");
-    else refusal.value = t("fleet.monitoring.beacon.plan.failed", { reason: error instanceof Error ? error.message : String(error) });
+    else refusal.value = t("fleet.monitoring.beacon.plan.failed", { reason: message });
     pending.value = false;
+    await nextTick();
+    document.querySelector("[data-refusal]")?.scrollIntoView({ block: "nearest" });
     return;
   }
   // The approval exists from here on: the sheet shows it even if the digest cannot be computed, so a second click never files another.
@@ -172,8 +207,39 @@ async function submit(): Promise<void> {
 
 function requestClose(): void {
   if (pending.value) return;
+  if (dirty.value) {
+    discardOpen.value = true;
+    return;
+  }
   emit("close");
 }
+
+function discard(): void {
+  discardOpen.value = false;
+  emit("close");
+}
+
+/* ---- What turning it off stops ---- */
+
+/** The Beacon checks that name this node: turning the beacon off leaves each of them unknown. */
+const stoppedChecks = ref<string[]>([]);
+watch(
+  () => props.open && props.action === "disable",
+  async (reading) => {
+    stoppedChecks.value = [];
+    if (!reading) return;
+    try {
+      const monitors = unwrap(await api.monitors.list(), "monitors");
+      stoppedChecks.value = monitors
+        .filter((m) => m.type === "beacon" && m.target_node === props.node.id && !m.managed_by)
+        .map((m) => m.name || m.id)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      // The line is left out; the plan says the rest.
+    }
+  },
+  { immediate: true },
+);
 
 /* ---- The filed plan ---- */
 
@@ -208,15 +274,15 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
               inputmode="numeric"
               class="font-mono"
               :placeholder="isChange && applied?.port ? String(applied.port) : view.suggested_port ? String(view.suggested_port) : $t('fleet.monitoring.beacon.plan.portRandom')"
-              :aria-invalid="!!problemOf('port') || undefined"
-              :aria-describedby="problemOf('port') ? 'beacon-port-error' : 'beacon-port-hint'"
+              :aria-invalid="!!fieldError('port') || undefined"
+              :aria-describedby="fieldError('port') ? 'beacon-port-error' : 'beacon-port-hint'"
             />
           </div>
           <p id="beacon-port-hint" class="text-xs text-muted-foreground">
             {{ $t('fleet.monitoring.beacon.plan.portHint', { min: BEACON_PORT_MIN, max: BEACON_PORT_MAX }) }}
             <template v-if="isChange && applied?.port">{{ $t('fleet.monitoring.beacon.plan.keepHint', { value: applied.port }) }}</template>
           </p>
-          <p v-if="problemOf('port')" id="beacon-port-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('port')) }}</p>
+          <p v-if="fieldError('port')" id="beacon-port-error" role="alert" class="text-xs text-destructive">{{ fieldError('port') }}</p>
 
           <div class="grid max-w-72 gap-1.5">
             <Label for="beacon-bind">{{ $t('fleet.monitoring.beacon.plan.bind') }}</Label>
@@ -226,15 +292,15 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
               class="font-mono"
               spellcheck="false"
               :placeholder="isChange ? applied?.bind : fallbackBind"
-              :aria-invalid="!!problemOf('bind') || undefined"
-              :aria-describedby="problemOf('bind') ? 'beacon-bind-error' : 'beacon-bind-hint'"
+              :aria-invalid="!!fieldError('bind') || undefined"
+              :aria-describedby="fieldError('bind') ? 'beacon-bind-error' : 'beacon-bind-hint'"
             />
           </div>
           <p id="beacon-bind-hint" class="text-xs text-muted-foreground">
             <template v-if="isChange && applied?.bind">{{ $t('fleet.monitoring.beacon.plan.keepHint', { value: applied.bind }) }}</template>
             <template v-else>{{ fallbackBind ? $t('fleet.monitoring.beacon.plan.bindHint', { address: fallbackBind }) : $t('fleet.monitoring.beacon.plan.bindHintNone') }}</template>
           </p>
-          <p v-if="problemOf('bind')" id="beacon-bind-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('bind')) }}</p>
+          <p v-if="fieldError('bind')" id="beacon-bind-error" role="alert" class="text-xs text-destructive">{{ fieldError('bind') }}</p>
         </fieldset>
 
         <fieldset :class="SECTION">
@@ -245,7 +311,8 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
               id="beacon-endpoint-address"
               v-model="form.endpointAddress"
               class="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm tabular-nums shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11"
-              :aria-describedby="form.endpointAddress === OTHER_ADDRESS ? undefined : 'beacon-endpoint-address-hint'"
+              :aria-invalid="(form.endpointAddress !== OTHER_ADDRESS && !!fieldError('endpointAddress')) || undefined"
+              :aria-describedby="form.endpointAddress === OTHER_ADDRESS ? undefined : fieldError('endpointAddress') ? 'beacon-endpoint-address-error' : 'beacon-endpoint-address-hint'"
               data-testid="beacon-endpoint-address"
             >
               <option v-for="a in addresses" :key="a.address" :value="a.address">{{ addressLabel(a) }}</option>
@@ -255,6 +322,7 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
           <p v-if="form.endpointAddress !== OTHER_ADDRESS" id="beacon-endpoint-address-hint" :class="cn('text-xs', chosen?.kind === 'current' ? 'text-warning-text' : 'text-muted-foreground')">
             {{ chosen?.kind === 'current' ? $t('fleet.monitoring.beacon.plan.endpointCurrentHint') : $t('fleet.monitoring.beacon.plan.endpointAddressHint') }}
           </p>
+          <p v-if="form.endpointAddress !== OTHER_ADDRESS && fieldError('endpointAddress')" id="beacon-endpoint-address-error" role="alert" class="text-xs text-destructive">{{ fieldError('endpointAddress') }}</p>
 
           <template v-if="form.endpointAddress === OTHER_ADDRESS">
             <div class="grid max-w-72 gap-1.5">
@@ -266,13 +334,14 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
                 spellcheck="false"
                 inputmode="decimal"
                 placeholder="198.51.100.40"
-                :aria-invalid="!!problemOf('endpointAddress') || undefined"
-                :aria-describedby="problemOf('endpointAddress') ? 'beacon-endpoint-other-error' : 'beacon-endpoint-other-hint'"
+                :aria-invalid="!!fieldError('endpointAddress') || undefined"
+                :aria-describedby="fieldError('endpointAddress') ? 'beacon-endpoint-other-error' : 'beacon-endpoint-other-hint'"
                 data-testid="beacon-endpoint-other"
+                @input="otherTouched = true"
               />
             </div>
             <p id="beacon-endpoint-other-hint" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.endpointOtherHint') }}</p>
-            <p v-if="problemOf('endpointAddress')" id="beacon-endpoint-other-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpointAddress')) }}</p>
+            <p v-if="fieldError('endpointAddress')" id="beacon-endpoint-other-error" role="alert" class="text-xs text-destructive">{{ fieldError('endpointAddress') }}</p>
           </template>
 
           <div class="grid max-w-48 gap-1.5">
@@ -283,13 +352,13 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
               inputmode="numeric"
               class="font-mono"
               :placeholder="listenPortText"
-              :aria-invalid="!!problemOf('endpointPort') || undefined"
-              :aria-describedby="problemOf('endpointPort') ? 'beacon-endpoint-port-error' : 'beacon-endpoint-port-hint'"
+              :aria-invalid="!!fieldError('endpointPort') || undefined"
+              :aria-describedby="fieldError('endpointPort') ? 'beacon-endpoint-port-error' : 'beacon-endpoint-port-hint'"
               data-testid="beacon-endpoint-port"
             />
           </div>
           <p id="beacon-endpoint-port-hint" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.endpointPortHint') }}</p>
-          <p v-if="problemOf('endpointPort')" id="beacon-endpoint-port-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpointPort')) }}</p>
+          <p v-if="fieldError('endpointPort')" id="beacon-endpoint-port-error" role="alert" class="text-xs text-destructive">{{ fieldError('endpointPort') }}</p>
         </fieldset>
       </template>
 
@@ -300,25 +369,37 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
           <template v-if="action === 'disable'">
             <li>{{ $t('fleet.monitoring.beacon.plan.asks.closes', { port: applied?.port ?? '' }) }}</li>
             <li v-if="view.exposure === 'netguard'">{{ $t('fleet.monitoring.beacon.plan.asks.closesNetguard') }}</li>
+            <!-- What stops, by name: the sources using it now and the Beacon checks to this node. -->
+            <li v-if="keySources.length" class="break-words" data-testid="beacon-plan-stops-sources">{{ $t('fleet.monitoring.beacon.plan.asks.closesSources', { names: keySources.join(', ') }, keySources.length) }}</li>
+            <li v-if="stoppedChecks.length" class="break-words text-warning-text" data-testid="beacon-plan-stops-checks">{{ $t('fleet.monitoring.beacon.plan.asks.closesChecks', { names: stoppedChecks.join(', ') }, stoppedChecks.length) }}</li>
+            <li v-if="!publicIp" class="break-words text-warning-text">{{ $t('fleet.monitoring.beacon.plan.asks.closesNoIcmp') }}</li>
           </template>
           <template v-else>
-            <li v-if="isChange && changed.length === 0">{{ $t('fleet.monitoring.beacon.plan.asks.resources') }}</li>
-            <li v-if="planned.port && planned.bind" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.opens', { port: planned.port, bind: planned.bind }) }}</li>
+            <li v-if="isChange && changed.length === 0 && !planned.problems.length">{{ $t('fleet.monitoring.beacon.plan.asks.resources') }}</li>
+            <!-- A field the form refuses leaves its line saying so, never the applied value or nothing. -->
+            <li v-if="opensUnknown" class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.fixOpens') }}</li>
+            <li v-else-if="planned.port && planned.bind" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.opens', { port: planned.port, bind: planned.bind }) }}</li>
             <li v-else-if="planned.portRandom && planned.bind" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.opensRandom', { bind: planned.bind }) }}</li>
-            <li v-if="planned.endpoint" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.send', { endpoint: planned.endpoint }) }}</li>
+            <li v-if="sendUnknown" class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.fixSend') }}</li>
+            <li v-else-if="planned.endpoint" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.send', { endpoint: planned.endpoint }) }}</li>
             <li v-else-if="planned.endpointDefault && publicIp" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sendRandom', { ip: publicIp }) }}</li>
             <li v-if="keySources.length" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sources', { names: keySources.join(', ') }, keySources.length) }}</li>
             <li v-else class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.noSources') }}</li>
             <li v-if="view.exposure === 'netguard'">{{ $t('fleet.monitoring.beacon.plan.asks.netguard') }}</li>
             <li v-else-if="view.exposure === 'internet'" class="text-warning-text">{{ $t('fleet.monitoring.beacon.plan.asks.internet') }}</li>
-            <li v-else class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.exposureUnknown') }}</li>
+            <li v-else class="text-warning-text">{{ $t('fleet.monitoring.beacon.plan.asks.exposureUnknown') }}</li>
             <li class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.limits', { rate: limits.source_rate_per_second, interval: limits.min_interval_sec, pps: limits.packets_per_second_max }) }}</li>
           </template>
           <li class="font-medium">{{ $t('fleet.monitoring.beacon.plan.asks.unchanged') }}</li>
         </ul>
       </fieldset>
 
-      <div v-if="blocked.length" :class="cn(NOTE, 'space-y-1.5 border border-destructive/40 bg-destructive/5')" role="alert" data-testid="beacon-plan-blocked">
+      <!-- Every refusal lands here, one place, scrolled into view; the field it names is marked above. -->
+      <p v-if="refusal" :class="cn(NOTE, 'flex scroll-mt-4 items-start gap-1.5 border border-destructive/40 bg-destructive/5 text-destructive')" role="alert" data-refusal data-testid="beacon-plan-refused">
+        <ShieldAlert class="mt-px size-4 shrink-0" aria-hidden="true" />
+        <span class="min-w-0 break-words">{{ refusal }}</span>
+      </p>
+      <div v-if="blocked.length" :class="cn(NOTE, 'scroll-mt-4 space-y-1.5 border border-destructive/40 bg-destructive/5')" role="alert" data-refusal data-testid="beacon-plan-blocked">
         <p class="flex items-center gap-1.5 font-medium text-destructive">
           <ShieldAlert class="size-4 shrink-0" aria-hidden="true" />
           {{ $t('fleet.monitoring.beacon.plan.blocked') }}
@@ -421,7 +502,6 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
 
     <template #actions>
       <template v-if="stage === 'form'">
-        <p v-if="refusal" role="alert" class="basis-full text-xs break-words text-destructive" data-testid="beacon-plan-refused">{{ refusal }}</p>
         <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
         <Button type="submit" form="beacon-plan" size="sm" :variant="action === 'disable' ? 'destructive' : 'default'" :disabled="!canSubmit" data-testid="beacon-plan-submit">
           <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
@@ -437,4 +517,12 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
       </template>
     </template>
   </ObjectSheet>
+  <ConfirmDialog
+    v-model:open="discardOpen"
+    :title="$t('fleet.monitoring.beacon.plan.discard.title')"
+    :description="$t('fleet.monitoring.beacon.plan.discard.description')"
+    :confirm-label="$t('fleet.monitoring.beacon.plan.discard.confirm')"
+    :cancel-label="$t('fleet.monitoring.beacon.plan.discard.keep')"
+    @confirm="discard"
+  />
 </template>

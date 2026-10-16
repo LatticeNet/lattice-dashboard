@@ -23,6 +23,8 @@ interface Held {
   rotatedAt: string;
   pendingApprovalId?: string;
   version: number;
+  /** The port the first plan drew, kept as the server keeps SuggestedPort. */
+  drawnPort?: number;
 }
 const held = new Map<string, Held>();
 
@@ -91,7 +93,7 @@ export function beaconViewFor(node: Node, nodes: readonly Node[], current: reado
     state: "off",
     agent: facts,
     sources: [],
-    suggested_port: suggestedPort(shape),
+    suggested_port: suggestedPort(shape) ?? h.drawnPort,
     version: h.version,
     pending_approval_id: h.pendingApprovalId,
   };
@@ -148,7 +150,9 @@ export async function planBeacon(input: BeaconPlanRequest, node: Node, nodes: re
   if (input.action === "disable") {
     settings = { ...before!, enabled: false };
   } else {
-    const port = input.port || before?.port || suggestedPort(shape) || drawPort(node);
+    const port = input.port || before?.port || suggestedPort(shape) || h.drawnPort || drawPort(node);
+    // The first plan draws the port and the view suggests it from then on (beaconSuggestedPort).
+    if (!suggestedPort(shape) && !h.drawnPort) h.drawnPort = port;
     const bind = input.bind?.trim() || before?.bind || shape.bind || node.internal_ip || node.public_ip || "";
     if (input.bind && !parseBeaconIPv4(input.bind.trim()).ok) return { ok: false, status: 400, message: `bind: beacon: not an IPv4 literal: "${input.bind}"` };
     const followed = before && port !== before.port && before.endpoint === `${node.public_ip}:${before.port}`;
