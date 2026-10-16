@@ -1589,7 +1589,9 @@ export default {
           interval: "Every (seconds)",
           timeout: "Timeout (seconds)",
           alertOff: "Do not alert",
-          alertDown: "Alert when a source fails twice in a row, and when it recovers",
+          alertDown: "Alert, and announce the recovery, when a source fails",
+          alertAfter: "Failed runs in a row before an alert",
+          alertRuns: "times in a row",
           nameHint: "Leave it empty to use the suggestion.",
           unchanged: "No changes",
           save: "Save",
@@ -1606,6 +1608,7 @@ export default {
             timeoutVsInterval: "Timeout must be shorter than the interval.",
             sources: "Choose at least one node, or every node.",
             threshold: "Days before expiry must be from 1 to {days}.",
+            alertAfter: "Failed runs before an alert must be from 1 to {after}.",
           },
           replace: {
             title: "Start a new check?",

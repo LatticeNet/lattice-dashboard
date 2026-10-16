@@ -31,6 +31,9 @@ export const CHECK_KINDS: readonly MonitorType[] = ["tcp", "http", "tls"];
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
 export const CHECK_MAX_TIMEOUT_SEC = 300;
+/** lattice-sdk MonitorAlertAfterDefault and MonitorAlertAfterMax. */
+export const ALERT_DEFAULT_AFTER = 2;
+export const ALERT_MAX_AFTER = 20;
 
 export type CheckGroup = "operator" | "pathset";
 export const CHECK_GROUP_ORDER: readonly CheckGroup[] = ["operator", "pathset"];
@@ -59,8 +62,9 @@ export interface CheckDraft {
   assignAll: boolean;
   nodeIds: string[];
   pausedNodeIds: string[];
-  /** down pages when a source fails twice in a row; off never pages. */
+  /** down pages when a source fails `alertAfter` times in a row; off never pages. */
   alert: "off" | "down";
+  alertAfter: number;
 }
 
 export function emptyDraft(type: MonitorType = "http"): CheckDraft {
@@ -76,6 +80,7 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     nodeIds: [],
     pausedNodeIds: [],
     alert: "down",
+    alertAfter: ALERT_DEFAULT_AFTER,
   };
 }
 
@@ -96,6 +101,7 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     nodeIds: uniqueSorted(monitor.node_ids),
     pausedNodeIds: uniqueSorted(monitor.paused_node_ids),
     alert: monitor.alert === "off" ? "off" : "down",
+    alertAfter: monitor.alert_after && monitor.alert_after > 0 ? monitor.alert_after : ALERT_DEFAULT_AFTER,
   };
 }
 
@@ -115,7 +121,7 @@ export function suggestName(type: string, target: string): string {
   return `${type.toUpperCase()} ${shown}`.slice(0, 80);
 }
 
-export type DraftProblem = "target" | "interval" | "timeout" | "timeoutVsInterval" | "sources" | "threshold";
+export type DraftProblem = "target" | "interval" | "timeout" | "timeoutVsInterval" | "sources" | "threshold" | "alertAfter";
 
 export function draftProblems(draft: CheckDraft): DraftProblem[] {
   const out: DraftProblem[] = [];
@@ -130,6 +136,10 @@ export function draftProblems(draft: CheckDraft): DraftProblem[] {
     if (!Number.isInteger(days) || days < 1 || days > TLS_MAX_THRESHOLD_DAYS) out.push("threshold");
   } else if (!draft.assignAll && draft.nodeIds.length === 0) {
     out.push("sources");
+  }
+  if (draft.alert === "down") {
+    const after = Number(draft.alertAfter);
+    if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
   }
   return out;
 }
@@ -174,12 +184,13 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft): MonitorUpd
   }
   const alert: MonitorAlertPolicy = draft.alert;
   if (alert !== before.alert) body.alert = alert;
+  if (alert === "down" && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
   return body;
 }
 
 /** The create body for a new check (or the replacement of one whose method or target changed). */
-export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreateInput & { alert?: MonitorAlertPolicy } {
-  const base: MonitorCreateInput & { alert?: MonitorAlertPolicy } = {
+export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreateInput & { alert?: MonitorAlertPolicy; alert_after?: number } {
+  const base: MonitorCreateInput & { alert?: MonitorAlertPolicy; alert_after?: number } = {
     name: draft.name.trim() || suggestName(draft.type, draft.target),
     type: draft.type,
     target: draft.target.trim(),
@@ -193,7 +204,10 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreat
     base.assign_all = draft.assignAll;
     if (!draft.assignAll) base.node_ids = uniqueSorted(draft.nodeIds);
   }
-  if (withAlert) base.alert = draft.alert;
+  if (withAlert) {
+    base.alert = draft.alert;
+    if (draft.alert === "down") base.alert_after = Number(draft.alertAfter);
+  }
   return base;
 }
 

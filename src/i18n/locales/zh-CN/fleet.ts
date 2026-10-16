@@ -1573,7 +1573,9 @@ export default {
           interval: "间隔（秒）",
           timeout: "超时（秒）",
           alertOff: "不告警",
-          alertDown: "某个源节点连续两次失败时告警，恢复时通知",
+          alertDown: "告警并在恢复时通知：某个源节点连续失败",
+          alertAfter: "告警前连续失败的次数",
+          alertRuns: "次",
           nameHint: "留空则使用建议的名称。",
           unchanged: "没有改动",
           save: "保存",
@@ -1590,6 +1592,7 @@ export default {
             timeoutVsInterval: "超时必须短于间隔。",
             sources: "至少选一个节点，或者选所有节点。",
             threshold: "到期前天数必须在 1 到 {days} 之间。",
+            alertAfter: "告警前的失败次数必须在 1 到 {after} 之间。",
           },
           replace: {
             title: "新建一个检查？",

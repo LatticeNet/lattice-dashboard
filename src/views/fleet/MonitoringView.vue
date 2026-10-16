@@ -274,16 +274,57 @@ const editorType = ref<MonitorType | undefined>();
 const pathSetOpen = ref(false);
 const retentionOpen = ref(false);
 
+/**
+ * An editor never opens over another sheet: below 768 px both are modal, and
+ * two modal sheets at once fight over focus and the page (reka-ui's layers
+ * loop). The check or path sheet it was opened from closes first, after its
+ * exit, and comes back when the editor closes without saving.
+ */
+let returnTo: { open?: string; path?: string } | null = null;
+const SHEET_EXIT_MS = 220;
+
+function fromSheet(then: () => void): void {
+  const query = owned.query();
+  const open = typeof query.open === "string" ? query.open : undefined;
+  const path = typeof query.path === "string" ? query.path : undefined;
+  if (!open && !path) {
+    returnTo = null;
+    then();
+    return;
+  }
+  returnTo = { open, path };
+  owned.replace({ ...query, open: undefined, path: undefined });
+  window.setTimeout(then, SHEET_EXIT_MS);
+}
+
+function backToSheet(): void {
+  const back = returnTo;
+  returnTo = null;
+  if (back) window.setTimeout(() => owned.replace({ ...owned.query(), open: back.open, path: back.path }), SHEET_EXIT_MS);
+}
+
 function openCreate(type?: MonitorType): void {
-  editorMonitor.value = undefined;
-  editorType.value = type;
-  editorOpen.value = true;
+  fromSheet(() => {
+    editorMonitor.value = undefined;
+    editorType.value = type;
+    editorOpen.value = true;
+  });
 }
 
 function openEdit(monitor: MonitorView): void {
-  editorMonitor.value = monitor;
-  editorType.value = undefined;
-  editorOpen.value = true;
+  fromSheet(() => {
+    editorMonitor.value = monitor;
+    editorType.value = undefined;
+    editorOpen.value = true;
+  });
+}
+
+function openPathSet(): void {
+  fromSheet(() => (pathSetOpen.value = true));
+}
+
+function openRetention(): void {
+  fromSheet(() => (retentionOpen.value = true));
 }
 
 function openCheck(id: string): void {
@@ -292,6 +333,8 @@ function openCheck(id: string): void {
 
 /** The new or edited check opens once the list holds it, so its sheet never says it is gone. */
 async function onCheckSaved(id: string): Promise<void> {
+  // The saved check opens instead of the sheet the editor came from.
+  returnTo = null;
   await monitorsQuery.refresh();
   openCheck(id);
   data.refresh();
@@ -324,7 +367,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         <p v-if="topologyNote" class="text-xs text-muted-foreground" data-testid="topology-window-note">{{ topologyNote }}</p>
       </template>
       <template v-if="canReadMonitors" #actions>
-        <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="pathSetOpen = true">
+        <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="openPathSet">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
         </Button>
@@ -356,7 +399,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :failure-of="failureOf"
         :node-seen="nodeSeen"
         :no-sources="noSources"
-        @path-set="pathSetOpen = true"
+        @path-set="openPathSet"
         @create-check="openCreate()"
       />
 
@@ -370,7 +413,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :offered="data.offered.value"
         :failure-of="failureOf"
         :no-sources="noSources"
-        @path-set="pathSetOpen = true"
+        @path-set="openPathSet"
         @create-check="openCreate()"
         @open-check="openCheck"
         @changed="refreshAll"
@@ -389,8 +432,8 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         @window="(w) => (windowParam = w)"
         @create="openCreate"
         @edit="openEdit"
-        @path-set="pathSetOpen = true"
-        @retention="retentionOpen = true"
+        @path-set="openPathSet"
+        @retention="openRetention"
         @changed="refreshAll"
       />
 
@@ -426,7 +469,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :nodes="nodes"
       :can-read-nodes="canReadNodes"
       :with-alert="data.source.value === 'paths'"
-      @close="editorOpen = false"
+      @close="editorOpen = false; backToSheet()"
       @saved="onCheckSaved"
       @reload="refreshAll"
     />
@@ -435,7 +478,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :open="pathSetOpen"
       :plan="plan"
       :nodes="nodes"
-      @close="pathSetOpen = false"
+      @close="pathSetOpen = false; backToSheet()"
       @saved="(next) => { data.planQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"
     />
@@ -445,7 +488,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :settings="data.settings.value"
       :can-admin="canAdminMonitors"
       :shortest-interval-sec="shortestIntervalSec"
-      @close="retentionOpen = false"
+      @close="retentionOpen = false; backToSheet()"
       @saved="(next) => { data.settingsQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"
     />

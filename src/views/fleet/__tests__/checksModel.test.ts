@@ -35,6 +35,7 @@ function monitor(over: Partial<MonitorView> = {}): MonitorView {
     enabled: true,
     version: 4,
     alert: "down",
+    alert_after: 2,
     ...over,
   };
 }
@@ -56,7 +57,7 @@ test("names: suggested from the method and the target until the operator types o
   assert.equal(suggestName("tls", "  "), "");
 });
 
-test("problems: target shape, cadence bounds, timeout under interval, sources and threshold", () => {
+test("problems: target shape, cadence bounds, timeout under interval, sources, threshold and alert count", () => {
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()) }), []);
   assert.deepEqual(draftProblems({ ...emptyDraft("tcp"), target: "https://x" }), ["target"]);
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), intervalSec: 5 }), ["interval"]);
@@ -64,6 +65,10 @@ test("problems: target shape, cadence bounds, timeout under interval, sources an
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), timeoutSec: 0 }), ["timeout"]);
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), nodeIds: [] }), ["sources"]);
   assert.deepEqual(draftProblems({ ...emptyDraft("tls"), target: "example.com:443", thresholdDays: 0 }), ["threshold"]);
+  assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alertAfter: 0 }), ["alertAfter"]);
+  assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alertAfter: 21 }), ["alertAfter"]);
+  assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alert: "off", alertAfter: 0 }), [], "the count matters only when the check alerts");
+  assert.equal(draftFromMonitor(monitor({ alert_after: undefined })).alertAfter, 2, "absent reads as the server's default");
 });
 
 test("edit: only changed fields with the version; kind and target never ride an edit", () => {
@@ -93,7 +98,8 @@ test("create: tls carries a threshold and no nodes; agent checks carry their sou
   const tls = buildCreate({ ...emptyDraft("tls"), target: "example.com:443" }, false);
   assert.deepEqual(tls, { name: "TLS example.com:443", type: "tls", target: "example.com:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false });
   const http = buildCreate({ ...draftFromMonitor(monitor()), nodeIds: ["hk", "sh"] }, true);
-  assert.deepEqual(http, { name: "Status page", type: "http", target: "https://status.example.com/health", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: ["hk", "sh"], alert: "down" });
+  assert.deepEqual(http, { name: "Status page", type: "http", target: "https://status.example.com/health", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: ["hk", "sh"], alert: "down", alert_after: 2 });
+  assert.equal(buildUpdate(monitor(), { ...draftFromMonitor(monitor()), alertAfter: 3 }).alert_after, 3);
 });
 
 test("a replacement keeps the pauses of the sources it still runs on", () => {

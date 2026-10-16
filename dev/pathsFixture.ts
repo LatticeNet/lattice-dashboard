@@ -199,7 +199,7 @@ export function operatorChecks(): MonitorView[] {
     node_ids: STATUS_SOURCES(),
     enabled: true,
     created_at: iso(-40 * 24 * HOUR),
-    ...(old ? {} : { version: 3, paused_node_ids: [id("[cd]-racknerd-la")], alert: "down" }),
+    ...(old ? {} : { version: 3, paused_node_ids: [id("[cd]-racknerd-la")], alert: "down", alert_after: 2 }),
   };
   const cert: MonitorView = {
     id: "mon_api_cert",
@@ -213,7 +213,7 @@ export function operatorChecks(): MonitorView[] {
     enabled: true,
     created_at: iso(-90 * 24 * HOUR),
     // Never edited: version zero.
-    ...(old ? {} : { version: 0, alert: "off" }),
+    ...(old ? {} : { version: 0, alert: "off", alert_after: 2 }),
   };
   return [status, cert];
 }

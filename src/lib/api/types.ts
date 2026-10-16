@@ -1213,8 +1213,10 @@ export interface MonitorView {
   version?: number;
   /** Sources of this check that are paused one by one; they keep their history. */
   paused_node_ids?: string[];
-  /** `down` pages when a source fails twice in a row (absent reads as down); `off` never pages. */
+  /** `down` pages when a source fails `alert_after` times in a row (absent reads as down); `off` never pages. */
   alert?: MonitorAlertPolicy | string;
+  /** Failed runs in a row before `down` pages, 1 to 20; absent or zero reads as 2. */
+  alert_after?: number;
 }
 
 export type MonitorAlertPolicy = "off" | "down";
@@ -1233,6 +1235,7 @@ export interface MonitorUpdateInput {
   node_ids?: string[];
   paused_node_ids?: string[];
   alert?: MonitorAlertPolicy;
+  alert_after?: number;
   enabled?: boolean;
 }
 
