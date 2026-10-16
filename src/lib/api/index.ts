@@ -45,6 +45,7 @@ import type {
   LogSourceStatsView,
   LogSourceUpsertRequest,
   LoginResponse,
+  PendingSecondFactor,
   MachineLinkRevealResponse,
   MachineProfileInput,
   MachineVendorInput,
@@ -212,6 +213,11 @@ export const api = {
       http.post<LoginResponse>("/api/login", { username, password }),
     loginTotp: (challenge_id: string, code?: string, recovery_code?: string) =>
       http.post<LoginResponse>("/api/login/totp", { challenge_id, code, recovery_code }),
+    // Who the identity provider verified for the post-SSO second factor, read
+    // through the challenge cookie the SSO callback set. 404 without a live
+    // SSO challenge and 405 from a server older than the read; the sign-in
+    // page treats any failure as nothing to say.
+    pendingSecondFactor: () => http.get<PendingSecondFactor>("/api/login/totp"),
     // Usernameless (discoverable) passkey login. begin returns the assertion
     // options; the browser produces a serialized assertion that finish verifies,
     // issuing the same session the password+TOTP path does.
