@@ -36,6 +36,17 @@ export interface LoginResponse {
   totp_policy_required?: boolean;
 }
 
+/**
+ * GET /api/login/totp: who the identity provider verified for the post-SSO
+ * second factor this browser holds. Exactly one of email (verified only) and
+ * subject is present.
+ */
+export interface PendingSecondFactor {
+  provider: string;
+  email?: string;
+  subject?: string;
+}
+
 export interface TOTPEnrollResponse {
   secret: string;
   otpauth_uri: string;

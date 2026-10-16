@@ -554,6 +554,7 @@ export default {
     signingIn: "Signing in…",
     totpTitle: "Two-factor authentication",
     totpSubtitle: "Enter the 6-digit code from your authenticator app.",
+    totpSubtitleSso: "{provider} verified you as {identity}. Enter the 6-digit code from your authenticator app to finish signing in.",
     totpCode: "Authentication code",
     recoveryCode: "Recovery code",
     useRecovery: "Use a recovery code",

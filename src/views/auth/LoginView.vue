@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { documentTitle } from "@/layout/headerModel";
 import { EXPIRED_REASON } from "@/lib/sessionExpiry";
+import { ssoChallengeFromQuery, ssoVerifiedIdentity, type SsoVerifiedIdentity } from "./loginModel";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -47,6 +48,8 @@ const errorMsg = ref<string | undefined>(undefined);
 const errorRequestId = ref<string | undefined>(undefined);
 
 const providers = ref<SSOProvider[]>([]);
+/** Who the identity provider verified, on a second factor reached from SSO. */
+const ssoIdentity = ref<SsoVerifiedIdentity | undefined>(undefined);
 
 const passkeyPending = ref(false);
 const supportsPasskey = isWebAuthnSupported();
@@ -154,6 +157,7 @@ async function onSubmitTotp() {
 
 function backToPassword() {
   clearError();
+  ssoIdentity.value = undefined;
   code.value = "";
   recovery.value = "";
   useRecovery.value = false;
@@ -175,6 +179,21 @@ async function onPasskeyLogin() {
   }
 }
 
+/**
+ * Names the provider that already verified the operator, so the second factor
+ * does not read as a failed SSO sign-in. Best effort: an expired challenge or a
+ * server without the read leaves the plain copy, and an answer that arrives
+ * after the operator went back to the password step is dropped.
+ */
+async function loadSsoIdentity(challenge: string) {
+  try {
+    const verified = ssoVerifiedIdentity(await api.auth.pendingSecondFactor());
+    if (step.value === "totp" && auth.pendingTotpChallenge === challenge) ssoIdentity.value = verified;
+  } catch {
+    /* Nothing to say; the plain second-factor copy stands. */
+  }
+}
+
 function startSso(id: string) {
   const returnToLogin = "/login?redirect=" + encodeURIComponent(redirect.value);
   const target =
@@ -189,18 +208,19 @@ onMounted(async () => {
   // Surface SSO round-trip signals carried back in the URL, then clean it.
   const params = new URLSearchParams(window.location.search);
   const ssoError = params.get("sso_error");
-  const challenge = params.get("totp_challenge");
+  const challenge = ssoChallengeFromQuery(params.get("totp_challenge"));
   let mutated = false;
 
   if (ssoError) {
     errorMsg.value = ssoErrorMessage(ssoError);
     mutated = true;
   }
-  if (challenge && /^[A-Za-z0-9_-]{32,128}$/.test(challenge)) {
+  if (challenge) {
     auth.pendingTotpChallenge = challenge;
     step.value = "totp";
     mutated = true;
     focusTotp();
+    void loadSsoIdentity(challenge);
   }
   if (mutated) {
     params.delete("sso_error");
@@ -324,8 +344,23 @@ onMounted(async () => {
               <h2 class="text-2xl font-semibold tracking-tight">
                 {{ step === "password" ? $t('auth.signIn') : $t('auth.totpTitle') }}
               </h2>
-              <p class="text-sm text-muted-foreground">
-                {{ step === "password" ? $t('auth.subtitle') : $t('auth.totpSubtitle') }}
+              <p class="text-sm text-muted-foreground break-words">
+                <template v-if="step === 'password'">{{ $t('auth.subtitle') }}</template>
+                <i18n-t
+                  v-else-if="ssoIdentity"
+                  keypath="auth.totpSubtitleSso"
+                  tag="span"
+                  scope="global"
+                  data-testid="login-sso-verified"
+                >
+                  <template #provider>
+                    <span class="font-medium text-foreground">{{ ssoIdentity.provider }}</span>
+                  </template>
+                  <template #identity>
+                    <span class="font-medium text-foreground">{{ ssoIdentity.identity }}</span>
+                  </template>
+                </i18n-t>
+                <template v-else>{{ $t('auth.totpSubtitle') }}</template>
               </p>
             </div>
 
