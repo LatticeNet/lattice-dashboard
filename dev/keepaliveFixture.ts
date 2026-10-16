@@ -12,7 +12,9 @@
  *                   acknowledged stalled agent, a snoozed failing monitor, a
  *                   sing-box incident on a node in a maintenance window, a
  *                   pending offline, and two resolved ones; one active window
- *                   over that node and one upcoming over a group
+ *                   over that node and one upcoming over a group. With ?m3=1
+ *                   (design 29 D13) also a path.degraded incident open on
+ *                   cd-hs-sh to hetzner-fsn and one resolved yesterday
  *
  * Loop health rides on every reporting node: a healthy loop by default, and
  * with `?incidents=some` the stalled loop on [Metix]-qqpw-cd2-VDS (its agent
@@ -310,6 +312,7 @@ function build(): Incident[] {
       open_notified_at: iso(-3 * HOUR + 2 * MINUTE),
       flaps: 4,
     }),
+    ...degradedPaths(),
     base("monitor.down", malibu, {
       id: `inc_monitor_down_${malibu.id}_mon_console`,
       monitor_id: "mon_console",
@@ -321,6 +324,46 @@ function build(): Incident[] {
       notified: "resolved",
       notified_at: iso(-5 * HOUR),
       open_notified_at: iso(-5 * HOUR - 19 * MINUTE),
+    }),
+  ];
+}
+
+/**
+ * Design 29 D13, with ?m3=1: a degraded path is an incident of its own kind,
+ * keyed by its source and its check. cd-hs-sh joins the fleet only on paths
+ * renders, so it is named here rather than looked up.
+ */
+function degradedPaths(): Incident[] {
+  if (PARAMS.get("m3") !== "1") return [];
+  const sh = { id: "node_sh", name: "cd-hs-sh" } as Node;
+  const fsn = nodeNamed("[cd]-hetzner-fsn");
+  const hk = nodeNamed("[cd]-gomami-hk-turin-mini");
+  return [
+    base("path.degraded", sh, {
+      id: `inc_path_degraded_node_sh_mon_lat_${fsn.id}`,
+      recovery_kind: "path.recovered",
+      monitor_id: `mon_lat_${fsn.id}`,
+      subject: `cd-hs-sh to ${fsn.name}`,
+      title: `Path degraded: cd-hs-sh to ${fsn.name}`,
+      since: iso(-51 * MINUTE),
+      opened_at: iso(-49 * MINUTE),
+      notified: "open",
+      notified_at: iso(-49 * MINUTE),
+      open_notified_at: iso(-49 * MINUTE),
+    }),
+    base("path.degraded", sh, {
+      id: `inc_path_degraded_node_sh_mon_lat_${hk.id}`,
+      recovery_kind: "path.recovered",
+      monitor_id: `mon_lat_${hk.id}`,
+      subject: `cd-hs-sh to ${hk.name}`,
+      title: `Path degraded: cd-hs-sh to ${hk.name}`,
+      state: "resolved",
+      since: iso(-(26 * HOUR + 10 * MINUTE)),
+      opened_at: iso(-(26 * HOUR + 8 * MINUTE)),
+      resolved_at: iso(-25 * HOUR),
+      notified: "resolved",
+      notified_at: iso(-25 * HOUR),
+      open_notified_at: iso(-(26 * HOUR + 8 * MINUTE)),
     }),
   ];
 }

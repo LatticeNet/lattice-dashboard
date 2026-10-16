@@ -200,7 +200,10 @@ export function initialConfig(): { config: LatencyProbeConfig; stored: boolean }
   const base: LatencyProbeConfig = { enabled: true, interval_sec: 60, timeout_sec: 5, sources: [SOURCE_ID], auto_targets: true, version: 4, updated_by: "cdcd", updated_at: iso(-3 * HOUR) };
   const paths = PARAMS.get("paths");
   if (paths && paths !== "old") {
-    const sources = paths === "three" ? [SOURCE_ID, id("[cd]-volcengine-shanghai"), id("[Metix]-mkcloud-hr-iplc")].sort() : [SOURCE_ID];
+    const three = [SOURCE_ID, id("[cd]-volcengine-shanghai"), id("[Metix]-mkcloud-hr-iplc")];
+    // ?paths=six: three more sources, so Topology's picker draws the first four of six (design 29 D13).
+    const six = [...three, id("[cd]-hetzner-fsn"), id("[cd]-racknerd-la"), id("[cd]-DMIT-pro-malibu")];
+    const sources = (paths === "three" ? three : paths === "six" ? six : [SOURCE_ID]).sort();
     const config: LatencyProbeConfig = {
       ...base,
       sources: paths === "empty" ? [] : sources,

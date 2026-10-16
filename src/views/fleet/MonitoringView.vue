@@ -179,8 +179,19 @@ const noSources = computed(() => {
   return !!plan && plan.stored && (plan.config.sources ?? []).length === 0;
 });
 
-/** The check a path.degraded incident names, and the node its path reaches when the path set generated it (design 29 D13). */
-const monitorTargets = computed(() => new Map((monitorsQuery.data.value ?? []).map((m) => [m.id, { targetNode: m.managed_by === "latency" ? m.target_node : undefined }])));
+/**
+ * The node a generated check reaches, by check id, so a path.degraded
+ * incident names and opens its path (design 29 D13): the check's own
+ * target_node, else the node its generated paths in the matrix reach.
+ */
+const monitorTargets = computed(() => {
+  const fromPaths = new Map<string, string>();
+  for (const p of matrix.value?.paths ?? []) if (p.managed && p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
+  return new Map((monitorsQuery.data.value ?? []).map((m) => {
+    const generated = m.managed_by === "latency";
+    return [m.id, { generated, targetNode: generated ? (m.target_node ?? fromPaths.get(m.id)) : undefined }];
+  }));
+});
 
 /* ---- Head ---- */
 

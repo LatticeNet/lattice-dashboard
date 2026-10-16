@@ -57,7 +57,7 @@ const props = withDefaults(
     /** Monitor names by id, so a failing monitor's claim is worded here rather than in the server's English. */
     monitorNames?: ReadonlyMap<string, string>;
     /** The node a generated check reaches, by check id: a path.degraded row names and opens its path (design 29 D13). */
-    monitorTargets?: ReadonlyMap<string, { targetNode?: string }>;
+    monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
     /** A row control to focus once the row has re-rendered (useIncidentActions). */
     focusRequest?: IncidentFocusRequest | null;
     /** Acknowledged rows that offer Undo in Acknowledge's place, and those whose Undo landed (actionHold.undoSlot). */
@@ -70,7 +70,7 @@ const props = withDefaults(
     busy: () => new Set<string>(),
     nodeNames: () => new Map<string, string>(),
     monitorNames: () => new Map<string, string>(),
-    monitorTargets: () => new Map<string, { targetNode?: string }>(),
+    monitorTargets: () => new Map<string, { generated: boolean; targetNode?: string }>(),
     focusRequest: null,
     undoable: () => new Set<string>(),
     undone: () => new Set<string>(),
@@ -244,8 +244,9 @@ function claim(incident: Incident): string {
   if (kind === "path.degraded") {
     // The server's subject is English ("cd-hs-sh to tyo-3"); worded here from the two names when both are known.
     const source = nodeName(incident);
-    const targetNode = incident.monitor_id ? props.monitorTargets.get(incident.monitor_id)?.targetNode : undefined;
-    const target = targetNode ? props.nodeNames.get(targetNode) || targetNode : incident.monitor_id ? props.monitorNames.get(incident.monitor_id) : undefined;
+    // A generated path is named by the node it reaches, an operator check's path by the check; otherwise the server's subject.
+    const entry = incident.monitor_id ? props.monitorTargets.get(incident.monitor_id) : undefined;
+    const target = entry?.targetNode ? props.nodeNames.get(entry.targetNode) || entry.targetNode : entry && !entry.generated && incident.monitor_id ? props.monitorNames.get(incident.monitor_id) : undefined;
     if (source && target) return t("fleet.keepalive.claim.path_degradedPair", { source, target });
     return t("fleet.keepalive.claim.path_degraded", { subject: subject(incident) });
   }

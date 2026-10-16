@@ -12,7 +12,6 @@ import { useI18n } from "vue-i18n";
 import { Check, ChevronDown } from "lucide-vue-next";
 import { DropdownMenuCheckboxItem, DropdownMenuItemIndicator } from "reka-ui";
 
-import { cn } from "@/lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { DEFAULT_DRAWN_SOURCES, type TopoSourceChoice } from "./topologyModel";
@@ -34,12 +33,13 @@ function toggle(id: string, on: boolean): void {
   emit("update", props.choices.map((c) => c.node.id).filter((x) => next.includes(x)));
 }
 
-function reach(choice: TopoSourceChoice): string {
+/** The source's reach, each count in its own state's ink, so only the counts that need a look carry colour. */
+function reach(choice: TopoSourceChoice): { key: string; text: string; tone: string }[] {
   const r = choice.reach;
-  const parts = [t("fleet.monitoring.topology.sources.reach", { up: r.up, total: r.total })];
-  if (r.degraded) parts.push(t("fleet.monitoring.topology.proof.degraded", { n: r.degraded }));
-  if (r.down) parts.push(t("fleet.monitoring.topology.proof.down", { n: r.down }));
-  return parts.join(" · ");
+  const parts = [{ key: "up", text: t("fleet.monitoring.topology.sources.reach", { up: r.up, total: r.total }), tone: "text-muted-foreground" }];
+  if (r.degraded) parts.push({ key: "degraded", text: t("fleet.monitoring.topology.proof.degraded", { n: r.degraded }), tone: "text-warning-text" });
+  if (r.down) parts.push({ key: "down", text: t("fleet.monitoring.topology.proof.down", { n: r.down }), tone: "text-destructive" });
+  return parts;
 }
 </script>
 
@@ -74,7 +74,9 @@ function reach(choice: TopoSourceChoice): string {
           <span class="block truncate">
             <span v-if="choice.drawn" class="me-1 font-mono text-[10px] text-muted-foreground tabular">{{ drawn.indexOf(choice.node.id) + 1 }}</span>{{ choice.node.name }}
           </span>
-          <span :class="cn('block text-xs', choice.reach.down ? 'text-destructive' : choice.reach.degraded ? 'text-warning-text' : 'text-muted-foreground')">{{ reach(choice) }}</span>
+          <span class="block text-xs">
+            <template v-for="(part, i) in reach(choice)" :key="part.key"><span v-if="i" class="text-muted-foreground"> · </span><span :class="part.tone">{{ part.text }}</span></template>
+          </span>
         </span>
       </DropdownMenuCheckboxItem>
       <template v-if="!isDefault">

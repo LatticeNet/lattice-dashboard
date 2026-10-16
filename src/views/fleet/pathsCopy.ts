@@ -6,7 +6,6 @@
 import { useI18n } from "vue-i18n";
 
 import type { MonitorWindow, PathState } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
 import type { RegionKey } from "@/lib/regions";
 
 import { formatMs } from "./latencyModel";
@@ -14,7 +13,15 @@ import { DEGRADED_LEAVE_AFTER_MS, displayState, formatShare, reasonCode, type Pa
 import type { Verdict } from "./triangulationModel";
 
 export function usePathsCopy() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+
+  /** A time in the evidence: the clock alone today ("14:02"), the day and the clock before ("Oct 15 14:02"). */
+  function clock(ms: number): string {
+    const d = new Date(ms);
+    const today = new Date().toDateString() === d.toDateString();
+    const options: Intl.DateTimeFormatOptions = today ? { hour: "2-digit", minute: "2-digit", hour12: false } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false };
+    return new Intl.DateTimeFormat(locale.value, options).format(d);
+  }
 
   /** The reason in words: a known code's sentence, a failure as the agent wrote it, or the code as sent. */
   function reasonText(reason: string | undefined): string {
@@ -93,8 +100,8 @@ export function usePathsCopy() {
   function degradedTimes(d: PathDegradationItem | undefined): string[] {
     if (!d) return [];
     const out: string[] = [];
-    if (d.since !== undefined) out.push(t("fleet.monitoring.paths.evidence.since", { time: formatDateTime(d.since) }));
-    if (d.clearingSince !== undefined) out.push(t("fleet.monitoring.paths.evidence.clearing", { time: formatDateTime(d.clearingSince), leaves: formatDateTime(d.clearingSince + DEGRADED_LEAVE_AFTER_MS) }));
+    if (d.since !== undefined) out.push(t("fleet.monitoring.paths.evidence.since", { time: clock(d.since) }));
+    if (d.clearingSince !== undefined) out.push(t("fleet.monitoring.paths.evidence.clearing", { time: clock(d.clearingSince), leaves: clock(d.clearingSince + DEGRADED_LEAVE_AFTER_MS) }));
     return out;
   }
 

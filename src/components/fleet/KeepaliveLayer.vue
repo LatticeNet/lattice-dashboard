@@ -64,7 +64,7 @@ const props = defineProps<{
   /** Monitor names by id, for failing monitors' claims. */
   monitorNames?: ReadonlyMap<string, string>;
   /** The node a generated check reaches, by check id: a path.degraded row's link to its path (design 29 D13). */
-  monitorTargets?: ReadonlyMap<string, { targetNode?: string }>;
+  monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
   now: number;
 }>();
 const emit = defineEmits<{ refresh: [] }>();
