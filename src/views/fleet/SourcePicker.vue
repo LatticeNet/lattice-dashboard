@@ -4,6 +4,11 @@
  * search over names and countries, and, when editing, a pause per chosen
  * source. Pausing keeps the source on the check and its history; removing it
  * stops its path for good.
+ *
+ * On an M2a server each row lists the methods its agent runs, and with a
+ * `kind` given a node that cannot run it cannot be picked, with the reason.
+ * One already chosen stays chosen and is flagged: its path reads unknown
+ * with that reason, and the editor offers to remove it.
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -15,12 +20,33 @@ import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 
-const props = withDefaults(defineProps<{ nodes: Node[]; showPause?: boolean; label: string }>(), { showPause: false });
+import { effectiveProbeMethods, sourceSupport } from "./checkRulesModel";
+import { usePathsCopy } from "./pathsCopy";
+
+const props = withDefaults(
+  defineProps<{
+    nodes: Node[];
+    showPause?: boolean;
+    label: string;
+    /** The server speaks M2a: show each agent's methods. */
+    m2a?: boolean;
+    /** The method the sources must run; nodes that cannot are not offered. */
+    kind?: string;
+  }>(),
+  { showPause: false, m2a: false, kind: undefined },
+);
 const selected = defineModel<string[]>({ required: true });
 const paused = defineModel<string[]>("paused", { default: () => [] });
 
 const { t } = useI18n();
+const { refusalText } = usePathsCopy();
 const query = ref("");
+
+/** Why the node cannot run the kind, as the path would read it; undefined when it can. */
+function whyNot(node: Node): string | undefined {
+  const support = props.kind ? sourceSupport(node, props.kind, props.m2a) : undefined;
+  return support && !support.ok ? support.reason : undefined;
+}
 
 const groups = computed(() => {
   const q = query.value.trim().toLowerCase();
@@ -70,10 +96,33 @@ function togglePause(id: string, on: boolean): void {
         <p class="sticky top-0 z-[1] bg-muted px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {{ t(`fleet.monitoring.topology.region.${group.region}`) }}
         </p>
-        <div v-for="node in group.nodes" :key="node.id" class="flex items-center gap-2 border-b border-border/60 px-2.5 last:border-b-0">
-          <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1.5 pointer-coarse:min-h-11">
-            <Checkbox :model-value="selected.includes(node.id)" @update:model-value="(v) => toggle(node.id, v === true)" />
-            <span class="min-w-0 flex-1 truncate text-sm" :title="node.name || node.id">{{ node.name || node.id }}</span>
+        <div
+          v-for="node in group.nodes"
+          :key="node.id"
+          class="flex items-center gap-2 border-b border-border/60 px-2.5 last:border-b-0"
+          :data-source="node.id"
+          :data-unsupported="whyNot(node) ? 'true' : undefined"
+        >
+          <label
+            :class="cn('flex min-w-0 flex-1 items-center gap-2 py-1.5 pointer-coarse:min-h-11', !!whyNot(node) && !selected.includes(node.id) ? 'cursor-not-allowed' : 'cursor-pointer')"
+          >
+            <Checkbox
+              :model-value="selected.includes(node.id)"
+              :disabled="!!whyNot(node) && !selected.includes(node.id)"
+              :aria-describedby="whyNot(node) ? `source-why-${node.id}` : undefined"
+              @update:model-value="(v) => toggle(node.id, v === true)"
+            />
+            <span class="min-w-0 flex-1">
+              <span :class="cn('block truncate text-sm', !!whyNot(node) && !selected.includes(node.id) && 'text-muted-foreground')" :title="node.name || node.id">{{ node.name || node.id }}</span>
+              <span v-if="m2a || !!whyNot(node)" class="flex flex-wrap items-baseline gap-x-2 text-xs">
+                <span v-if="m2a" class="font-mono text-muted-foreground">{{ effectiveProbeMethods(node).join(' ') }}</span>
+                <span
+                  v-if="!!whyNot(node)"
+                  :id="`source-why-${node.id}`"
+                  :class="selected.includes(node.id) ? 'text-warning-text' : 'text-muted-foreground'"
+                >{{ refusalText(whyNot(node) ?? '', kind ?? '') }}</span>
+              </span>
+            </span>
             <span :class="cn('shrink-0 text-xs', node.online ? 'text-muted-foreground' : 'text-warning-text')">{{ node.online ? t('fleet.monitoring.checks.editor.online') : t('fleet.monitoring.checks.editor.offline') }}</span>
           </label>
           <label

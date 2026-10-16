@@ -74,7 +74,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { reasonText, whyText, stateLabel, displayLabel, groupLabel, windowLong } = usePathsCopy();
+const { reasonText, reasonShort, whyText, stateLabel, displayLabel, groupLabel, windowLong } = usePathsCopy();
 /** Why a path is not up: its reason, or for a down path the agent's newest error. */
 const why = (path: PathItem) => whyText(path, path.state === "down" && !path.reason ? props.failureOf(path.monitorId, path.source) : undefined);
 const wide = useMediaQuery("(min-width: 768px)");
@@ -134,7 +134,7 @@ function certLeft(path: PathItem): string | undefined {
 }
 
 function cellSub(path: PathItem): string {
-  if (path.state === "unknown") return reasonText(path.reason);
+  if (path.state === "unknown") return reasonShort(path.reason);
   const parts: string[] = [];
   // A certificate check's reason to exist is the expiry: it leads the sub line.
   const cert = certLeft(path);

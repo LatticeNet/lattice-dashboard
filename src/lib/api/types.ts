@@ -294,6 +294,15 @@ export interface Node {
   loop_health?: AgentLoopHealth | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
+  /**
+   * The monitor kinds this node's agent runs (design 29 M2a): the effective
+   * list, so an agent older than M2a reads ["http", "tcp"]. Absent from a
+   * server older than M2a, which is how the console knows not to offer the
+   * M2a check fields.
+   */
+  probe_methods?: string[];
+  /** Kinds the agent implements but this host refuses, each with a reason code ({"icmp": "icmp_not_permitted"}). */
+  probe_refusals?: Record<string, string>;
 }
 
 /** One work loop step's outcome, by the agent's clock. */
@@ -1177,7 +1186,7 @@ export interface AuditVerifyResponse {
  * to expiry; the probe fails once fewer than `threshold_days` remain, so the
  * result log turns red before the certificate lapses rather than after.
  */
-export type MonitorType = "tcp" | "http" | "tls";
+export type MonitorType = "tcp" | "http" | "icmp" | "tls";
 
 export interface MonitorView {
   id: string;
@@ -1188,6 +1197,19 @@ export interface MonitorView {
   timeout_sec: number;
   /** Only on `tls` monitors: how many days before expiry the probe starts failing. */
   threshold_days?: number;
+  /**
+   * The node the target is resolved from (icmp, tcp; design 29 M2a); `target`
+   * is then the resolution in force now. Fixed once saved.
+   */
+  target_node?: string;
+  /** icmp: echoes per run, 1 to 10; absent or zero reads as 5. */
+  packets?: number;
+  /** http: the passing statuses, canonical ("200-299,301"); absent reads as 200-399. */
+  expect_status?: string;
+  /** http: request headers. A secret one carries its name, `secret` and `set`, never its value. */
+  headers?: MonitorHeader[];
+  /** The origin the secret headers are bound to (scheme://host:port), set by the server. */
+  secrets_origin?: string;
   assign_all?: boolean;
   node_ids?: string[];
   enabled: boolean;
@@ -1221,6 +1243,22 @@ export interface MonitorView {
 
 export type MonitorAlertPolicy = "off" | "down";
 
+/** One request header of an http check (lattice-sdk MonitorHeader). Reads drop a secret's value and set `set`. */
+export interface MonitorHeader {
+  name: string;
+  value?: string;
+  secret?: boolean;
+  set?: boolean;
+}
+
+/** One header operation of an edit, applied in order; a header no operation names is kept. */
+export interface MonitorHeaderEdit {
+  name: string;
+  op: "keep" | "set" | "delete";
+  value?: string;
+  secret?: boolean;
+}
+
 /** The fields POST /api/monitors/update may change (design 29 D1); 409 on a stale version or a generated check. */
 export interface MonitorUpdateInput {
   id: string;
@@ -1231,6 +1269,10 @@ export interface MonitorUpdateInput {
   interval_sec?: number;
   timeout_sec?: number;
   threshold_days?: number;
+  packets?: number;
+  expect_status?: string;
+  /** Header operations; absent leaves the headers as they are. */
+  headers?: MonitorHeaderEdit[];
   assign_all?: boolean;
   node_ids?: string[];
   paused_node_ids?: string[];
@@ -1305,6 +1347,9 @@ export interface PathBucket {
   max_ms?: number | null;
   jitter_ms?: number | null;
   loss?: number | null;
+  /** Probes sent and lost (every echo of a multi-packet run, one per tcp or http run); zero in buckets written before M2a. */
+  sent?: number;
+  lost?: number;
   method?: string;
 }
 
@@ -1361,6 +1406,10 @@ export interface LatencyProbeConfig {
   include_targets?: string[];
   exclude_targets?: string[];
   disabled_pairs?: LatencyPair[];
+  /** The kind every source probes with (design 29 M2a): "" or "tcp", "icmp", "auto"; empty reads as tcp. */
+  method?: string;
+  /** Per-source pins over `method`, by source node id. */
+  source_methods?: Record<string, string>;
   version: number;
   updated_at?: string;
   updated_by?: string;
@@ -1385,6 +1434,10 @@ export interface LatencyProbeNode {
   /** last_known, no_public_address, udp_only, no_tcp_line, no_inventory. */
   endpoint_note?: string;
   monitor_id?: string;
+  /** The public IPv4 icmp sources send echoes to; empty when the node has none. */
+  icmp_target?: string;
+  /** The generated icmp check, while it exists. */
+  icmp_monitor_id?: string;
 }
 
 export interface LatencyProbePairState {
@@ -1395,6 +1448,10 @@ export interface LatencyProbePairState {
   /** Whether the source runs the probe now. */
   active: boolean;
   monitor_id?: string;
+  /** The kind the pair probes with, or would (design 29 M2a). */
+  method?: string;
+  /** Why an enabled pair is not active because of its source or method (agent_too_old, icmp_not_permitted, not_probeable). */
+  reason?: string;
 }
 
 export interface LatencyProbePlan {
@@ -1461,6 +1518,12 @@ export interface MonitorResult {
   cert_not_after?: string;
   /** When the server received it. Well after `at`, the result waited in an agent's buffer. */
   received_at?: string;
+  /** A multi-packet run (icmp): echoes sent and lost, and the RTT of each echo that came back, in send order. */
+  sent?: number;
+  lost?: number;
+  rtts_ms?: number[];
+  /** Set when the run measured nothing (icmp_not_permitted, destination_refused, agent_too_old): neither up nor down. */
+  reason?: string;
 }
 
 /** One node's newest result for a monitor, and the run it ends. */
@@ -1477,18 +1540,34 @@ export interface MonitorLatest {
   fail_streak: number;
   /** When the current run of passes or failures began. */
   since: string;
+  sent?: number;
+  lost?: number;
+  rtts_ms?: number[];
+  /** Set when the newest run measured nothing; the fields above are then the last real outcome. */
+  reason?: string;
+  reason_at?: string;
 }
 
 export interface MonitorCreateInput {
   name: string;
   type: MonitorType;
-  target: string;
+  /** Absent when `target_node` is set: the server resolves it. */
+  target?: string;
+  /** icmp and tcp (design 29 M2a). */
+  target_node?: string;
   interval_sec?: number;
   timeout_sec?: number;
   /** `tls` only. */
   threshold_days?: number;
+  /** icmp only. */
+  packets?: number;
+  /** http only. */
+  expect_status?: string;
+  headers?: MonitorHeader[];
   assign_all?: boolean;
   node_ids?: string[];
+  alert?: MonitorAlertPolicy;
+  alert_after?: number;
 }
 
 export type RenewalCycle = "" | "monthly" | "quarterly" | "semiannual" | "annual" | "custom_days";

@@ -50,7 +50,8 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
+import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
+import { canonicalHeaderName, monitorOrigin } from "@/views/fleet/checkRulesModel";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
 import { sumTotals } from "@/views/fleet/upcomingModel";
@@ -76,7 +77,7 @@ import {
   ungrouped,
 } from "./fleetFixture";
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
-import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
+import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, probeFacts, rollupsFor, seriesFor } from "./latencyFixture";
 import { lineChains } from "./topologyFixture";
 import { PATHS_SHAPE, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
@@ -174,7 +175,7 @@ const principal: Principal = {
 // cd-hs-sh joins only on latency renders; every node, it included, carries
 // the keepalive state and loop health the incidents fixture gives it.
 let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : []), ...manyNodes(), ...EXTRA_NODES].map((node, index) => {
-  const shaped = { ...node, ...keepaliveNodeState(node) };
+  const shaped = { ...node, ...keepaliveNodeState(node), ...probeFacts(node) };
   return { ...shaped, loop_health: loopHealthFor(shaped, index) };
 });
 
@@ -212,6 +213,42 @@ function missingRoute<T>(path: string): Promise<T> {
   });
 }
 const pathsOld = () => PATHS_SHAPE === "old";
+
+/**
+ * A check as the server answers it (design 29 M2a): a secret header's value
+ * never leaves, its read carries `set` instead, and the origin secrets are
+ * bound to is the server's to write.
+ */
+function viewOf(m: MonitorView): MonitorView {
+  if (!m.headers?.length) return { ...m };
+  const headers = m.headers.map((h) => (h.secret ? { name: h.name, secret: true, set: true } : { name: h.name, value: h.value }));
+  return { ...m, headers, ...(headers.some((h) => h.secret) ? { secrets_origin: monitorOrigin(m.target) } : {}) };
+}
+
+/** Apply an edit's header operations in order, as the server does; a keep for a header that is gone is refused. */
+function applyHeaderOps(held: MonitorHeader[] | undefined, ops: NonNullable<MonitorUpdateInput["headers"]>): MonitorHeader[] {
+  let out = [...(held ?? [])];
+  const same = (a: string, b: string) => canonicalHeaderName(a).toLowerCase() === canonicalHeaderName(b).toLowerCase();
+  for (const op of ops) {
+    const at = out.findIndex((h) => same(h.name, op.name));
+    if (op.op === "keep" && at < 0) throw new ApiError(409, "conflict", `header ${op.name} is not on the check`);
+    if (op.op === "delete") out = out.filter((_, i) => i !== at);
+    if (op.op === "set") {
+      const next: MonitorHeader = { name: canonicalHeaderName(op.name), value: op.value, ...(op.secret ? { secret: true } : {}) };
+      out = at < 0 ? [...out, next] : out.map((h, i) => (i === at ? next : h));
+    }
+  }
+  return out;
+}
+
+/** What a node target resolves to, as the server would: the public IPv4 for icmp, the line port for tcp. */
+function resolveTarget(input: { type: string; target?: string; target_node?: string }): string {
+  if (!input.target_node) return input.target ?? "";
+  const node = nodes.find((n) => n.id === input.target_node);
+  const planNode = pathPlan().nodes.find((n) => n.node_id === input.target_node);
+  if (input.type === "icmp") return planNode?.icmp_target ?? node?.public_ip ?? "";
+  return planNode?.endpoint ?? `${node?.public_ip ?? "203.0.113.1"}:443`;
+}
 
 /** Each source's newest run for a check on the paths renders, as the list carries it. */
 function pathsLatest(monitorId: string) {
@@ -518,7 +555,7 @@ export const api = {
     list: () =>
       answer("monitors", () => ({
         monitors: [
-          ...monitors.map((m) => ({ ...m, latest: PARAMS.has("paths") ? pathsLatest(m.id) : monitorLatest(m.id) })),
+          ...monitors.map((m) => ({ ...viewOf(m), latest: PARAMS.has("paths") ? pathsLatest(m.id) : monitorLatest(m.id) })),
           ...(PARAMS.has("latency") || PARAMS.has("paths")
             ? generatedLatencyMonitors(planFor(latency.config, latency.stored)).map((m) => (PARAMS.has("paths") ? { ...m, latest: pathsLatest(m.id) } : m))
             : []),
@@ -551,15 +588,24 @@ export const api = {
           throw new ApiError(409, "conflict", held.managed_by ? "generated checks are changed through the path set" : "monitor changed since it was read");
         });
       }
-      const { id: _id, version: _version, ...fields } = input;
-      const updated = { ...held, ...fields, version: (held.version ?? 0) + 1, updated_at: new Date().toISOString() } as MonitorView;
+      const { id: _id, version: _version, headers: ops, ...fields } = input;
+      let headers: MonitorHeader[] | undefined;
+      try {
+        headers = ops?.length ? applyHeaderOps(held.headers, ops) : held.headers;
+      } catch (error) {
+        return delay(undefined).then(() => {
+          throw error;
+        });
+      }
+      const updated = { ...held, ...fields, ...(headers ? { headers } : {}), version: (held.version ?? 0) + 1, updated_at: new Date().toISOString() } as MonitorView;
       monitors = monitors.map((m) => (m.id === input.id ? updated : m));
-      return delay(updated);
+      return delay(viewOf(updated));
     },
     create: (input: MonitorCreateInput) => {
-      const created = { ...input, id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString(), ...(PARAMS.has("paths") && !pathsOld() ? { version: 1 } : {}) } as MonitorView;
+      const created = { ...input, target: resolveTarget(input), id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString(), ...(PARAMS.has("paths") && !pathsOld() ? { version: 1 } : {}) } as MonitorView;
+      if (created.headers) created.headers = created.headers.map((h) => ({ ...h, name: canonicalHeaderName(h.name) }));
       monitors = [...monitors, created];
-      return delay(created);
+      return delay(viewOf(created));
     },
     delete: (id: string) => {
       monitors = monitors.filter((m) => m.id !== id);

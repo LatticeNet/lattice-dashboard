@@ -12,6 +12,11 @@
  * other. Each node row previews, by the server's own rule, whether it would
  * be a target after the save; the plan that comes back is what is shown from
  * then on. The save is audited on the server.
+ *
+ * On an M2a server the path set also picks its method (TCP, ICMP or Auto)
+ * and pins single sources to one, and previews per source which method it
+ * will use and how many targets it reaches with it. Against an older server
+ * neither is shown nor sent.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -33,22 +38,35 @@ import {
   LATENCY_MAX_INTERVAL_SEC,
   LATENCY_MAX_TIMEOUT_SEC,
   LATENCY_MIN_INTERVAL_SEC,
+  PATH_SET_METHODS,
+  SOURCE_PINS,
   draftFromConfig,
   draftProblems,
   draftTargetReason,
   draftToConfig,
   draftsDiffer,
+  pathSetPreview,
   setPairEnabled,
+  setSourceMethod,
   setTargetMode,
   targetMode,
   type LatencyDraft,
+  type SourceMethodPreview,
   type TargetMode,
 } from "./latencyModel";
+import { usePathsCopy } from "./pathsCopy";
 
-const props = defineProps<{ open: boolean; plan: LatencyProbePlan; nodes: Node[] }>();
+const props = defineProps<{
+  open: boolean;
+  plan: LatencyProbePlan;
+  nodes: Node[];
+  /** The server speaks M2a: the method and the pins are offered. */
+  m2a?: boolean;
+}>();
 const emit = defineEmits<{ close: []; saved: [plan: LatencyProbePlan]; reload: [] }>();
 
 const { t } = useI18n();
+const { refusalText } = usePathsCopy();
 
 const base = ref<LatencyDraft>(draftFromConfig(props.plan.config));
 const draft = ref<LatencyDraft>(draftFromConfig(props.plan.config));
@@ -98,6 +116,29 @@ const pathCount = computed(() => {
   return n;
 });
 const problems = computed(() => draftProblems(draft.value));
+
+/* ---- Method (design 29 M2a) ---- */
+
+const methodLabel = (m: string) => t(`fleet.monitoring.pathSet.methods.${m || "tcp"}`);
+const methodPreview = computed(() => (props.m2a ? pathSetPreview(draft.value, props.plan, sourceNodes.value) : []));
+
+function setMethod(method: string): void {
+  draft.value = { ...draft.value, method };
+}
+function setPin(source: string, value: string): void {
+  draft.value = setSourceMethod(draft.value, source, value || undefined);
+}
+
+/** One line per source: the method it will use and what it reaches with it. */
+function previewLine(row: SourceMethodPreview): string {
+  if (row.refusal) return t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(row.refusal, "icmp") });
+  const parts: string[] = [];
+  if (row.icmp) parts.push(t("fleet.monitoring.pathSet.preview.icmp", { n: row.icmp }, row.icmp));
+  if (row.tcp) parts.push(t("fleet.monitoring.pathSet.preview.tcp", { n: row.tcp }, row.tcp));
+  if (row.onSave) parts.push(t("fleet.monitoring.pathSet.preview.onSave", { n: row.onSave }, row.onSave));
+  if (row.none) parts.push(t("fleet.monitoring.pathSet.preview.none", { n: row.none }, row.none));
+  return parts.length ? parts.join(t("fleet.monitoring.pathSet.preview.join")) : t("fleet.monitoring.pathSet.preview.nothing");
+}
 const dirty = computed(() => draftsDiffer(base.value, draft.value));
 const pending = ref(false);
 const MODES: TargetMode[] = ["auto", "always", "never"];
@@ -162,7 +203,21 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 1. What it measures -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
-        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
+        <template v-if="m2a">
+          <div class="grid grid-cols-3 rounded-md border border-input p-1" role="radiogroup" :aria-label="$t('fleet.monitoring.pathSet.methodLabel')" data-testid="path-set-method">
+            <button
+              v-for="m in PATH_SET_METHODS"
+              :key="m || 'tcp'"
+              type="button"
+              role="radio"
+              :aria-checked="draft.method === m"
+              :class="cn('rounded px-2 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', draft.method === m && 'bg-secondary font-medium text-foreground')"
+              @click="setMethod(m)"
+            >{{ methodLabel(m) }}</button>
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${draft.method || 'tcp'}`) }}</p>
+        </template>
+        <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
         <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.latency.config.probes')">
           <button
             type="button"
@@ -183,7 +238,32 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 2. From where -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.from') }}</legend>
-        <SourcePicker v-model="sources" :nodes="sourceNodes" :label="$t('fleet.monitoring.checks.editor.step.from')" />
+        <SourcePicker v-model="sources" :nodes="sourceNodes" :m2a="m2a" :label="$t('fleet.monitoring.checks.editor.step.from')" />
+        <div v-if="m2a && methodPreview.length" class="grid gap-1.5" data-testid="path-set-pins">
+          <p class="text-xs font-medium">{{ $t('fleet.monitoring.pathSet.pins') }}</p>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="row in methodPreview" :key="row.source" class="grid gap-1.5 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_11rem] sm:items-center" :data-pin="row.source">
+              <span class="min-w-0">
+                <span class="block truncate font-medium" :title="nameOf(row.source)">{{ nameOf(row.source) }}</span>
+                <span :class="cn('block text-xs', row.refusal ? 'text-warning-text' : 'text-muted-foreground')">
+                  <span class="font-mono">{{ methodLabel(row.method) }}</span>
+                  <span v-if="!row.pinned"> ({{ $t('fleet.monitoring.pathSet.followsSet') }})</span>
+                  · {{ previewLine(row) }}
+                </span>
+              </span>
+              <select
+                :value="draft.sourceMethods[row.source] ?? ''"
+                class="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+                :aria-label="$t('fleet.monitoring.pathSet.pinLabel', { name: nameOf(row.source) })"
+                @change="(e) => setPin(row.source, (e.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ $t('fleet.monitoring.pathSet.pinFollow', { method: methodLabel(draft.method) }) }}</option>
+                <option v-for="pin in SOURCE_PINS" :key="pin" :value="pin">{{ methodLabel(pin) }}</option>
+              </select>
+            </li>
+          </ul>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.pinHint') }}</p>
+        </div>
       </fieldset>
 
       <!-- 3. To where -->

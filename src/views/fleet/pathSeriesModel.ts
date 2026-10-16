@@ -10,7 +10,10 @@
  *   - a bucket where every run failed has no latency and a full loss bar;
  *   - a bucket that expected nothing (a paused path) is blank, not a gap;
  *   - a hole the server left in the steps is filled with gap points, so a
- *     missing bucket can never be drawn as a line between its neighbours.
+ *     missing bucket can never be drawn as a line between its neighbours;
+ *   - loss counts probes (design 29 M2a): lost over sent where a bucket has
+ *     them, so a five-echo ICMP run that lost one is 20 percent, not a
+ *     failed run; failed runs over runs in buckets written before M2a.
  *
  * Kept free of Vue and of uPlot so `node --test` covers it directly.
  */
@@ -71,8 +74,11 @@ export interface SeriesPoint {
   p95Ms?: number;
   maxMs?: number;
   jitterMs?: number;
-  /** Failure share of the runs heard, 0 to 1. */
+  /** Share of the probes lost, 0 to 1: lost over sent, or failed runs over runs before M2a. */
   loss?: number;
+  /** Probes sent and lost; zero in a bucket written before M2a. */
+  sent: number;
+  lost: number;
   method?: string;
   /** Runs were expected and none was heard. */
   missing: boolean;
@@ -117,6 +123,8 @@ interface RawPoint {
   maxMs?: number;
   jitterMs?: number;
   loss?: number;
+  sent?: number;
+  lost?: number;
   method?: string;
 }
 
@@ -124,9 +132,12 @@ function finish(raw: RawPoint): SeriesPoint {
   const n = Math.max(0, raw.n || 0);
   const fail = Math.min(n, Math.max(0, raw.fail || 0));
   const expected = Math.max(0, raw.expected || 0);
-  const point: SeriesPoint = { t: raw.t, n, expected, fail, missing: n === 0 && expected > 0, method: raw.method };
+  const sent = Math.max(0, Math.floor(raw.sent || 0));
+  const lost = Math.min(sent, Math.max(0, Math.floor(raw.lost || 0)));
+  const point: SeriesPoint = { t: raw.t, n, expected, fail, sent, lost, missing: n === 0 && expected > 0, method: raw.method };
   if (n > 0) {
-    point.loss = raw.loss !== undefined ? Math.max(0, Math.min(1, raw.loss)) : fail / n;
+    const share = sent > 0 ? lost / sent : raw.loss !== undefined ? raw.loss : fail / n;
+    point.loss = Math.max(0, Math.min(1, share));
     // Every run failed: there is no latency to draw, only the loss bar.
     if (fail < n) {
       point.p50Ms = raw.p50Ms;
@@ -176,6 +187,8 @@ export function seriesFromResponse(response: PathSeriesResponse): PathSeries {
     maxMs: num(b.max_ms),
     jitterMs: num(b.jitter_ms),
     loss: num(b.loss),
+    sent: num(b.sent),
+    lost: num(b.lost),
     method: b.method || undefined,
   }));
   const stepSec = response.step_seconds > 0 ? response.step_seconds : inferStep(raw);
@@ -464,7 +477,7 @@ function weightedQuantile(pairs: { value: number; weight: number }[], q: number)
 
 /**
  * A range's figures from its buckets, for a zoomed range or a server that sent
- * no window figures. Runs, failures, loss and availability are exact; p50,
+ * no window figures. Runs, failures, loss (over probes) and availability are exact; p50,
  * p95 and jitter are weighted by successful runs, which is close to but not
  * the server's histogram percentile.
  */
@@ -472,6 +485,9 @@ export function seriesStats(points: readonly SeriesPoint[]): SeriesStats {
   let samples = 0;
   let expected = 0;
   let fail = 0;
+  // Probes, as the server counts loss: echoes where a bucket has them, else runs.
+  let probes = 0;
+  let lostProbes = 0;
   const p50: { value: number; weight: number }[] = [];
   const p95: { value: number; weight: number }[] = [];
   let jitterSum = 0;
@@ -480,6 +496,13 @@ export function seriesStats(points: readonly SeriesPoint[]): SeriesStats {
     samples += p.n;
     expected += p.expected;
     fail += p.fail;
+    if (p.sent > 0) {
+      probes += p.sent;
+      lostProbes += p.lost;
+    } else {
+      probes += p.n;
+      lostProbes += p.fail;
+    }
     const ok = p.n - p.fail;
     if (p.p50Ms !== undefined && ok > 0) p50.push({ value: p.p50Ms, weight: ok });
     if (p.p95Ms !== undefined && ok > 0) p95.push({ value: p.p95Ms, weight: ok });
@@ -489,7 +512,7 @@ export function seriesStats(points: readonly SeriesPoint[]): SeriesStats {
     }
   }
   const stats: SeriesStats = { samples, expected };
-  if (samples > 0) stats.loss = fail / samples;
+  if (probes > 0) stats.loss = lostProbes / probes;
   if (expected > 0) stats.availability = Math.max(0, Math.min(1, (samples - fail) / expected));
   stats.p50Ms = weightedQuantile(p50, 0.5);
   stats.p95Ms = weightedQuantile(p95, 0.95);

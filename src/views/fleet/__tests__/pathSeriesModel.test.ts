@@ -22,6 +22,8 @@ import {
   stepIndex,
   toSeconds,
   visibleRange,
+  seriesFromResponse as fromResponse,
+  seriesStats as statsOf,
 } from "../pathSeriesModel.ts";
 
 test("steps: the server's rule at a 60 s interval and 7 days of fine history", () => {
@@ -212,4 +214,28 @@ test("aggregates: runs, loss and availability exact; percentiles weighted by suc
   assert.equal(stats.p95Ms, 90);
   assert.equal(stats.jitterMs, (2 * 5 + 8 * 3) / 8);
   assert.deepEqual(seriesStats([]), { samples: 0, expected: 0, p50Ms: undefined, p95Ms: undefined });
+});
+
+test("loss counts probes: lost over sent where a bucket has them, failed runs over runs before M2a", () => {
+  const response: PathSeriesResponse = {
+    window: "1h",
+    step_seconds: 300,
+    from: 0,
+    to: 900,
+    buckets: [
+      // Before M2a: one run failed of five.
+      { t: 0, n: 5, expected: 5, fail: 1, p50_ms: 70 },
+      // An ICMP bucket: five runs of five echoes, three echoes lost, no run failed.
+      { t: 300, n: 5, expected: 5, fail: 0, sent: 25, lost: 3, p50_ms: 71 },
+      // A tcp bucket written by M2a: sent counts one per run.
+      { t: 600, n: 5, expected: 5, fail: 0, sent: 5, lost: 0, p50_ms: 69 },
+    ],
+  };
+  const s = fromResponse(response);
+  assert.deepEqual(s.points.map((p) => p.loss), [0.2, 3 / 25, 0]);
+  assert.deepEqual(s.points.map((p) => [p.sent, p.lost]), [[0, 0], [25, 3], [5, 0]]);
+  const stats = statsOf(s.points);
+  // Probes: 5 runs, 25 echoes, 5 runs; lost: 1 run, 3 echoes, 0.
+  assert.equal(stats.loss, 4 / 35);
+  assert.equal(stats.availability, 14 / 15, "availability stays successful runs over expected runs");
 });

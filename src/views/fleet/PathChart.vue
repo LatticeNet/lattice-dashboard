@@ -544,6 +544,8 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
   entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? "destructive" : undefined });
+  // A multi-packet bucket (icmp) counts its loss in echoes; say how many.
+  if (p.sent > p.n) entries.push({ key: "echoes", label: t("fleet.monitoring.chart.echoes"), value: t("fleet.monitoring.chart.echoesValue", { lost: p.lost, sent: p.sent }), tone: p.lost > 0 ? "destructive" : undefined });
   entries.push({ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs });
   entries.push(...methodEntry);
   return { time, entries, note: p.p50Ms === undefined ? t("fleet.monitoring.chart.allFailed") : undefined };

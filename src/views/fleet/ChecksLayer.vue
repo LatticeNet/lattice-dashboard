@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, canEditCheck, checkGroup, latestCertExpiry } from "./checksModel";
+import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, latestCertExpiry } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -46,6 +46,7 @@ import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQu
 import { isServerEvaluated } from "./monitorTypeModel";
 import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
 import type { PathsData } from "./usePathsData";
 
 const props = defineProps<{
@@ -69,7 +70,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { stateLabel, displayLabel, whyText } = usePathsCopy();
+const { stateLabel, displayLabel, whyText, reasonText, reasonShort } = usePathsCopy();
 /** The server has the edit route: it answered the design 29 paths read. */
 const serverEdits = computed(() => props.data.source.value === "paths");
 const wide = useMediaQuery("(min-width: 768px)");
@@ -152,7 +153,7 @@ const attention = computed<AttentionItem[]>(() => {
 
 /* ---- The table ---- */
 
-function statusView(monitor: MonitorView): { text: string; detail?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
+function statusView(monitor: MonitorView): { text: string; detail?: string; title?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
   const state = healthOf(monitor);
   switch (state.kind) {
     case "disabled":
@@ -170,6 +171,9 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; tone
       };
     case "stale":
       return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
+    case "unmeasured":
+      // Every source's newest run measured nothing (design 29 M2a): unknown with the reason, never down.
+      return { text: t("fleet.monitoring.checks.unmeasured"), detail: reasonShort(state.reason), title: reasonText(state.reason), textClass: "text-muted-foreground" };
     case "up": {
       // A certificate check leads with the days left, the reason it exists; others with the newest latency.
       const days = certDaysLeft(monitor);
@@ -190,7 +194,8 @@ function certDaysLeft(monitor: MonitorView): number | undefined {
 /** A check's newest failure on one source, from the list's newest results. */
 function failureOn(monitor: MonitorView | undefined, source: string): string | undefined {
   const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
-  return latest && !latest.success ? latest.error || undefined : undefined;
+  // A run with a reason measured nothing; it is not the failure.
+  return latest && !latest.success && !latest.reason ? latest.error || undefined : undefined;
 }
 
 /**
@@ -290,6 +295,27 @@ function menuFor(monitor: MonitorView): RowMenuItem[] {
 
 const sheet = bindRouteOpen(props.owned);
 const selected = computed(() => (sheet.openId.value ? all.value.find((m) => m.id === sheet.openId.value) : undefined));
+
+/**
+ * The open check's M2a settings (design 29): its target node, packets,
+ * expected statuses and headers. A secret header reads "set", never a value,
+ * because the server never sends one.
+ */
+const settingsRows = computed(() => {
+  const m = selected.value;
+  if (!m) return [];
+  const rows: { key: string; label: string; value: string; mono?: boolean }[] = [];
+  if (m.target_node) rows.push({ key: "node", label: t("fleet.monitoring.checks.sheet.targetNode"), value: t("fleet.monitoring.checks.sheet.targetNodeValue", { name: nodeName(m.target_node), endpoint: m.target || t("common.misc.none") }) });
+  if (m.type === "icmp") rows.push({ key: "packets", label: t("fleet.monitoring.checks.editor.packets"), value: String(m.packets && m.packets > 0 ? m.packets : PACKETS_DEFAULT), mono: true });
+  if (m.type === "http" && (m.expect_status !== undefined || m.headers?.length || m.secrets_origin)) {
+    rows.push({ key: "status", label: t("fleet.monitoring.checks.editor.expectStatus.label"), value: m.expect_status || EXPECT_STATUS_DEFAULT, mono: true });
+  }
+  for (const [i, h] of (m.headers ?? []).entries()) {
+    rows.push({ key: `header-${i}`, label: h.name, value: h.secret ? t("fleet.monitoring.checks.sheet.secretSet") : (h.value ?? ""), mono: true });
+  }
+  if (m.secrets_origin) rows.push({ key: "origin", label: t("fleet.monitoring.checks.sheet.secretsOrigin"), value: m.secrets_origin, mono: true });
+  return rows;
+});
 const sheetState = computed(() => {
   if (!sheet.openId.value) return "loading" as const;
   if (props.monitorsQuery.data.value === undefined) {
@@ -451,7 +477,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs" data-testid="monitor-status">
           <StatusDot v-if="statusView(row).tone" :tone="statusView(row).tone" :pulse="false" />
           <span :class="statusView(row).textClass">{{ statusView(row).text }}</span>
-          <span v-if="statusView(row).detail" class="font-mono tabular text-muted-foreground">{{ statusView(row).detail }}</span>
+          <span v-if="statusView(row).detail" :class="cn('text-muted-foreground', statusView(row).title ? '' : 'font-mono tabular')" :title="statusView(row).title">{{ statusView(row).detail }}</span>
         </span>
       </template>
       <template #cell-type="{ row }">
@@ -510,6 +536,13 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       <div v-if="selected" class="space-y-5 text-sm">
         <p v-if="selected.managed_by" class="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.generatedNote') }}</p>
         <p v-else-if="!selected.enabled" class="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.pausedNote') }}</p>
+
+        <dl v-if="settingsRows.length" class="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-md border border-border p-3 text-xs" data-testid="check-settings">
+          <template v-for="row in settingsRows" :key="row.key">
+            <dt :class="cn('min-w-0 text-muted-foreground break-all', row.key.startsWith('header-') && 'font-mono')">{{ row.label }}</dt>
+            <dd :class="cn('min-w-0 break-all', row.mono && 'font-mono')">{{ row.value }}</dd>
+          </template>
+        </dl>
 
         <section v-if="sourceRows.length" class="space-y-1.5" :aria-label="$t('fleet.monitoring.checks.sheet.sources')">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.sources') }}</h3>

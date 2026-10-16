@@ -13,6 +13,11 @@
  * a current reading: the agents stopped reporting it, and the row says when
  * the last one arrived instead of "up".
  *
+ * A result with a reason (design 29 M2a: icmp_not_permitted,
+ * destination_refused, agent_too_old) measured nothing: it is neither a
+ * pass nor a failure. A monitor whose every newest result has one is
+ * "unmeasured", with the reason, and never counts as failing.
+ *
  * Kept free of Vue so `node --test` covers it directly.
  */
 
@@ -27,6 +32,7 @@ export interface HealthResult {
   at: string;
   success: boolean;
   latency_ms?: number;
+  reason?: string;
 }
 
 export type MonitorHealth =
@@ -36,16 +42,18 @@ export type MonitorHealth =
   | { kind: "none" }
   | { kind: "failing"; failing: number; total: number; lastAt: number }
   | { kind: "stale"; lastAt: number }
+  | { kind: "unmeasured"; total: number; reason: string; lastAt: number }
   | { kind: "up"; total: number; latencyMs?: number; lastAt: number };
 
 /** Failing first, then what cannot be trusted, then what is fine. */
 const RANK: Record<MonitorHealth["kind"], number> = {
   failing: 0,
   stale: 1,
-  none: 2,
-  unread: 3,
-  up: 4,
-  disabled: 5,
+  unmeasured: 2,
+  none: 3,
+  unread: 4,
+  up: 5,
+  disabled: 6,
 };
 
 export function healthRank(health: MonitorHealth): number {
@@ -84,10 +92,12 @@ export function monitorHealth(
   const latest = latestPerNode(results);
   if (latest.length === 0) return { kind: "none" };
   const lastAt = Math.max(...latest.map((result) => time(result.at)));
-  const failing = latest.filter((result) => !result.success).length;
+  const measured = latest.filter((result) => !result.reason);
+  const failing = measured.filter((result) => !result.success).length;
   if (failing > 0) return { kind: "failing", failing, total: latest.length, lastAt };
   if (now - lastAt > staleAfterMs(monitor)) return { kind: "stale", lastAt };
-  const latencies = latest
+  if (measured.length === 0) return { kind: "unmeasured", total: latest.length, reason: latest[0]!.reason ?? "", lastAt };
+  const latencies = measured
     .map((result) => result.latency_ms)
     .filter((value): value is number => value !== undefined && Number.isFinite(value));
   const latencyMs = latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : undefined;

@@ -204,6 +204,8 @@ export const UNKNOWN_REASONS = [
   "no_results",
   "results_stopped",
   "agent_too_old",
+  "icmp_not_permitted",
+  "destination_refused",
   "method_refused",
   "icmp_filtered",
   "beacon_not_enabled",
@@ -235,7 +237,6 @@ const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
   unsupported_method: "agent_too_old",
   refused_by_node: "method_refused",
   beacon_off: "beacon_not_enabled",
-  icmp_not_permitted: "method_refused",
 };
 
 /** The reason as a code the console has a sentence for, or undefined. */
@@ -266,6 +267,19 @@ export type PathDisplay = PathState | "paused";
 
 export function displayState(path: { state: PathState; reason?: string }): PathDisplay {
   return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
+}
+
+/**
+ * A multi-packet run's echoes for the runs list (design 29 M2a): how many
+ * were sent and lost and each RTT that came back, rounded to a tenth of a
+ * millisecond. Undefined for a single-probe run (tcp, http), which sends one.
+ */
+export function runEchoes(run: { sent?: number; lost?: number; rtts_ms?: number[] }): { sent: number; lost: number; rtts: string[] } | undefined {
+  const sent = Math.max(0, Math.floor(run.sent ?? 0));
+  if (sent === 0) return undefined;
+  const lost = Math.min(sent, Math.max(0, Math.floor(run.lost ?? 0)));
+  const rtts = (run.rtts_ms ?? []).filter((v) => typeof v === "number" && Number.isFinite(v)).slice(0, 10).map((v) => (Math.round(v * 10) / 10).toFixed(1));
+  return { sent, lost, rtts };
 }
 
 /* ------------------------------------------------------------------ */

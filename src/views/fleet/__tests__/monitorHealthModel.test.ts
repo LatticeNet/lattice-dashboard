@@ -96,3 +96,14 @@ test("the list's latest field is the state, for every monitor however many there
   // A list without the field (an older server) is not read, never up.
   assert.equal(monitorHealth(monitor(), undefined, NOW).kind, "unread");
 });
+
+test("a result with a reason measured nothing: it is not a failure, and all of them read unmeasured", () => {
+  const notPermitted = { node_id: "kix", at: secondsAgo(20), success: false, reason: "icmp_not_permitted" };
+  const up = { node_id: "sh", at: secondsAgo(15), success: true, latency_ms: 70 };
+  assert.deepEqual(monitorHealth(monitor(), [notPermitted, up], NOW), { kind: "up", total: 2, latencyMs: 70, lastAt: Date.parse(up.at) });
+  assert.deepEqual(monitorHealth(monitor(), [notPermitted], NOW), { kind: "unmeasured", total: 1, reason: "icmp_not_permitted", lastAt: Date.parse(notPermitted.at) });
+  assert.equal(failingMonitors([monitor()], (m) => monitorHealth(m, [notPermitted], NOW)).length, 0);
+  // Its last real outcome may be a failure; with the reason set, the path is unknown, not down.
+  assert.equal(monitorHealth(monitor(), [{ ...notPermitted, success: false }], NOW).kind, "unmeasured");
+  assert.ok(healthRank({ kind: "unmeasured", total: 1, reason: "x", lastAt: 0 }) > healthRank({ kind: "stale", lastAt: 0 }));
+});

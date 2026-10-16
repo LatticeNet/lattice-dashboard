@@ -26,6 +26,9 @@ import {
   setSource,
   setTargetMode,
   targetMode,
+  pathSetPreview,
+  setSourceMethod,
+  sourceMethod,
 } from "../latencyModel.ts";
 
 function plan(over: Partial<LatencyProbePlan> = {}): LatencyProbePlan {
@@ -287,4 +290,56 @@ test("a measured cell whose last probe is old reads as quiet; a fresh one does n
   assert.equal(cellQuietFor({ kind: "measured", lastAt: now - 30_000 }, 60, now), undefined);
   assert.equal(cellQuietFor({ kind: "unknown", lastAt: now - 2 * 86_400_000 }, 60, now), undefined, "nothing heard already says so");
   assert.equal(cellQuietFor({ kind: "failing", lastAt: undefined }, 60, now), undefined);
+});
+
+/* ---- The path set's method (design 29 M2a) ---- */
+
+test("method and pins: sent only when set, so a server before M2a is never sent a field it refuses", () => {
+  const d = draftFromConfig(plan().config);
+  assert.equal(d.method, "");
+  assert.deepEqual(d.sourceMethods, {});
+  const out = draftToConfig(d);
+  assert.equal("method" in out, false);
+  assert.equal("source_methods" in out, false);
+  const auto = setSourceMethod({ ...d, method: "auto" }, "sh", "icmp");
+  assert.deepEqual(draftToConfig(auto).method, "auto");
+  assert.deepEqual(draftToConfig(auto).source_methods, { sh: "icmp" });
+  // A pin for a node that is no longer a source is not saved.
+  assert.equal(draftToConfig(setSourceMethod(d, "gone", "icmp")).source_methods, undefined);
+  assert.deepEqual(setSourceMethod(auto, "sh", undefined).sourceMethods, {});
+});
+
+test("a stored tcp reads as the empty method it means, so opening and saving changes nothing", () => {
+  const stored = { ...plan().config, method: "tcp", source_methods: { sh: "auto", other: "" } };
+  const d = draftFromConfig(stored);
+  assert.equal(d.method, "");
+  assert.deepEqual(d.sourceMethods, { sh: "auto" });
+  assert.equal(draftsDiffer(d, draftFromConfig({ ...plan().config, source_methods: { sh: "auto" } })), false);
+  assert.equal(sourceMethod(d, "sh"), "auto");
+  assert.equal(sourceMethod(d, "elsewhere"), "tcp");
+});
+
+test("the preview counts each source's targets by the method it will use", () => {
+  const p = plan({
+    config: { ...plan().config, sources: ["sh", "bj"] },
+    nodes: plan().nodes.map((n) => (n.node_id === "jp" ? { ...n, icmp_target: "203.0.113.3" } : n.node_id === "de" ? { ...n, icmp_target: "203.0.113.9" } : n)),
+  });
+  const nodes = [
+    { id: "sh", name: "cd-hs-sh", online: true, probe_methods: ["http", "icmp", "tcp"] },
+    { id: "bj", name: "cd-bj", online: true, probe_methods: ["http", "tcp"] },
+    { id: "us", name: "us-nat", online: true },
+    { id: "sg", name: "sg-1", online: true, public_ip: "203.0.113.8" },
+  ];
+  // Targets under the draft: jp, hk (no TCP line), us, de, sg.
+  const by = (rows: ReturnType<typeof pathSetPreview>, source: string) => rows.find((r) => r.source === source)!;
+  const tcp = pathSetPreview(draftFromConfig(p.config), p, nodes);
+  assert.deepEqual(tcp.map((r) => [r.source, r.method, r.tcp, r.icmp, r.none]), [["bj", "tcp", 4, 0, 1], ["sh", "tcp", 4, 0, 1]]);
+  const auto = pathSetPreview({ ...draftFromConfig(p.config), method: "auto" }, p, nodes);
+  // sh runs icmp: jp, de and sg have a public IPv4; us and hk fall to tcp (us has a line, hk none).
+  assert.deepEqual([by(auto, "sh").icmp, by(auto, "sh").tcp, by(auto, "sh").none], [3, 1, 1]);
+  // bj does not run icmp: auto falls back to tcp.
+  assert.deepEqual([by(auto, "bj").icmp, by(auto, "bj").tcp, by(auto, "bj").none, by(auto, "bj").refusal], [0, 4, 1, undefined]);
+  const pinned = pathSetPreview(setSourceMethod({ ...draftFromConfig(p.config), method: "auto" }, "bj", "icmp"), p, nodes);
+  // A pin never falls back: bj pinned to icmp reaches nothing and says why.
+  assert.deepEqual([by(pinned, "bj").pinned, by(pinned, "bj").icmp, by(pinned, "bj").none, by(pinned, "bj").refusal], [true, 0, 5, "agent_too_old"]);
 });
