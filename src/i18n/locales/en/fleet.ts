@@ -1319,7 +1319,6 @@ export default {
         "3d": "3d",
         "7d": "7d",
         "14d": "14d",
-        topologyNote: "Topology keeps 1h, 24h and 7d, so it shows the {window}.",
         long: {
           "1h": "last hour",
           "6h": "last 6 hours",
@@ -1335,12 +1334,14 @@ export default {
           paths: "{n} path | {n} paths",
           sources: "{n} source | {n} sources",
           down: "{n} down",
+          degraded: "{n} degraded",
           unknown: "{n} unknown",
           paused: "{n} paused",
           legacy: "latency paths only",
         },
         state: {
           up: "up",
+          degraded: "degraded",
           down: "down",
           unknown: "unknown",
           paused: "paused",
@@ -1376,6 +1377,9 @@ export default {
           beacon_unknown_epoch: "The target no longer accepts the key the source used; the source picks up the new one within a minute",
           beacon_rate_limited: "The target refused requests over its limit of 20 a second from this source",
           beacon_no_key: "The source holds no key for this target yet; it arrives with its next configuration pull",
+          degraded_loss: "Loss over the last hour is above its trigger: higher than the floor and higher than its usual level for the past week",
+          degraded_latency: "The median over the last 15 minutes is above its trigger: well over its usual level for the past week",
+          degraded_loss_latency: "Both loss over the last hour and the median over the last 15 minutes are above their triggers",
           unspecified: "No reason given",
         },
         reasonShort: {
@@ -1408,6 +1412,9 @@ export default {
           beacon_unknown_epoch: "old key",
           beacon_rate_limited: "rate limited",
           beacon_no_key: "no key yet",
+          degraded_loss: "loss over usual",
+          degraded_latency: "slower than usual",
+          degraded_loss_latency: "lossy and slow",
         },
         refusal: {
           agent_too_old: "agent too old for {method}",
@@ -1442,6 +1449,7 @@ export default {
           placeholder: "Search, or country:jp state:down source:cd-hs-sh",
           examples: {
             down: "Paths that are down",
+            degraded: "Degraded paths: lossier or slower than their own week",
             unknown: "Unknown paths that are not a pause",
             region: "Paths into Europe with a p50 over 200 ms",
             loss: "Paths that lost runs, worst first",
@@ -1449,7 +1457,7 @@ export default {
           fields: {
             target: "Target name",
             source: "Source name",
-            state: "up, down, unknown or paused",
+            state: "up, degraded, down, unknown or paused",
             reason: "Why a path is unknown or down, as a code or in words",
             region: "Target region, such as europe or eastAsia",
             country: "Target country code",
@@ -1476,6 +1484,34 @@ export default {
           clear: "Clear the query",
         },
         legacy: "This control plane serves the latency matrix only: windows of 1h, 24h and 7d, no jitter, and your own checks are not in the matrix.",
+        // Design 29 D13: a degraded path's evidence, from the server's last evaluation that found the condition.
+        evidence: {
+          loss: "Loss {loss} over the last hour ({lost} of {sent} probes), above its trigger of {trigger} (7-day loss {baseline}).",
+          latency: "Median {p50} over the last 15 minutes ({runs} runs), above its trigger of {trigger} (7-day median {baseline}).",
+          since: "Degraded since {time}.",
+          clearing: "Clearing since {time}: it reads up again at {leaves} unless the condition returns.",
+        },
+        // Design 29 D13: triangulation, a label with its evidence; it changes no state and sends nothing.
+        verdict: {
+          label: {
+            target: "Likely cause: the target",
+            source: "Likely cause: {source}'s network",
+            path: "Likely cause: this path",
+          },
+          target: {
+            reach: "Down from all {n} sources that report on it: {sources}",
+            quality: "Down or degraded from all {n} sources that report on it: {sources}",
+          },
+          source: {
+            reach: "{source} fails {bad} of the {fresh} targets it reports on; other sources reach {elsewhere} of them.",
+            quality: "{source} is down or degraded to {bad} of the {fresh} targets it reports on; other sources reach {elsewhere} of them at their usual level.",
+          },
+          path: {
+            reach: "{n} other source reaches {target} | {n} other sources reach {target}",
+            quality: "{n} other source reaches {target} at its usual level | {n} other sources reach {target} at their usual level",
+          },
+          alone: "Only {source} reports on {target}, so the cause cannot be placed.",
+        },
         stats: {
           jitter: "jitter",
           loss: "loss",
@@ -1486,6 +1522,9 @@ export default {
           windowDelta: "Over the {window}, change against the period before it",
           zoomed: "Selected range {from} to {to}",
           mixed: "These figures include {span} measured by {methods} before the switch to {method} {age}. Select a range after the switch on the chart to see {method} alone.",
+          triggers: "Degraded above",
+          triggerLoss: "loss {trigger} over an hour (7-day {baseline})",
+          triggerLatency: "median {trigger} over 15 min (7-day {baseline})",
         },
         sheet: {
           title: "{source} to {target}",
@@ -1524,6 +1563,10 @@ export default {
           editPathSet: "Edit path set",
           openSource: "Source node",
           openTarget: "Target node",
+          clearing: "clearing",
+          compare: "Compare with the previous period",
+          baselinePending: "Degraded is judged once this path has {needed} hours of history ({hours} h so far).",
+          baselineDrift: "The 7-day baseline follows the path: a degradation that lasts for days slowly becomes its usual level, and the path then reads up again.",
         },
         toast: {
           paused: "Path paused; its history stays",
@@ -1553,12 +1596,20 @@ export default {
         reset: "Reset zoom",
         min: "min",
         max: "max",
+        guideMedian: "7-day median {value}",
+        guideTrigger: "degraded above {value}",
+        previous: "previous p50",
+        previousNone: "no runs then",
       },
       overview: {
         clear: "The only path is up over the {window}. | All {n} paths are up over the {window}.",
         attention: {
           down: "{target} is down from {source}",
           downMany: "{target} is down from {n} of the {total} sources that measure it",
+          downSource: "{n} path down from {source} | {n} paths down from {source}",
+          degraded: "{target} is degraded from {source}",
+          degradedMany: "{target} is degraded from {n} of the {total} sources that measure it",
+          degradedSource: "{n} path degraded from {source} | {n} paths degraded from {source}",
           offline: "{source}'s agent is offline: {n} path unknown | {source}'s agent is offline: {n} paths unknown",
           lastSeen: "last seen {age}",
           paused: "{n} path paused | {n} paths paused",
@@ -1570,6 +1621,7 @@ export default {
         reach: {
           title: "Reach",
           reaches: "{up} of {total} up",
+          degraded: "{n} degraded",
           down: "{n} down",
           unknown: "{n} unknown",
           paused: "{n} paused",
@@ -1768,6 +1820,10 @@ export default {
           alertDown: "Alert, and announce the recovery, when a source fails",
           alertAfter: "Failed runs in a row before an alert",
           alertRuns: "times in a row",
+          alertDownDegraded: "Alert when a source fails, and when a path is degraded",
+          alertDegradedHint: "Pages as above, and also when a path is lossier or slower than its own week by the rule below; its recovery is announced too.",
+          alertRunsBefore: "failed runs in a row before a down alert",
+          alertTls: "TLS checks measure certificates, not latency, so they are never degraded.",
           nameHint: "Leave it empty to use the suggestion.",
           unchanged: "No changes",
           save: "Save",
@@ -1823,8 +1879,41 @@ export default {
           failed: "The check was not saved",
         },
       },
+      // Design 29 D13: the degraded rule's thresholds, in the check editor and the path set.
+      degradedRule: {
+        title: "Degraded when",
+        open: "Change",
+        summary: "Loss over the last hour above {lossPercent}% and above {lossFactor} times its 7-day loss, or the 15-minute median above {latencyFactor} times its 7-day median and at least {latencyMarginMs} ms over it.",
+        fix: "{n} threshold is out of bounds | {n} thresholds are out of bounds",
+        field: {
+          lossPercent: "Loss above",
+          lossFactor: "and above",
+          latencyFactor: "Median above",
+          latencyMarginMs: "and at least",
+        },
+        unit: {
+          lossPercent: "percent over the last hour",
+          lossFactor: "times the 7-day loss",
+          latencyFactor: "times the 7-day median",
+          latencyMarginMs: "ms over the 7-day median",
+        },
+        bounds: "{min} to {max}; default {default}",
+        outOfBounds: "Enter a value from {min} to {max}.",
+        gate: "A path is judged once it has 24 hours of history. Degraded shows on the page whatever the alert policy; the policy decides only whether it pages.",
+        reset: "Reset to defaults",
+      },
       pathSet: {
         title: "Path set",
+        alert: {
+          off: "Do not alert",
+          down: "Alert when a generated path fails",
+          down_and_degraded: "Alert when a generated path fails, and when it is degraded",
+        },
+        alertPages: {
+          off: "No generated path pages. Down and degraded still show on the page.",
+          down: "The {n} generated path pages after {after} failed runs in a row. | All {n} generated paths page after {after} failed runs in a row.",
+          down_and_degraded: "The {n} generated path pages after {after} failed runs in a row, and when it is degraded. | All {n} generated paths page after {after} failed runs in a row, and when they are degraded.",
+        },
         description: "One rule for measuring between your nodes: each source probes each target. Pause single paths here or from a path's sheet.",
         method: "TCP: connect to each target's line port. ICMP needs a newer control plane; Beacon arrives with a later agent release.",
         paused: "Paused paths",
@@ -2307,9 +2396,9 @@ export default {
         proof: {
           nodes: "{n} node | {n} nodes",
           paths: "{n} path | {n} paths",
-          failing: "{n} unreachable",
-          lossy: "{n} lossy",
-          quiet: "{n} quiet",
+          down: "{n} down",
+          degraded: "{n} degraded",
+          paused: "{n} paused",
           unknown: "{n} no data",
           chains: "{n} chain | {n} chains",
           chainsBroken: "{n} needs a look | {n} need a look",
@@ -2319,14 +2408,14 @@ export default {
         },
         reads: {
           plan: "probe plan",
-          rollups: "latency numbers",
+          paths: "paths",
           nodes: "node list",
           incidents: "incidents",
           monitors: "monitor list",
           chains: "line chains",
         },
         missing: {
-          rollups: "Latency numbers not read: {reason}. Probe paths show no numbers.",
+          plan: "Path set not read: {reason}. Sources keep the matrix's order, and targets the path set cannot dial show no note.",
           nodes: "Node list not read: {reason}. Heartbeats are not shown, and a probe source that stopped reporting greys its paths only once their last probe is old.",
           incidents: "Incidents not read: {reason}. Nodes carry no incident marks.",
           monitors: "Monitor list not read: {reason}. Checks are not drawn.",
@@ -2372,6 +2461,7 @@ export default {
           paths: "{n} path | {n} paths",
           quiet: "quiet {age}: paths show what it last heard",
           never: "never reported",
+          markOrder: "Mark {n} on each target row",
         },
         region: {
           mainland: "Mainland China",
@@ -2392,6 +2482,13 @@ export default {
           exit: "exit",
         },
         incidents: "{n} open incident | {n} open incidents",
+        // Design 29 D13: which sources draw their fan.
+        sources: {
+          control: "{shown} of {total} sources",
+          title: "Sources to draw",
+          reach: "{up} of {total} up",
+          reset: "Back to the first {n}",
+        },
         country: {
           nodes: "{n} node | {n} nodes",
           problems: "{n} with a problem | {n} with a problem",
@@ -2399,12 +2496,10 @@ export default {
           collapse: "Fold the nodes in {country}",
         },
         state: {
-          measured: "measured",
-          lossy: "lossy",
-          failing: "unreachable",
           unknown: "no data",
           paused: "paused",
-          quiet: "quiet",
+          degraded: "degraded",
+          down: "down",
           converged: "converged",
           pending: "applying",
           drifted: "drifted",
@@ -2415,16 +2510,11 @@ export default {
           none: "no result yet",
         },
         value: {
-          failing: "failed",
           unknown: "no data",
+          down: "down",
+          noPath: "no path",
           paused: "paused",
-          quiet: "quiet",
           notProbed: "not probed",
-          more: "+{n}",
-        },
-        quiet: {
-          source: "its source stopped reporting",
-          old: "last probe {age} ago",
         },
         card: {
           pair: "{from} → {to}",
@@ -2438,9 +2528,7 @@ export default {
           lastOkNoValue: "{age} ago, passed",
           lastFail: "{age} ago, failed",
           lastNone: "none yet",
-          paused: "paused: {reason}",
-          quiet: "quiet: {reason}",
-          partial: "{pct}% of the window heard",
+          method: "measured with {method}",
           chainLines: "line {source} to line {target}",
           chainError: "last error: {error}",
           bundle: "{n} paths into {country}; the worst is drawn",
@@ -2473,12 +2561,7 @@ export default {
         },
         legend: {
           label: "How to read the topology",
-          under: "under {ms} ms",
-          over: "over {ms} ms",
-          failing: "every probe failed",
-          lossy: "thick: loss {pct}% or more",
           unknown: "nothing heard",
-          quiet: "quiet: old data",
           paused: "paused",
           chain: "chain, relay to exit",
           chainBroken: "chain drifted or failed",
@@ -2500,7 +2583,7 @@ export default {
         },
         empty: {
           noSourcesTitle: "No probe source",
-          noSourcesDescription: "Probes run from source nodes. Pick one in the probe settings on the Latency layer.",
+          noSourcesDescription: "Probes run from the path set's sources. Choose them in the path set on Checks.",
           openLatency: "Open Latency",
           noChainsTitle: "No relay chains",
           noChainsDescription: "No line forwards to a downstream exit. Chains are set on vpn-core's Lines page and approved like any change.",
@@ -2817,6 +2900,7 @@ export default {
         service_down: "sing-box down",
         monitor_down: "Monitor failing",
         agent_stalled: "Agent stalled",
+        path_degraded: "Path degraded",
       },
       claim: {
         node_offline: "{subject} is offline",
@@ -2824,6 +2908,8 @@ export default {
         monitor_down: "{monitor} is failing on {node}",
         monitor_downAlone: "{subject} is failing",
         agent_stalled: "The agent on {subject} has stalled",
+        path_degraded: "{subject} degraded",
+        path_degradedPair: "{source} to {target} degraded",
       },
       severity: {
         critical: "Critical",

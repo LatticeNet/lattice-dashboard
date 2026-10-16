@@ -4,7 +4,9 @@
  * the page's window, targets down the side by region (they are many) and
  * sources across the top (they are few). Each cell is one path: the window's
  * p50 as a number, toned by the path's state, with the loss under it when
- * there was any; an unknown path is hatched and says why on hover and focus.
+ * there was any; an unknown path is hatched and says why on hover and focus;
+ * a degraded one (design 29 D13) is tinted in the warning tone and says its
+ * evidence on hover and focus.
  * Below 768 px the matrix becomes a list grouped by target, one row per
  * source. A cell opens the path sheet (?path=), which carries the chart.
  *
@@ -49,6 +51,7 @@ import {
   type PathRow,
 } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { verdictFor } from "./triangulationModel";
 import type { PathsData } from "./usePathsData";
 
 const props = defineProps<{
@@ -77,9 +80,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { reasonText, reasonShort, whyText, stateLabel, displayLabel, groupLabel, windowLong } = usePathsCopy();
-/** Why a path is not up: its reason, or for a down path the agent's newest error. */
-const why = (path: PathItem) => whyText(path, path.state === "down" && !path.reason ? props.failureOf(path.monitorId, path.source) : undefined);
+const { reasonText, reasonShort, whyText, stateLabel, displayLabel, groupLabel, windowLong, evidenceText } = usePathsCopy();
+/** Why a path is not up: its evidence when degraded, its reason, or for a down path the agent's newest error. */
+const why = (path: PathItem) => (path.state === "degraded" ? evidenceText(path.degraded, path.reason) : whyText(path, path.state === "down" && !path.reason ? props.failureOf(path.monitorId, path.source) : undefined));
 const wide = useMediaQuery("(min-width: 768px)");
 
 const matrix = computed(() => props.data.matrix.value);
@@ -109,14 +112,21 @@ const HATCH = "bg-[repeating-linear-gradient(135deg,var(--border)_0_1.5px,transp
 
 function cellClass(path: PathItem): string {
   if (path.state === "down") return "bg-destructive/6";
+  if (path.state === "degraded") return "bg-warning/8";
   if (path.state === "unknown") return HATCH;
   return "";
 }
 
 function railClass(path: PathItem): string {
   if (path.state === "up") return "bg-success";
+  if (path.state === "degraded") return "bg-warning";
   if (path.state === "down") return "bg-destructive";
   return "bg-transparent";
+}
+
+/** The loss figure under a degraded cell's p50 takes the warning ink (D13); elsewhere it stays muted. */
+function lossClass(path: PathItem): string {
+  return path.state === "degraded" ? "text-warning-text" : "text-muted-foreground";
 }
 
 /** An unknown path never leads with a number, even one its window still holds: it would read as current. */
@@ -317,6 +327,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
         <div v-else-if="shown" :class="cn('space-y-3', listQuery.staleRows.value && 'opacity-50')" :inert="listQuery.staleRows.value || undefined">
           <aside class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" data-testid="paths-legend" :aria-label="$t('fleet.monitoring.paths.legend.label')">
             <span class="inline-flex items-center gap-1.5"><span class="h-3 w-[3px] rounded-full bg-success" aria-hidden="true" />{{ $t('fleet.monitoring.paths.state.up') }}</span>
+            <span v-if="matrix.judgesDegraded" class="inline-flex items-center gap-1.5" data-legend="degraded"><span class="h-3 w-[3px] rounded-full bg-warning" aria-hidden="true" />{{ $t('fleet.monitoring.paths.state.degraded') }}</span>
             <span class="inline-flex items-center gap-1.5"><span class="h-3 w-[3px] rounded-full bg-destructive" aria-hidden="true" />{{ $t('fleet.monitoring.paths.state.down') }}</span>
             <span class="inline-flex items-center gap-1.5"><span :class="cn('size-3 rounded-[2px] border border-muted-foreground/50', HATCH)" aria-hidden="true" />{{ $t('fleet.monitoring.paths.legend.unknown') }}</span>
             <span>{{ $t('fleet.monitoring.paths.legend.number', { window: windowLong(window) }) }}</span>
@@ -403,7 +414,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                               <span :class="cn('absolute inset-y-1.5 start-1 w-[3px] rounded-full', railClass(cell.path))" aria-hidden="true" />
                               <span class="min-w-0 flex-1">
                                 <span :class="cn('block truncate font-mono font-medium leading-tight tabular', mainClass(cell.path))">{{ cellMain(cell.path) }}</span>
-                                <span v-if="cellSub(cell.path)" class="block max-w-32 truncate text-[11px] leading-tight text-muted-foreground">{{ cellSub(cell.path) }}</span>
+                                <span v-if="cellSub(cell.path)" :class="cn('block max-w-32 truncate text-[11px] leading-tight', lossClass(cell.path))">{{ cellSub(cell.path) }}</span>
                               </span>
                               <span v-if="section.kind === 'nodes' && mixedColumn(cell.source.nodeId) && cell.path.method" class="ms-1 shrink-0 self-start pt-1 font-mono text-[10px] text-muted-foreground" data-cell-method>{{ cell.path.method.toUpperCase() }}</span>
                             </button>
@@ -459,13 +470,13 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                             <span class="block truncate text-xs text-muted-foreground">
                               {{ $t('fleet.monitoring.paths.list.from', { source: cell.source.name }) }}<template v-if="cell.path.method"> · <span class="font-mono">{{ cell.path.method.toUpperCase() }}</span></template>
                             </span>
-                            <span v-if="cell.path.state !== 'up'" :class="cn('block text-xs', cell.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
-                              {{ displayLabel(cell.path) }}: {{ why(cell.path) }}
+                            <span v-if="cell.path.state !== 'up'" :class="cn('block text-xs', cell.path.state === 'down' ? 'text-destructive' : cell.path.state === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')">
+                              {{ displayLabel(cell.path) }}: {{ cell.path.state === 'degraded' ? reasonShort(cell.path.reason) : why(cell.path) }}
                             </span>
                           </span>
                           <span class="text-end">
                             <span :class="cn('block font-mono font-medium tabular', mainClass(cell.path))">{{ cell.path.p50Ms !== undefined ? formatMs(cell.path.p50Ms) : '' }}</span>
-                            <span v-if="(cell.path.loss ?? 0) > 0" class="block text-[11px] text-muted-foreground">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(cell.path.loss) }) }}</span>
+                            <span v-if="(cell.path.loss ?? 0) > 0" :class="cn('block text-[11px]', lossClass(cell.path))">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(cell.path.loss) }) }}</span>
                           </span>
                         </button>
                       </li>
@@ -503,6 +514,9 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
         :failure="openPath.state === 'down' && !openPath.reason ? failureOf(openPath.monitorId, openPath.source) : undefined"
         :agent-version="agentOf?.(openPath.source)"
         :paths-failed="!!data.pathsQuery.error.value && data.source.value === 'unknown'"
+        :owned="owned"
+        :judges-degraded="!!matrix?.judgesDegraded"
+        :verdict="data.triangulation.value ? verdictFor(data.triangulation.value, openPath) : undefined"
         @window="(w) => emit('window', w)"
       />
       <template v-if="openPath" #actions>

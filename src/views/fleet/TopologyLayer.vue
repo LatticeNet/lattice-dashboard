@@ -2,20 +2,21 @@
 /**
  * Monitoring's Topology layer: every path the console knows about, drawn
  * once (topologyModel): the control plane and each node's heartbeat, the
- * latency probes from their sources, relay to exit chains, and the checks
- * an operator made. Filters for the paths shown (?topo=); the window is the
- * page's (?window=), read here from the latency rollups at the nearest window
- * they keep (1h, 24h or 7d); hover or focus for the numbers and when they
- * were heard; click for the node sheet (?peek=), the path sheet on Paths, or
- * the check sheet on Checks.
+ * path set's paths from their sources, relay to exit chains, and the checks
+ * an operator made. Filters for the paths shown (?topo=); the probes come
+ * from the same matrix Paths draws, at the page's window (?window=, all six
+ * windows, design 29 D13); a source picker chooses which sources draw their
+ * fan (?topo.sources=, the first four in the path set's order by default);
+ * hover or focus for the numbers and when they were heard; click for the
+ * node sheet (?peek=), the path sheet on Paths, or the check sheet on Checks.
  *
  * Under 768 px the same model reads as a list of paths. On a touch screen
  * wider than that the list is the default and the graph is one tap away
  * (?as=graph); with a mouse the graph is the default (?as=list for the list).
  *
- * The page passes the reads it already polls (nodes, monitors, incidents);
- * this layer reads the probe plan and rollups (every 30 s, like Latency) and
- * the line chains (every 60 s, only with proxy:read). The proof line speaks
+ * The page passes the reads it already polls (nodes, monitors, incidents and
+ * the path reads); this layer reads the line chains (every 60 s, only with
+ * proxy:read). The proof line speaks
  * for every read the current filter draws from (topologyModel.readsFor), and
  * a read that never landed says so above the drawing with a retry.
  */
@@ -24,7 +25,7 @@ import { useI18n } from "vue-i18n";
 import { useMediaQuery, useNow } from "@vueuse/core";
 import { Network, RefreshCw } from "lucide-vue-next";
 
-import { api, unwrap, type IncidentListResponse, type LatencyProbePlan, type LatencyWindow, type LineChainView, type MonitorView, type Node } from "@/lib/api";
+import { api, unwrap, type IncidentListResponse, type LineChainView, type MonitorView, type Node } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAsyncData, type AsyncData } from "@/composables/useAsyncData";
 import { useProof, type ProofBinding } from "@/composables/useProof";
@@ -43,12 +44,17 @@ import { Button } from "@/components/ui/button";
 
 import TopologyGraph from "./TopologyGraph.vue";
 import TopologyList from "./TopologyList.vue";
-import { LOSS_ATTENTION } from "./latencyModel";
-import { encodePathKey, legacyWindow, parseWindow } from "./pathsModel";
+import TopologySourcePicker from "./TopologySourcePicker.vue";
+import { encodePathKey } from "./pathsModel";
+import { usePathsCopy } from "./pathsCopy";
+import type { PathsData } from "./usePathsData";
 import {
   COLLAPSE_AT,
+  DEFAULT_DRAWN_SOURCES,
+  PROBE_TONE,
   TOPOLOGY_LAYERS,
   buildTopology,
+  parseDrawnSources,
   layerEmpty as emptyKind,
   missingReads,
   readState,
@@ -61,6 +67,8 @@ import {
 
 const props = defineProps<{
   owned: OwnedRoute;
+  /** The page's path reads: the matrix the probes are drawn from, and the path set plan. */
+  data: PathsData;
   /** The page's node list read; never sent without node:read. */
   nodesQuery: AsyncData<Node[]>;
   /** Every monitor the page listed, generated ones included. */
@@ -76,6 +84,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { windowLong } = usePathsCopy();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("monitor:read"));
 const canReadNodes = computed(() => auth.can("node:read"));
@@ -84,22 +93,19 @@ const wide = useMediaQuery("(min-width: 768px)");
 const finePointer = useMediaQuery("(pointer: fine)");
 const now = useNow({ interval: 5000 });
 
-const planQuery = useAsyncData(
-  (signal) => (canRead.value ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined as unknown as LatencyProbePlan)),
-  { pollInterval: 30000, immediate: canRead.value },
-);
-const rollupsQuery = useAsyncData(
-  (signal) => (canRead.value ? api.monitors.latency.rollups({ signal }) : Promise.resolve(undefined)),
-  { pollInterval: 30000, immediate: canRead.value },
-);
+const planQuery = props.data.planQuery;
+const pathsQuery = props.data.pathsQuery;
 // A session without proxy:read never sends it.
 const chainsQuery = useAsyncData<LineChainView[]>(
   (signal) => api.proxy.lineChains({ signal }).then((r) => unwrap(r as { chains: LineChainView[] }, "chains")),
   { pollInterval: canReadChains.value ? 60000 : 0, immediate: canReadChains.value },
 );
 
-/** The page's window, read at the nearest window the latency rollups keep. */
-const windowParam = computed<LatencyWindow>(() => legacyWindow(parseWindow(props.owned.query().window)));
+/** The sources the picker drew; absent is the default, the first four in the path set's order. */
+const sourcesParam = bindQueryParam<string[] | undefined>(props.owned, "topo.sources", {
+  parse: (raw) => parseDrawnSources(raw),
+  format: (value) => (value && value.length ? value.join(",") : undefined),
+});
 const layerParam = bindQueryParam<TopologyLayer>(props.owned, "topo", {
   parse: (raw) => (TOPOLOGY_LAYERS.includes(raw as TopologyLayer) ? (raw as TopologyLayer) : "all"),
   format: (value) => (value === "all" ? undefined : value),
@@ -130,7 +136,7 @@ const chains = computed(() => (canReadChains.value ? chainsQuery.data.value : un
 type Query = Pick<AsyncData<unknown>, "data" | "error" | "loading" | "refreshing" | "lastUpdated" | "pollMs" | "refresh">;
 const QUERIES: Record<TopoRead, Query> = {
   plan: planQuery,
-  rollups: rollupsQuery,
+  paths: pathsQuery,
   nodes: props.nodesQuery,
   incidents: props.incidentsQuery,
   monitors: props.monitorsQuery,
@@ -139,7 +145,7 @@ const QUERIES: Record<TopoRead, Query> = {
 const status = (query: Query, allowed: boolean): TopoReadStatus => ({ allowed, hasData: query.data.value !== undefined, failed: !!query.error.value });
 const statuses = computed<TopoReadStatuses>(() => ({
   plan: status(planQuery, true),
-  rollups: status(rollupsQuery, true),
+  paths: status(pathsQuery, true),
   nodes: status(props.nodesQuery, canReadNodes.value),
   incidents: status(props.incidentsQuery, true),
   monitors: status(props.monitorsQuery, true),
@@ -152,20 +158,27 @@ const model = computed(() =>
   buildTopology({
     nodes: nodes.value,
     plan: planQuery.data.value,
-    rollups: rollupsQuery.data.value,
+    matrix: props.data.matrix.value,
+    drawnSources: sourcesParam.value,
     chains: chains.value,
     monitors: monitors.value,
     incidents: incidents.value,
-    window: windowParam.value,
+    window: props.data.window.value,
     layer: layerParam.value,
     now: now.value.getTime(),
   }),
 );
-const windowLabel = computed(() => t(`fleet.monitoring.latency.window.${windowParam.value}`));
+const windowLabel = computed(() => windowLong(props.data.window.value));
+
+/** The picker's choice: the default written as nothing, so the bare address stays bare. */
+function drawSources(ids: string[]): void {
+  const defaults = model.value.sourceChoices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id);
+  const same = ids.length === defaults.length && ids.every((id) => defaults.includes(id));
+  sourcesParam.value = ids.length === 0 || same ? undefined : ids;
+}
 
 function refreshAll(): void {
-  void planQuery.refresh();
-  void rollupsQuery.refresh();
+  // The page's refresh rereads the paths and the plan with everything else it polls.
   if (canReadChains.value) void chainsQuery.refresh();
   emit("refreshPage");
 }
@@ -175,7 +188,7 @@ function refreshAll(): void {
 // The weakest of the reads this filter draws from sets the age and the error;
 // before the probe plan lands nothing is drawn, so it alone decides "not read".
 const proofReads = computed(() => readsFor(layerParam.value, statuses.value));
-const proofBase = useProof(() => proofReads.value.map((read) => QUERIES[read]), { hasData: () => planQuery.data.value !== undefined });
+const proofBase = useProof(() => proofReads.value.map((read) => QUERIES[read]), { hasData: () => pathsQuery.data.value !== undefined });
 const proof = computed<ProofBinding>(() => {
   const failing = proofReads.value.find((read) => QUERIES[read].error.value);
   return {
@@ -185,17 +198,17 @@ const proof = computed<ProofBinding>(() => {
 });
 const proofSegments = computed<ProofSegment[]>(() => {
   const m = model.value;
-  if (!planQuery.data.value) return [];
+  if (!pathsQuery.data.value) return [];
   const c = m.counts;
   const out: ProofSegment[] = [];
   if (m.cp.known) out.push({ key: "nodes", tone: "strong", text: t("fleet.monitoring.topology.proof.nodes", { n: m.cp.total }, m.cp.total) });
   if (m.cp.quiet) out.push({ key: "quietNodes", tone: "destructive", text: t("fleet.monitoring.topology.cp.quiet", { n: m.cp.quiet }) });
   if (layerParam.value === "all" || layerParam.value === "probes") {
     out.push({ key: "paths", text: t("fleet.monitoring.topology.proof.paths", { n: c.paths }, c.paths) });
-    if (c.failing) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.topology.proof.failing", { n: c.failing }) });
-    if (c.lossy) out.push({ key: "lossy", tone: "warning", text: t("fleet.monitoring.topology.proof.lossy", { n: c.lossy }) });
-    if (c.quiet) out.push({ key: "quiet", tone: "warning", text: t("fleet.monitoring.topology.proof.quiet", { n: c.quiet }) });
+    if (c.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.topology.proof.down", { n: c.down }) });
+    if (c.degraded) out.push({ key: "degraded", tone: "warning", text: t("fleet.monitoring.topology.proof.degraded", { n: c.degraded }) });
     if (c.unknown) out.push({ key: "unknown", tone: "muted", text: t("fleet.monitoring.topology.proof.unknown", { n: c.unknown }) });
+    if (c.paused) out.push({ key: "paused", tone: "muted", text: t("fleet.monitoring.topology.proof.paused", { n: c.paused }) });
   }
   if ((layerParam.value === "all" || layerParam.value === "chains") && chains.value) {
     out.push({ key: "chains", text: t("fleet.monitoring.topology.proof.chains", { n: c.chains }, c.chains) });
@@ -223,7 +236,7 @@ const layerTabs = computed(() =>
 const missingNotes = computed(() => {
   const own = layerParam.value === "chains" ? "chains" : layerParam.value === "checks" ? "monitors" : undefined;
   return missingReads(layerParam.value, statuses.value)
-    .filter((read) => read !== own && read !== "plan")
+    .filter((read) => read !== own && read !== "paths")
     .map((read) => ({
       read,
       text: t(`fleet.monitoring.topology.missing.${read}`, { reason: readReason(read) }),
@@ -267,15 +280,13 @@ const showsProbes = computed(() => layerParam.value === "all" || layerParam.valu
 const showsChains = computed(() => (layerParam.value === "all" || layerParam.value === "chains") && model.value.counts.chains > 0);
 const showsChecks = computed(() => (layerParam.value === "all" || layerParam.value === "checks") && model.value.checks.length > 0);
 type LegendItem = { key: string; color: string; dash?: string; width: number; double?: boolean; label: string };
+// A probe's colour is its state's tone and nothing else (design 29 D13): the legend is the states.
 const LEGEND_PROBES = computed<LegendItem[]>(() => [
-  { key: "success", color: "--success", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 50 }) },
-  { key: "chart-2", color: "--chart-2", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 100 }) },
-  { key: "warning", color: "--warning", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 250 }) },
-  { key: "destructive", color: "--destructive", width: 2, label: t("fleet.monitoring.topology.legend.over", { ms: 250 }) },
-  { key: "lossy", color: "--warning", width: 3.5, label: t("fleet.monitoring.topology.legend.lossy", { pct: Math.round(LOSS_ATTENTION * 100) }) },
-  { key: "failing", color: "--destructive", dash: "5 4", width: 2, label: t("fleet.monitoring.topology.legend.failing") },
-  { key: "quiet", color: "--muted-foreground", dash: "5 4", width: 1.5, label: t("fleet.monitoring.topology.legend.quiet") },
-  { key: "unknown", color: "--muted-foreground", dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.topology.legend.unknown") },
+  { key: "up", color: PROBE_TONE.up, width: 2, label: t("fleet.monitoring.topology.state.up") },
+  { key: "degraded", color: PROBE_TONE.degraded, width: 2, label: t("fleet.monitoring.topology.state.degraded") },
+  { key: "down", color: PROBE_TONE.down, width: 2.5, label: t("fleet.monitoring.topology.state.down") },
+  { key: "unknown", color: PROBE_TONE.unknown, dash: "5 4", width: 1.5, label: t("fleet.monitoring.topology.legend.unknown") },
+  { key: "paused", color: PROBE_TONE.paused, dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.topology.legend.paused") },
 ]);
 const LEGEND_CHAINS = computed<LegendItem[]>(() => [
   { key: "chain", color: "--primary", width: 4.5, double: true, label: t("fleet.monitoring.topology.legend.chain") },
@@ -325,8 +336,8 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
     <template v-else>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <ProofLine v-bind="proof" :segments="proofSegments" class="me-auto" @retry="refreshAll" />
-        <Button variant="outline" size="sm" type="button" :disabled="planQuery.refreshing.value || rollupsQuery.refreshing.value" @click="refreshAll">
-          <RefreshCw :class="cn('size-4', (planQuery.refreshing.value || rollupsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
+        <Button variant="outline" size="sm" type="button" :disabled="planQuery.refreshing.value || pathsQuery.refreshing.value" @click="refreshAll">
+          <RefreshCw :class="cn('size-4', (planQuery.refreshing.value || pathsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
       </div>
@@ -344,6 +355,12 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
             {{ tab.label }}
           </button>
         </div>
+        <!-- Which sources draw their fan: every path set source, with its reach (D13). -->
+        <TopologySourcePicker
+          v-if="showsProbes && model.sourceChoices.length > 1"
+          :choices="model.sourceChoices"
+          @update="drawSources"
+        />
         <div v-if="wide" class="flex rounded-md border border-border p-0.5 text-xs md:ms-auto" role="group" :aria-label="$t('fleet.monitoring.topology.viewLabel')" data-testid="topology-presentation">
           <button
             v-for="v in (['graph', 'list'] as const)"
@@ -359,13 +376,13 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
       </div>
 
       <DataState
-        :loading="planQuery.loading.value || filterLoading"
-        :error="planQuery.error.value ?? null"
-        :has-data="!!planQuery.data.value"
+        :loading="pathsQuery.loading.value || filterLoading"
+        :error="pathsQuery.error.value ?? null"
+        :has-data="!!data.matrix.value"
         :skeleton-rows="8"
         @retry="refreshAll"
       >
-        <template v-if="planQuery.data.value">
+        <template v-if="data.matrix.value">
           <EmptyState v-if="layerEmpty" :icon="Network" :title="layerEmpty.title" :description="layerEmpty.description">
             <Button v-if="layerEmpty.action" size="sm" variant="outline" type="button" @click="layerEmpty.action.run">{{ layerEmpty.action.label }}</Button>
           </EmptyState>

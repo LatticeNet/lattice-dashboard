@@ -21,6 +21,11 @@
  * On an M2b server Beacon joins the methods and the pins, Auto prefers it
  * (design 29 D12), and the preview counts the targets whose beacon plan has
  * not admitted the source yet.
+ *
+ * On a server that judges degraded (design 29 D13) the path set gains an
+ * alert step, Off by default as every path set has been (Down after N failed
+ * runs, or Down and degraded), with a line that says which generated paths
+ * page, and the same "Degraded when" thresholds the check editor offers.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -37,6 +42,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import DegradedRuleFields from "./DegradedRuleFields.vue";
 import SourcePicker from "./SourcePicker.vue";
 import {
   LATENCY_MAX_INTERVAL_SEC,
@@ -47,6 +53,8 @@ import {
   draftTargetReason,
   draftToConfig,
   draftsDiffer,
+  LATENCY_ALERT_DEFAULT_AFTER,
+  LATENCY_ALERT_MAX_AFTER,
   pathSetMethods,
   pathSetPreview,
   setPairEnabled,
@@ -60,6 +68,7 @@ import {
   type TargetMode,
 } from "./latencyModel";
 import { sourceSupport } from "./checkRulesModel";
+import { effectiveAlert, pagesDown } from "./degradedRuleModel";
 import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
@@ -70,6 +79,8 @@ const props = defineProps<{
   m2a?: boolean;
   /** The server speaks M2b: Beacon is among them. */
   m2b?: boolean;
+  /** The server judges degraded (design 29 D13): the alert policy and the thresholds are offered. */
+  m3?: boolean;
 }>();
 const emit = defineEmits<{ close: []; saved: [plan: LatencyProbePlan]; reload: [] }>();
 
@@ -253,7 +264,31 @@ function discard(): void {
   emit("close");
 }
 
-const problemText = computed(() => problems.value.map((p) => t(`fleet.monitoring.latency.config.problem.${p}`, { min: LATENCY_MIN_INTERVAL_SEC, max: LATENCY_MAX_INTERVAL_SEC, timeout: LATENCY_MAX_TIMEOUT_SEC })));
+// The alert's run count and the thresholds say their problems at their own fields.
+const problemText = computed(() =>
+  problems.value
+    .filter((p) => p !== "alertAfter" && p !== "degraded")
+    .map((p) => t(`fleet.monitoring.latency.config.problem.${p}`, { min: LATENCY_MIN_INTERVAL_SEC, max: LATENCY_MAX_INTERVAL_SEC, timeout: LATENCY_MAX_TIMEOUT_SEC })),
+);
+
+/* ---- When it fails (design 29 D13) ---- */
+
+/** The policy in force: a path set nobody set reads Off, as the server reads it. */
+const alert = computed(() => effectiveAlert(draft.value.alert, true));
+const alertAfterShown = computed(() => (draft.value.alertAfter > 0 ? draft.value.alertAfter : LATENCY_ALERT_DEFAULT_AFTER));
+function setAlert(next: "off" | "down" | "down_and_degraded"): void {
+  // A path set stored without a policy already reads Off: choosing Off changes nothing to save.
+  draft.value = { ...draft.value, alert: next === "off" && !base.value.alert ? "" : next };
+}
+function setAlertAfter(value: string | number | undefined): void {
+  const n = Number(value);
+  draft.value = { ...draft.value, alertAfter: value === "" || value === undefined ? 0 : Number.isFinite(n) ? n : Number.NaN };
+}
+/** Which generated paths page, and on what: every path the path set makes, after the save. */
+const alertLine = computed(() => {
+  if (alert.value === "off") return t("fleet.monitoring.pathSet.alertPages.off");
+  return t(`fleet.monitoring.pathSet.alertPages.${alert.value}`, { n: pathCount.value, after: alertAfterShown.value }, pathCount.value);
+});
 const SECTION = "grid min-w-0 gap-2.5 border-0 p-0";
 const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 </script>
@@ -402,7 +437,34 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         <p v-for="text in problemText" :key="text" role="alert" class="text-xs text-destructive">{{ text }}</p>
       </fieldset>
 
-      <!-- 5. Paused paths -->
+      <!-- 5. When it fails (design 29 D13): Off by default, as every path set has been. -->
+      <fieldset v-if="m3" :class="SECTION" data-testid="path-set-alert">
+        <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.fail') }}</legend>
+        <label v-for="policy in (['off', 'down', 'down_and_degraded'] as const)" :key="policy" class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
+          <input type="radio" name="path-set-alert" class="accent-[var(--primary)]" :value="policy" :checked="alert === policy" @change="setAlert(policy)" />
+          <span>{{ $t(`fleet.monitoring.pathSet.alert.${policy}`) }}</span>
+        </label>
+        <div class="flex flex-wrap items-center gap-2.5 ps-6.5">
+          <Input
+            :model-value="alertAfterShown"
+            type="number"
+            min="1"
+            :max="LATENCY_ALERT_MAX_AFTER"
+            class="h-8 w-20"
+            :disabled="!pagesDown(alert)"
+            :aria-label="$t('fleet.monitoring.checks.editor.alertAfter')"
+            :aria-invalid="problems.includes('alertAfter') || undefined"
+            data-testid="path-set-alert-after"
+            @update:model-value="setAlertAfter"
+          />
+          <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRunsBefore') }}</span>
+        </div>
+        <p v-if="problems.includes('alertAfter')" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checks.editor.problem.alertAfter', { after: LATENCY_ALERT_MAX_AFTER }) }}</p>
+        <p class="text-xs text-muted-foreground" data-testid="path-set-alert-line">{{ alertLine }}</p>
+        <DegradedRuleFields :model-value="draft.degraded" id-prefix="path-set-degraded" @update:model-value="(v) => (draft = { ...draft, degraded: v })" />
+      </fieldset>
+
+      <!-- 6. Paused paths -->
       <fieldset v-if="draft.disabledPairs.length" :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.pathSet.paused') }}</legend>
         <ul class="divide-y divide-border rounded-md border border-border">

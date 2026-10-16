@@ -24,6 +24,7 @@ import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, 
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
+import { defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedForSave, degradedProblems, effectiveAlert, pagesDown, type DegradedDraft, type DegradedField } from "@/views/fleet/degradedRuleModel";
 
 import {
   AGENT_DEFAULT_INTERVAL_SEC,
@@ -184,9 +185,15 @@ export interface CheckDraft {
   assignAll: boolean;
   nodeIds: string[];
   pausedNodeIds: string[];
-  /** down pages when a source fails `alertAfter` times in a row; off never pages. */
-  alert: "off" | "down";
+  /**
+   * down pages when a source fails `alertAfter` times in a row; off never
+   * pages; down_and_degraded (design 29 D13) adds path.degraded and
+   * path.recovered, and the run count applies to it as to down.
+   */
+  alert: MonitorAlertPolicy;
   alertAfter: number;
+  /** The degraded rule's thresholds as the form holds them (D13); every kind but tls. */
+  degraded: DegradedDraft;
 }
 
 export function emptyDraft(type: MonitorType = "http"): CheckDraft {
@@ -208,6 +215,7 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     pausedNodeIds: [],
     alert: "down",
     alertAfter: ALERT_DEFAULT_AFTER,
+    degraded: defaultDegradedDraft(),
   };
 }
 
@@ -232,8 +240,9 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     assignAll: !!monitor.assign_all,
     nodeIds: uniqueSorted(monitor.node_ids),
     pausedNodeIds: uniqueSorted(monitor.paused_node_ids),
-    alert: monitor.alert === "off" ? "off" : "down",
+    alert: effectiveAlert(monitor.alert, false),
     alertAfter: monitor.alert_after && monitor.alert_after > 0 ? monitor.alert_after : ALERT_DEFAULT_AFTER,
+    degraded: degradedDraftFrom(monitor.degraded),
   };
 }
 
@@ -274,7 +283,11 @@ export type DraftProblem =
   | "headers"
   | "sources"
   | "threshold"
-  | "alertAfter";
+  | "alertAfter"
+  /** down_and_degraded on a tls check, which measures a certificate and is never judged degraded. */
+  | "alertTls"
+  /** A degraded threshold outside its bounds (D13): the field is in DraftRules' answer from degradedProblems. */
+  | "degraded";
 
 /**
  * What the rules need besides the draft. `m2a` turns on the M2a rules; the
@@ -283,6 +296,8 @@ export type DraftProblem =
  */
 export interface DraftRules {
   m2a: boolean;
+  /** The server judges degraded (design 29 D13): its thresholds are checked. */
+  m3?: boolean;
   /** The node target resolved for the method; "refused" blocks the save. */
   nodeTarget?: NodeTargetResolution;
   /** The packets per second the busiest source would send to this check's address, this check included; set only when the server re-checks it (budgetRechecked). */
@@ -332,11 +347,18 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
   } else if (!draft.assignAll && draft.nodeIds.length === 0) {
     out.push("sources");
   }
-  if (draft.alert === "down") {
+  if (pagesDown(draft.alert)) {
     const after = Number(draft.alertAfter);
     if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
   }
+  if (draft.alert === "down_and_degraded" && isServerEvaluated(draft.type)) out.push("alertTls");
+  if (rules.m3 && !isServerEvaluated(draft.type) && degradedProblems(draft.degraded).length) out.push("degraded");
   return out;
+}
+
+/** The degraded thresholds the server would refuse, by field; none on a tls check, which has no rule. */
+export function draftDegradedProblems(draft: Pick<CheckDraft, "type" | "degraded">): DegradedField[] {
+  return isServerEvaluated(draft.type) ? [] : degradedProblems(draft.degraded);
 }
 
 /** The header problems of an http draft. */
@@ -377,12 +399,14 @@ function sameList(a: readonly string[] | undefined, b: readonly string[] | undef
 /** Whether the draft differs from what the check holds: a new identity, or an edit that would change a field. */
 export function draftChanged(monitor: MonitorView, draft: CheckDraft): boolean {
   if (identityChanged(monitor, draft)) return true;
-  return Object.keys(buildUpdate(monitor, draft, { m2a: true })).some((key) => key !== "id" && key !== "version");
+  return Object.keys(buildUpdate(monitor, draft, { m2a: true, m3: true })).some((key) => key !== "id" && key !== "version");
 }
 
 export interface BodyOptions {
   /** The server speaks M2a: send its fields. */
   m2a?: boolean;
+  /** The server judges degraded (design 29 D13): send the thresholds when they changed. */
+  m3?: boolean;
   /** The target node's name, for the suggested check name. */
   nodeName?: string;
 }
@@ -423,7 +447,12 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft, options: Bo
   }
   const alert: MonitorAlertPolicy = draft.alert;
   if (alert !== before.alert) body.alert = alert;
-  if (alert === "down" && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
+  if (pagesDown(alert) && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
+  // Absent keeps the stored rule; an object replaces it whole, {} resets it (D13).
+  if (options.m3 && !isServerEvaluated(draft.type)) {
+    const degraded = degradedEdit(monitor.degraded, draft.degraded);
+    if (degraded) body.degraded = degraded;
+  }
   return body;
 }
 
@@ -453,7 +482,11 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean, options: Body
   }
   if (withAlert) {
     base.alert = draft.alert;
-    if (draft.alert === "down") base.alert_after = Number(draft.alertAfter);
+    if (pagesDown(draft.alert)) base.alert_after = Number(draft.alertAfter);
+  }
+  if (options.m3 && !isServerEvaluated(draft.type)) {
+    const degraded = degradedForSave(draft.degraded);
+    if (degraded) base.degraded = degraded;
   }
   return base;
 }
@@ -624,7 +657,8 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
   if (toTls && !fromTls) {
     return {
       stash: { assignAll: draft.assignAll, nodeIds: [...draft.nodeIds], intervalSec: draft.intervalSec, timeoutSec: draft.timeoutSec },
-      draft: { ...draft, type: next, assignAll: false, nodeIds: [], intervalSec: TLS_DEFAULT_INTERVAL_SEC, timeoutSec: TLS_DEFAULT_TIMEOUT_SEC },
+      // A certificate is never judged degraded: down_and_degraded falls back to down (design 29 D13).
+      draft: { ...draft, type: next, assignAll: false, nodeIds: [], intervalSec: TLS_DEFAULT_INTERVAL_SEC, timeoutSec: TLS_DEFAULT_TIMEOUT_SEC, alert: draft.alert === "down_and_degraded" ? "down" : draft.alert },
     };
   }
   if (fromTls && !toTls) {

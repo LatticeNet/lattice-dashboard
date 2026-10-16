@@ -7,6 +7,12 @@
  * the actions. The series comes from GET /api/monitors/series; a server from
  * before design 29 answers a generated path from the latency series route and
  * has no series for an operator check, which then shows its runs only.
+ *
+ * From a server that judges degraded (design 29 D13) the sheet says a
+ * degraded path's evidence, since when and while clearing until when; a down
+ * or degraded path's verdict; the degraded rule's guides on the chart and the
+ * loss trigger in the stats; and "Compare with the previous period", kept in
+ * ?compare=1, overlays the previous window's p50.
  */
 import { computed, defineAsyncComponent, defineComponent, h, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -15,6 +21,8 @@ import { RouterLink } from "vue-router";
 
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import type { OwnedRoute } from "@/composables/useOwnedRoute";
 import { formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -22,8 +30,9 @@ import { Badge } from "@/components/ui/badge";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
-import { earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
-import { isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
+import { baselinePending, earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { formatShare, isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
+import type { Verdict } from "./triangulationModel";
 import {
   availability,
   formatDeltaLoss,
@@ -64,12 +73,18 @@ const props = defineProps<{
   agentVersion?: string;
   /** The paths read failed before it said which server this is, so no series can be asked for yet. */
   pathsFailed?: boolean;
+  /** The page's route, which keeps "Compare with the previous period" in ?compare=1. */
+  owned: OwnedRoute;
+  /** The server judges degraded (its matrix carries degraded_at): the comparison and the rule's guides exist. */
+  judgesDegraded?: boolean;
+  /** Where a down or degraded path's cause most likely sits (triangulationModel). */
+  verdict?: Verdict;
 }>();
 
 const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
-const { whyText, stateLabel, windowLong, reasonText, reasonShort, methodName } = usePathsCopy();
+const { whyText, stateLabel, windowLong, reasonText, reasonShort, methodName, evidenceSentences, degradedTimes, verdictLabel, verdictEvidence } = usePathsCopy();
 /** Agent updates needs node:admin; without it the sheet names the version and links nowhere. */
 const canUpdateAgents = computed(() => useAuthStore().can("node:admin"));
 
@@ -87,6 +102,14 @@ const monitorId = computed(() => props.path?.monitorId || props.address.monitorI
 /** The range the chart is zoomed to, whose figures replace the window's. */
 const zoom = ref<{ from: number; to: number } | null>(null);
 
+/** "Compare with the previous period" (D13): off by default, kept in ?compare=1. */
+const compareParam = bindQueryParam<boolean>(props.owned, "compare", {
+  parse: (raw) => raw === "1",
+  format: (value) => (value ? "1" : undefined),
+});
+/** Only a server that judges degraded answers compare=previous; an older one is never asked. */
+const comparing = computed(() => !!props.judgesDegraded && props.source === "paths" && compareParam.value);
+
 const seriesQuery = useAsyncData<PathSeries | null>(
   async (signal) => {
     const a = props.address;
@@ -94,7 +117,8 @@ const seriesQuery = useAsyncData<PathSeries | null>(
       if (!a.targetNode) return null;
       return seriesFromLatency(await api.monitors.latency.series(a.source, a.targetNode, legacyWindow(props.window), { signal }));
     }
-    const query = a.targetNode && !a.monitorId ? { source: a.source, target_node: a.targetNode, window: props.window } : { source: a.source, monitor: a.monitorId, window: props.window };
+    const base = a.targetNode && !a.monitorId ? { source: a.source, target_node: a.targetNode, window: props.window } : { source: a.source, monitor: a.monitorId, window: props.window };
+    const query = comparing.value ? { ...base, compare: "previous" as const } : base;
     return seriesFromResponse(await api.monitors.series(query, { signal }));
   },
   { pollInterval: 60000, immediate: false },
@@ -105,6 +129,10 @@ const resultsQuery = useAsyncData<MonitorResult[]>(
   { pollInterval: 30000, immediate: false },
 );
 
+// Turning the comparison on or off rereads the series; the chart keeps drawing the one it has meanwhile.
+watch(comparing, () => {
+  if (props.source !== "unknown") void seriesQuery.refresh();
+});
 watch(
   () => [props.address.source, props.address.targetNode, props.address.monitorId, props.window, props.source] as const,
   () => {
@@ -201,7 +229,28 @@ const mixedNote = computed(() => {
   });
 });
 
-const tone = computed<"success" | "destructive" | "muted">(() => (props.path?.state === "up" ? "success" : props.path?.state === "down" ? "destructive" : "muted"));
+const tone = computed<"success" | "warning" | "destructive" | "muted">(() => {
+  const state = props.path?.state;
+  return state === "up" ? "success" : state === "degraded" ? "warning" : state === "down" ? "destructive" : "muted";
+});
+
+/* ---- Degraded (design 29 D13) ---- */
+
+const degradedLines = computed(() => (props.path?.state === "degraded" ? [...evidenceSentences(props.path.degraded), ...degradedTimes(props.path.degraded)] : []));
+/** The rule's triggers for the stats: the loss trigger has no guide (the loss lane is per bucket), so it is said here. */
+const triggers = computed(() => {
+  const b = series.value?.baseline;
+  if (!b?.ready || zoom.value) return undefined;
+  const parts: string[] = [];
+  if (b.triggerLoss !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLoss", { trigger: formatShare(b.triggerLoss), baseline: formatShare(b.loss ?? 0) }));
+  if (b.triggerP50Ms !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLatency", { trigger: formatMs(b.triggerP50Ms), baseline: formatMs(b.p50Ms) }));
+  return parts.length ? parts.join(" · ") : undefined;
+});
+/** A path not judged yet says how far it is: "Degraded is judged once this path has 24 hours of history (14 h so far)." */
+const pendingNote = computed(() => {
+  const pending = props.judgesDegraded ? baselinePending(series.value?.baseline) : undefined;
+  return pending ? t("fleet.monitoring.paths.sheet.baselinePending", { needed: pending.needed, hours: pending.hours }) : "";
+});
 
 /* ---- Runs ---- */
 
@@ -267,17 +316,26 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
     <!-- State and why: the first thing the sheet says. -->
     <div class="space-y-1">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Badge v-if="path" :variant="path.state === 'up' ? 'success' : path.state === 'down' ? 'destructive' : 'secondary'" data-testid="path-state">
+        <Badge v-if="path" :variant="path.state === 'up' ? 'success' : path.state === 'degraded' ? 'warning' : path.state === 'down' ? 'destructive' : 'secondary'" data-testid="path-state">
           {{ stateLabel(path.state) }}
         </Badge>
+        <span v-if="path?.state === 'degraded' && path.degraded?.clearingSince" class="text-xs text-warning-text" data-testid="path-clearing">{{ $t('fleet.monitoring.paths.sheet.clearing') }}</span>
         <span v-if="lastRun" class="text-xs text-muted-foreground">
           {{ lastRun.nothing ? $t('fleet.monitoring.paths.sheet.lastRunNothing', { age: formatRelativeTime(lastRun.at) }) : $t('fleet.monitoring.paths.sheet.lastRun', { age: formatRelativeTime(lastRun.at) }) }}
         </span>
         <span v-else-if="path" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.noRun') }}</span>
       </div>
       <p v-if="reasonDetail" class="font-mono text-xs break-words text-foreground" data-testid="path-reason-detail">{{ reasonDetail }}</p>
-      <p v-if="path && path.state !== 'up'" :class="cn('text-sm break-words', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
+      <template v-if="path?.state === 'degraded'">
+        <p class="text-sm break-words text-warning-text" data-testid="path-reason">{{ reasonText(path.reason) }}</p>
+        <p v-for="line in degradedLines" :key="line" class="text-xs break-words text-foreground" data-testid="path-evidence">{{ line }}</p>
+      </template>
+      <p v-else-if="path && path.state !== 'up'" :class="cn('text-sm break-words', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
         {{ reasonLine }}
+      </p>
+      <!-- Where the cause most likely sits (D13): a label with its evidence, never a state. -->
+      <p v-if="verdict && (path?.state === 'down' || path?.state === 'degraded')" class="text-xs break-words text-muted-foreground" data-testid="path-verdict">
+        <span class="font-medium text-foreground">{{ verdictLabel(verdict) }}</span><span aria-hidden="true"> · </span><span class="sr-only">. </span>{{ verdictEvidence(verdict) }}
       </p>
       <!-- What the operator can do about it, for the reasons that have a next step. -->
       <p v-if="unmeasured === 'agent_too_old' && (agentVersion || canUpdateAgents)" class="text-xs text-muted-foreground" data-testid="path-next">
@@ -320,10 +378,32 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
           <dd :class="cn('font-mono font-medium tabular', f.tone === 'destructive' && 'text-destructive')">{{ f.value }}</dd>
           <dd v-if="f.sub" class="font-mono text-[11px] text-muted-foreground tabular">{{ f.sub }}</dd>
         </div>
+        <!-- The degraded rule's triggers: the loss trigger has no guide on the chart, so the stats say both. -->
+        <div v-if="triggers" class="col-span-3 min-w-0 border-t border-border pt-2" data-testid="path-triggers">
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.stats.triggers') }}</dt>
+          <dd class="font-mono text-xs break-words tabular">{{ triggers }}</dd>
+        </div>
       </dl>
     </section>
 
     <section class="space-y-2" :aria-label="$t('fleet.monitoring.paths.sheet.chart')">
+      <!-- The chart header: the comparison, off by default (D13). -->
+      <div v-if="judgesDegraded && source === 'paths'" class="flex flex-wrap items-center justify-between gap-2">
+        <p class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.chart') }}</p>
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="compareParam"
+          :class="cn('inline-flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', compareParam ? 'text-foreground' : 'text-muted-foreground')"
+          data-testid="path-compare"
+          @click="compareParam = !compareParam"
+        >
+          <span :class="cn('relative inline-flex h-4 w-7 shrink-0 rounded-full border border-border transition-colors', compareParam ? 'bg-foreground' : 'bg-muted')" aria-hidden="true">
+            <span :class="cn('absolute top-0.5 size-2.5 rounded-full bg-card transition-[inset-inline-start]', compareParam ? 'start-3.5' : 'start-0.5')" />
+          </span>
+          {{ $t('fleet.monitoring.paths.sheet.compare') }}
+        </button>
+      </div>
       <p v-if="seriesQuery.error.value" class="rounded-md border border-border p-3 text-xs text-destructive" role="alert">
         {{ $t('fleet.monitoring.paths.sheet.seriesFailed', { reason: seriesQuery.error.value.message }) }}
         <button type="button" class="ms-1 font-medium text-foreground underline underline-offset-2" @click="seriesQuery.refresh()">{{ $t('common.actions.retry') }}</button>
@@ -347,9 +427,12 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
         :height="compact ? 200 : 228"
         :label="$t('fleet.monitoring.paths.sheet.chartLabel', { path: title, window: windowLong(window) })"
         :unmeasured-note="unmeasuredNote"
+        :compare="comparing"
         :class="seriesQuery.refreshing.value && 'opacity-70'"
         @zoom="(range) => (zoom = range)"
       />
+      <p v-if="pendingNote" class="text-xs text-muted-foreground" data-testid="path-baseline-pending">{{ pendingNote }}</p>
+      <p v-if="path?.state === 'degraded'" class="text-xs text-muted-foreground" data-testid="path-baseline-drift">{{ $t('fleet.monitoring.paths.sheet.baselineDrift') }}</p>
       <details v-if="series && series.points.length" class="group rounded-md border border-border" data-testid="path-table">
         <summary class="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:py-3">
           {{ $t('fleet.monitoring.paths.sheet.table', { n: series.points.length }) }}

@@ -6,9 +6,12 @@
 import { useI18n } from "vue-i18n";
 
 import type { MonitorWindow, PathState } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import type { RegionKey } from "@/lib/regions";
 
-import { displayState, reasonCode, type PathDisplay } from "./pathsModel";
+import { formatMs } from "./latencyModel";
+import { DEGRADED_LEAVE_AFTER_MS, displayState, formatShare, reasonCode, type PathDegradationItem, type PathDisplay } from "./pathsModel";
+import type { Verdict } from "./triangulationModel";
 
 export function usePathsCopy() {
   const { t } = useI18n();
@@ -73,5 +76,54 @@ export function usePathsCopy() {
     return t(`fleet.monitoring.window.long.${window}`);
   }
 
-  return { reasonText, reasonShort, refusalText, methodName, whyText, stateLabel, displayLabel, groupLabel, windowLong };
+  /**
+   * A degraded path's evidence, one sentence per arm that held (design 29
+   * D13): "Loss 4.2% over the last hour (12 of 290 probes), above its trigger
+   * of 2% (7-day loss 0.4%)."
+   */
+  function evidenceSentences(d: PathDegradationItem | undefined): string[] {
+    if (!d) return [];
+    const out: string[] = [];
+    if (d.loss) out.push(t("fleet.monitoring.paths.evidence.loss", { loss: formatShare(d.loss.value), lost: d.loss.lost, sent: d.loss.sent, trigger: formatShare(d.loss.trigger), baseline: formatShare(d.loss.baseline) }));
+    if (d.latency) out.push(t("fleet.monitoring.paths.evidence.latency", { p50: formatMs(d.latency.p50Ms), runs: d.latency.runs, trigger: formatMs(d.latency.triggerMs), baseline: formatMs(d.latency.baselineMs) }));
+    return out;
+  }
+
+  /** Since when, and while clearing when it leaves: "Degraded since Oct 16 14:02." */
+  function degradedTimes(d: PathDegradationItem | undefined): string[] {
+    if (!d) return [];
+    const out: string[] = [];
+    if (d.since !== undefined) out.push(t("fleet.monitoring.paths.evidence.since", { time: formatDateTime(d.since) }));
+    if (d.clearingSince !== undefined) out.push(t("fleet.monitoring.paths.evidence.clearing", { time: formatDateTime(d.clearingSince), leaves: formatDateTime(d.clearingSince + DEGRADED_LEAVE_AFTER_MS) }));
+    return out;
+  }
+
+  /** The evidence and the times, as one paragraph: the cell's hover text and the attention item's proof. */
+  function evidenceText(d: PathDegradationItem | undefined, reason?: string): string {
+    const parts = [...evidenceSentences(d), ...degradedTimes(d)];
+    return parts.length ? parts.join(" ") : reasonText(reason);
+  }
+
+  /** The verdict's label: "Likely cause: this source's network". */
+  function verdictLabel(v: Verdict): string {
+    if (v.kind === "source") return t("fleet.monitoring.paths.verdict.label.source", { source: v.evidence.kind === "source" ? v.evidence.source : "" });
+    return t(`fleet.monitoring.paths.verdict.label.${v.kind}`);
+  }
+
+  /** What the verdict rests on, in a sentence, worded for its family (reach: down; quality: down or degraded). */
+  function verdictEvidence(v: Verdict): string {
+    const e = v.evidence;
+    switch (e.kind) {
+      case "target":
+        return t(`fleet.monitoring.paths.verdict.target.${v.family}`, { n: e.sources.length, sources: e.sources.join(", ") });
+      case "source":
+        return t(`fleet.monitoring.paths.verdict.source.${v.family}`, { source: e.source, bad: e.bad, fresh: e.fresh, elsewhere: e.elsewhere });
+      case "path":
+        return t(`fleet.monitoring.paths.verdict.path.${v.family}`, { n: e.others, target: e.target }, e.others);
+      case "alone":
+        return t("fleet.monitoring.paths.verdict.alone", { source: e.source, target: e.target });
+    }
+  }
+
+  return { reasonText, reasonShort, refusalText, methodName, whyText, stateLabel, displayLabel, groupLabel, windowLong, evidenceSentences, degradedTimes, evidenceText, verdictLabel, verdictEvidence };
 }

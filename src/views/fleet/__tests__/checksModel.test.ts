@@ -36,8 +36,10 @@ import {
   unpickableNote,
   usesNodeTarget,
   withPathVerdict,
+  draftDegradedProblems,
   type CheckDraft,
 } from "../checksModel.ts";
+import { ALERT_POLICIES, DEGRADED_BOUNDS, canonicalRule, defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedProblems, effectiveAlert, pagesDown } from "../degradedRuleModel.ts";
 import { rowsFromHeaders, startReplace } from "../checkHeadersModel.ts";
 
 function monitor(over: Partial<MonitorView> = {}): MonitorView {
@@ -491,4 +493,75 @@ test("a beacon draft follows the run length and packets rules, and its budget co
   // 10/10 for the draft plus 5/60 for the generated check to the same node; another node and an icmp check do not count.
   assert.equal(Math.round(pps * 1000) / 1000, Math.round((1 + 5 / 60) * 1000) / 1000);
   assert.ok(draftProblems({ ...draft, packets: 5, intervalSec: 10, timeoutSec: 2 }, { m2a: true, budgetPps: 2.5 }).includes("budget"));
+});
+
+/* ---- Design 29 M3 (contract D13): the alert policy and the degraded thresholds ---- */
+
+test("policies: off, down and down and degraded; empty reads as down on a check and off on the path set", () => {
+  assert.deepEqual(ALERT_POLICIES, ["off", "down", "down_and_degraded"]);
+  assert.equal(effectiveAlert(undefined, false), "down");
+  assert.equal(effectiveAlert("", true), "off");
+  assert.equal(effectiveAlert("down_and_degraded", true), "down_and_degraded");
+  assert.equal(effectiveAlert("sideways", false), "down");
+  assert.equal(pagesDown("down_and_degraded"), true);
+  assert.equal(pagesDown("off"), false);
+  assert.equal(draftFromMonitor(monitor({ alert: "down_and_degraded", alert_after: 3 })).alert, "down_and_degraded");
+  assert.equal(draftFromMonitor(monitor({ alert: undefined })).alert, "down");
+});
+
+test("policies: the run count applies to both down choices and is sent with either", () => {
+  const m = monitor();
+  const d = { ...draftFromMonitor(m), alert: "down_and_degraded" as const, alertAfter: 4 };
+  assert.deepEqual(buildUpdate(m, d, { m3: true }), { id: "mon_http", version: 4, alert: "down_and_degraded", alert_after: 4 });
+  assert.deepEqual(draftProblems({ ...d, alertAfter: 0 }), ["alertAfter"]);
+  const created = buildCreate({ ...emptyDraft("icmp"), targetMode: "node", targetNode: "jp", nodeIds: ["sh"], assignAll: false, alert: "down_and_degraded", alertAfter: 3 }, true, { m2a: true, m3: true });
+  assert.equal(created.alert, "down_and_degraded");
+  assert.equal(created.alert_after, 3);
+  assert.equal(created.degraded, undefined, "default thresholds are not sent");
+});
+
+test("policies: tls refuses down and degraded, and switching a check to tls falls back to down", () => {
+  const tls = { ...emptyDraft("tls"), target: "api.example.com:443", alert: "down_and_degraded" as const };
+  assert.ok(draftProblems(tls).includes("alertTls"));
+  const switched = switchDraftKind({ ...emptyDraft("http"), alert: "down_and_degraded" }, "tls").draft;
+  assert.equal(switched.alert, "down");
+  assert.deepEqual(draftDegradedProblems({ ...tls, degraded: { ...defaultDegradedDraft(), lossPercent: 99 } }), [], "a certificate has no degraded rule");
+  const body = buildUpdate(monitor({ type: "tls", target: "api.example.com:443", threshold_days: 14 }), { ...draftFromMonitor(monitor({ type: "tls", target: "api.example.com:443", threshold_days: 14 })), degraded: { ...defaultDegradedDraft(), lossPercent: 5 } }, { m3: true });
+  assert.equal(body.degraded, undefined, "never sent for tls");
+});
+
+test("thresholds: the bounds as the server checks them, at and beyond each edge", () => {
+  for (const [field, b] of Object.entries(DEGRADED_BOUNDS)) {
+    const at = (v: number | string) => degradedProblems({ ...defaultDegradedDraft(), [field]: v });
+    assert.deepEqual(at(b.min), [], `${field} at its minimum`);
+    assert.deepEqual(at(b.max), [], `${field} at its maximum`);
+    assert.deepEqual(at(b.max + 1), [field], `${field} above`);
+    assert.deepEqual(at(b.min / 2), [field], `${field} below`);
+    assert.deepEqual(at(-1), [field], `${field} negative`);
+    assert.deepEqual(at(Number.NaN), [field], `${field} NaN`);
+    assert.deepEqual(at(Number.POSITIVE_INFINITY), [field], `${field} infinite`);
+    assert.deepEqual(at("abc"), [field], `${field} unreadable`);
+    assert.deepEqual(at(""), [], `${field} empty reads as the default`);
+  }
+  const d = { ...draftFromMonitor(monitor()), degraded: { ...defaultDegradedDraft(), latencyMarginMs: 2000 } };
+  assert.ok(draftProblems(d, { m2a: true, m3: true }).includes("degraded"));
+  assert.ok(!draftProblems(d, { m2a: true }).includes("degraded"), "an older server has no thresholds to refuse");
+});
+
+test("thresholds: canonical form rounds, leaves defaults out and reads stored zero as the default", () => {
+  assert.deepEqual(canonicalRule(defaultDegradedDraft()), {});
+  assert.deepEqual(canonicalRule({ lossPercent: 4.26, lossFactor: 2, latencyFactor: 3, latencyMarginMs: 44.6 }), { loss_percent: 4.3, latency_factor: 3, latency_margin_ms: 45 });
+  assert.deepEqual(degradedDraftFrom({ loss_percent: 0, latency_margin_ms: 50 }), { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 50 });
+});
+
+test("thresholds diff: unchanged is not sent, a change replaces the rule whole, a reset sends {}", () => {
+  const m = monitor({ degraded: { loss_percent: 5, latency_margin_ms: 50 } });
+  const d = draftFromMonitor(m);
+  assert.equal(buildUpdate(m, d, { m3: true }).degraded, undefined, "unchanged thresholds are not sent");
+  assert.equal(draftChanged(m, d), false);
+  assert.deepEqual(buildUpdate(m, { ...d, degraded: { ...d.degraded, lossFactor: 3 } }, { m3: true }).degraded, { loss_percent: 5, loss_factor: 3, latency_margin_ms: 50 });
+  assert.deepEqual(buildUpdate(m, { ...d, degraded: defaultDegradedDraft() }, { m3: true }).degraded, {}, "a reset to the defaults");
+  assert.equal(buildUpdate(m, { ...d, degraded: defaultDegradedDraft() }).degraded, undefined, "never sent to a server that does not judge degraded");
+  assert.equal(degradedEdit(undefined, { ...defaultDegradedDraft(), lossPercent: "2.0" }), undefined, "typing the default is no change");
+  assert.equal(degradedEdit({ loss_percent: 2 }, defaultDegradedDraft()), undefined, "a stored default is the default");
 });

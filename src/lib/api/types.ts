@@ -1237,13 +1237,30 @@ export interface MonitorView {
   version?: number;
   /** Sources of this check that are paused one by one; they keep their history. */
   paused_node_ids?: string[];
-  /** `down` pages when a source fails `alert_after` times in a row (absent reads as down); `off` never pages. */
+  /**
+   * `down` pages when a source fails `alert_after` times in a row (absent reads as down); `off` never pages;
+   * `down_and_degraded` (design 29 D13) pages as `down` does and adds path.degraded and path.recovered.
+   */
   alert?: MonitorAlertPolicy | string;
   /** Failed runs in a row before `down` pages, 1 to 20; absent or zero reads as 2. */
   alert_after?: number;
+  /** The degraded rule's thresholds (design 29 D13); absent, null or a zero field reads as the default. */
+  degraded?: MonitorDegradedRule | null;
 }
 
-export type MonitorAlertPolicy = "off" | "down";
+export type MonitorAlertPolicy = "off" | "down" | "down_and_degraded";
+
+/**
+ * The degraded rule's four thresholds (lattice-sdk model.MonitorDegradedRule,
+ * design 29 D13). A field absent or zero reads as its default: 2 percent,
+ * 2 times the 7-day loss, 2 times the 7-day p50, and 30 ms above it.
+ */
+export interface MonitorDegradedRule {
+  loss_percent?: number;
+  loss_factor?: number;
+  latency_factor?: number;
+  latency_margin_ms?: number;
+}
 
 /** One request header of an http check (lattice-sdk MonitorHeader). Reads drop a secret's value and set `set`. */
 export interface MonitorHeader {
@@ -1280,13 +1297,45 @@ export interface MonitorUpdateInput {
   paused_node_ids?: string[];
   alert?: MonitorAlertPolicy;
   alert_after?: number;
+  /** Absent keeps the stored rule; an object replaces it whole, so `{}` resets it to the defaults (design 29 D13). */
+  degraded?: MonitorDegradedRule;
   enabled?: boolean;
 }
 
 /* ---- Paths (design 29 D5): one source probing one target with one method ---- */
 
 export type MonitorWindow = "1h" | "6h" | "24h" | "3d" | "7d" | "14d";
-export type PathState = "up" | "down" | "unknown";
+/** `degraded` only from a server that judges it (design 29 D13), which says so with `degraded_at` on the matrix. */
+export type PathState = "up" | "degraded" | "down" | "unknown";
+
+/** The loss arm's evidence (lattice-sdk model.PathLossEvidence): shares 0 to 1, and the probes of the hour. */
+export interface PathLossEvidence {
+  value: number;
+  baseline: number;
+  trigger: number;
+  sent: number;
+  lost: number;
+}
+
+/** The latency arm's evidence (model.PathLatencyEvidence): the 15-minute p50 and the successful runs in it. */
+export interface PathLatencyEvidence {
+  p50_ms: number;
+  runs: number;
+  baseline_ms: number;
+  trigger_ms: number;
+}
+
+/** Why and since when a path reads degraded (model.PathDegradation); present only while it does. */
+export interface PathDegradation {
+  /** The first of the two evaluations that entered. */
+  since: string;
+  /** The last evaluation that found the condition; the evidence is from it. */
+  evaluated_at: string;
+  /** Absent while the condition holds; the path leaves ten minutes after it. */
+  clearing_since?: string | null;
+  loss?: PathLossEvidence | null;
+  latency?: PathLatencyEvidence | null;
+}
 
 export interface PathSourceView {
   node_id: string;
@@ -1313,8 +1362,10 @@ export interface PathView {
   managed: boolean;
   method: string;
   state: PathState | string;
-  /** Why the path is unknown, a code; empty when the path is up or down. */
+  /** Why the path is unknown, a code; for a degraded path degraded_loss, degraded_latency or degraded_loss_latency; empty when up or down. */
   reason?: string;
+  /** Present only while the state is degraded (design 29 D13). */
+  degraded?: PathDegradation | null;
   /** Unmeasured figures are null, so a gap reads apart from a zero. */
   p50_ms?: number | null;
   p95_ms?: number | null;
@@ -1334,6 +1385,12 @@ export interface PathsResponse {
   sources: PathSourceView[];
   targets: PathTargetView[];
   paths: PathView[];
+  /**
+   * When the degraded evaluator last ran (design 29 D13): null before its first
+   * run after a start, and the key absent on a server that does not judge
+   * degraded, which is how the console tells the two apart.
+   */
+  degraded_at?: string | null;
 }
 
 /** One bucket of a path series. `n` 0 with `expected` above 0 is a bucket with no data. */
@@ -1362,6 +1419,34 @@ export interface PathSeriesResponse {
   to: number | string;
   method_changes?: { t: number | string; method: string }[];
   buckets: PathBucket[];
+  /** The 7-day baseline the path's degraded state is judged on (design 29 D13); null for a tls check, absent before M3. */
+  baseline?: PathBaseline | null;
+  /** The previous period's p50, present only when asked with compare=previous. */
+  previous?: PathPreviousSeries | null;
+}
+
+/** model.PathBaseline: the window, the hours with runs in it, the base figures and the triggers. */
+export interface PathBaseline {
+  from: string;
+  to: string;
+  hours: number;
+  /** Hours at least 24: the path is judged. */
+  ready: boolean;
+  p50_ms?: number | null;
+  loss?: number | null;
+  trigger_p50_ms?: number | null;
+  trigger_loss?: number | null;
+  /** The thresholds in force, defaults filled in. */
+  rule?: MonitorDegradedRule | null;
+}
+
+/** model.PathPreviousSeries: one p50 per bucket of the series, one span earlier; null where nothing succeeded. */
+export interface PathPreviousSeries {
+  from: number | string;
+  to: number | string;
+  offset_seconds: number;
+  step_seconds: number;
+  p50_ms: (number | null)[];
 }
 
 export interface PathSeriesQuery {
@@ -1369,6 +1454,8 @@ export interface PathSeriesQuery {
   target_node?: string;
   monitor?: string;
   window: MonitorWindow;
+  /** Adds the previous period's p50 (design 29 D13); any other value is refused. */
+  compare?: "previous";
 }
 
 /** Monitoring history retention (design 29 D4). */
@@ -1412,6 +1499,12 @@ export interface LatencyProbeConfig {
   method?: string;
   /** Per-source pins over `method`, by source node id. */
   source_methods?: Record<string, string>;
+  /** What the generated paths page (design 29 D13): absent or empty reads as off. */
+  alert?: MonitorAlertPolicy | string;
+  /** Failed runs in a row before a generated path pages down, 1 to 20; absent or zero reads as 2. */
+  alert_after?: number;
+  /** The degraded rule's thresholds for every generated path; absent reads as the defaults. */
+  degraded?: MonitorDegradedRule | null;
   version: number;
   updated_at?: string;
   updated_by?: string;
@@ -1574,6 +1667,8 @@ export interface MonitorCreateInput {
   node_ids?: string[];
   alert?: MonitorAlertPolicy;
   alert_after?: number;
+  /** Sent only when it differs from the defaults (design 29 D13). */
+  degraded?: MonitorDegradedRule;
 }
 
 /* ---- The measurement beacon (design 29 D3, wire contract D12; lattice-sdk model/beacon.go) ---- */

@@ -5,8 +5,8 @@
  */
 import { formatAge } from "@/lib/format";
 
-import { BAND_STYLE, coveragePercent, formatLoss, formatMs } from "./latencyModel";
-import type { TopoEdge, TopoLastSample, TopoNode } from "./topologyModel";
+import { formatLoss, formatMs } from "./latencyModel";
+import type { ProbeState, TopoEdge, TopoLastSample, TopoNode } from "./topologyModel";
 
 type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string;
 
@@ -24,23 +24,39 @@ export function stateLabel(t: Translate, edge: Pick<TopoEdge, "kind" | "state">)
   return t(`fleet.monitoring.topology.state.${edge.state}`);
 }
 
+/** A probe state's ink: the state tones only (design 29 D13), so a p50 is never coloured by how fast it is. */
+export const PROBE_INK: Record<ProbeState, string> = {
+  up: "text-foreground",
+  degraded: "text-warning-text",
+  down: "text-destructive",
+  unknown: "text-muted-foreground",
+  paused: "text-muted-foreground",
+};
+
+/** A probe state's mark on a target row: one per drawn source. */
+export const PROBE_MARK: Record<ProbeState, string> = {
+  up: "bg-success",
+  degraded: "bg-warning",
+  down: "bg-destructive",
+  unknown: "border border-muted-foreground bg-[repeating-linear-gradient(135deg,var(--border)_0_1px,transparent_1px_3px)]",
+  paused: "bg-muted-foreground/40",
+};
+
 /** The short value a row or a list line prints for one edge. */
 export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
   const lossy = edge.loss !== undefined && edge.loss > 0 ? formatLoss(edge.loss) : undefined;
   if (edge.kind === "probe") {
-    switch (edge.state) {
-      case "measured":
-        return { text: formatMs(edge.p50Ms), tone: BAND_STYLE[edge.band ?? "destructive"].text, loss: lossy };
-      case "lossy":
-        return { text: formatMs(edge.p50Ms), tone: BAND_STYLE[edge.band ?? "destructive"].text, loss: lossy };
-      case "failing":
-        return { text: t("fleet.monitoring.topology.value.failing"), tone: "text-destructive" };
-      case "quiet":
-        return { text: edge.p50Ms !== undefined ? formatMs(edge.p50Ms) : t("fleet.monitoring.topology.value.quiet"), tone: "text-muted-foreground" };
+    const state = edge.state as ProbeState;
+    switch (state) {
+      case "up":
+      case "degraded":
+        return { text: edge.p50Ms !== undefined ? formatMs(edge.p50Ms) : stateLabel(t, edge), tone: PROBE_INK[state], loss: lossy };
+      case "down":
+        return { text: t("fleet.monitoring.topology.value.down"), tone: PROBE_INK.down };
       case "paused":
-        return { text: t("fleet.monitoring.topology.value.paused"), tone: "text-muted-foreground" };
+        return { text: t("fleet.monitoring.topology.value.paused"), tone: PROBE_INK.paused };
       default:
-        return { text: t("fleet.monitoring.topology.value.unknown"), tone: "text-muted-foreground" };
+        return { text: t("fleet.monitoring.topology.value.unknown"), tone: PROBE_INK.unknown };
     }
   }
   if (edge.kind === "chain") {
@@ -64,18 +80,6 @@ export function lastSampleText(t: Translate, locale: string, last: TopoLastSampl
   if (!last.ok) return t("fleet.monitoring.topology.card.lastFail", { age });
   if (last.ms === undefined) return t("fleet.monitoring.topology.card.lastOkNoValue", { age });
   return t("fleet.monitoring.topology.card.lastOk", { age, value: formatMs(last.ms) });
-}
-
-/** Why a quiet probe is quiet, in words. */
-export function quietText(t: Translate, locale: string, edge: TopoEdge, now: number): string {
-  if (edge.quietReason === "source") return t("fleet.monitoring.topology.quiet.source");
-  const age = edge.last ? formatAge(now - edge.last.at, locale) : "";
-  return t("fleet.monitoring.topology.quiet.old", { age });
-}
-
-export function partialText(t: Translate, edge: TopoEdge): string | undefined {
-  if (!edge.partial || edge.coverage === undefined) return undefined;
-  return t("fleet.monitoring.topology.card.partial", { pct: coveragePercent(edge.coverage) });
 }
 
 /** The heartbeat in words: "beating", "quiet for 6d", "never reported". */

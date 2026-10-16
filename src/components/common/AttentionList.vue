@@ -20,6 +20,11 @@ import { ATTENTION_DEFAULT_MAX, attentionView, type AttentionItem as ModelItem }
 
 export interface AttentionItem extends ModelItem {
   action?: { label: string; to?: RouteLocationRaw; run?: () => void };
+  /**
+   * Where the cause most likely sits, with what that rests on (Monitoring's
+   * triangulation, design 29 D13): a label, never a state of its own.
+   */
+  verdict?: { label: string; evidence: string };
 }
 
 const props = withDefaults(defineProps<{ items: AttentionItem[]; max?: number; title?: string }>(), {
@@ -58,6 +63,9 @@ const ICON_TONE = { danger: "text-destructive", warning: "text-warning-text", in
               <span class="sr-only">{{ $t('common.attention.toneLead', { tone: $t(`common.attention.tone.${item.tone}`) }) }}</span>{{ item.claim }}
             </p>
             <p v-if="item.proof" class="mt-0.5 break-words font-mono text-xs text-muted-foreground">{{ item.proof }}</p>
+            <p v-if="item.verdict" class="mt-1 break-words text-xs text-muted-foreground" data-testid="attention-verdict">
+              <span class="font-medium text-foreground">{{ item.verdict.label }}</span><span aria-hidden="true"> · </span><span class="sr-only">. </span>{{ item.verdict.evidence }}
+            </p>
           </div>
         </div>
         <div v-if="item.action" class="shrink-0 ps-6.5 sm:ps-0">

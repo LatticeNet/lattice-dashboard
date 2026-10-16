@@ -29,6 +29,7 @@ import type {
 import { latencyClass } from "@/lib/latency";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { degradedDraftFrom, degradedForSave, degradedProblems, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
@@ -431,6 +432,17 @@ export interface LatencyDraft {
   method: string;
   /** Per-source pins over `method` ("tcp", "icmp", "auto"), by source id. */
   sourceMethods: Record<string, string>;
+  /**
+   * What the generated paths page (design 29 D13): "" as stored when the
+   * server never had one (it reads as off), else off, down or
+   * down_and_degraded. Kept as read, so a save that does not touch it (a
+   * pause from the path sheet) sends it back unchanged.
+   */
+  alert: string;
+  /** Failed runs in a row before a generated path pages down; 0 as stored when unset (it reads as 2). */
+  alertAfter: number;
+  /** The degraded rule for every generated path. */
+  degraded: DegradedDraft;
   /** The version the draft was read at; a save names it. */
   version: number;
 }
@@ -486,6 +498,9 @@ export function draftFromConfig(config: LatencyProbeConfig): LatencyDraft {
     disabledPairs: sortPairs(config.disabled_pairs),
     method: normalizeSetMethod(config.method),
     sourceMethods: Object.fromEntries(Object.entries(config.source_methods ?? {}).filter(([, m]) => !!m)),
+    alert: config.alert ?? "",
+    alertAfter: config.alert_after && config.alert_after > 0 ? config.alert_after : 0,
+    degraded: degradedDraftFrom(config.degraded),
     version: config.version ?? 0,
   };
 }
@@ -509,8 +524,17 @@ export function draftToConfig(draft: LatencyDraft): LatencyProbeConfig {
     .filter(([source, method]) => sources.has(source) && !!method)
     .sort(([a], [b]) => a.localeCompare(b));
   if (pins.length) config.source_methods = Object.fromEntries(pins);
+  // Design 29 D13: sent only when set, for the same reason, and kept by every save that
+  // rebuilds the configuration (a pause from the path sheet included), so none drops them.
+  if (draft.alert) config.alert = draft.alert;
+  if (draft.alertAfter > 0 && draft.alertAfter !== LATENCY_ALERT_DEFAULT_AFTER) config.alert_after = draft.alertAfter;
+  const degraded = degradedForSave(draft.degraded);
+  if (degraded) config.degraded = degraded;
   return config;
 }
+
+/** lattice-sdk: a path set's alert_after of zero reads as two. */
+export const LATENCY_ALERT_DEFAULT_AFTER = 2;
 
 /** Pin one source's method, or follow the path set's again with undefined. */
 export function setSourceMethod(draft: LatencyDraft, source: string, method: string | undefined): LatencyDraft {
@@ -660,7 +684,7 @@ export function setPairEnabled(draft: LatencyDraft, source: string, target: stri
   return { ...draft, disabledPairs: sortPairs(enabled ? rest : [...rest, { source, target }]) };
 }
 
-export type DraftProblem = "interval" | "timeout" | "timeoutVsInterval";
+export type DraftProblem = "interval" | "timeout" | "timeoutVsInterval" | "alertAfter" | "degraded";
 
 export function draftProblems(draft: LatencyDraft): DraftProblem[] {
   const out: DraftProblem[] = [];
@@ -669,8 +693,16 @@ export function draftProblems(draft: LatencyDraft): DraftProblem[] {
   if (!Number.isInteger(interval) || interval < LATENCY_MIN_INTERVAL_SEC || interval > LATENCY_MAX_INTERVAL_SEC) out.push("interval");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > LATENCY_MAX_TIMEOUT_SEC) out.push("timeout");
   else if (!out.includes("interval") && timeout >= interval) out.push("timeoutVsInterval");
+  if ((draft.alert === "down" || draft.alert === "down_and_degraded") && draft.alertAfter !== 0) {
+    const after = Number(draft.alertAfter);
+    if (!Number.isInteger(after) || after < 1 || after > LATENCY_ALERT_MAX_AFTER) out.push("alertAfter");
+  }
+  if (degradedProblems(draft.degraded).length) out.push("degraded");
   return out;
 }
+
+/** lattice-sdk MonitorAlertAfterMax, which the path set shares. */
+export const LATENCY_ALERT_MAX_AFTER = 20;
 
 /**
  * Whether a node would be a target under the draft, and why, by the same rule

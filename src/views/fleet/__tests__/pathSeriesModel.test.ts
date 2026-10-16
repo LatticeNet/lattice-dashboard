@@ -4,6 +4,13 @@ import { test } from "node:test";
 import type { PathSeriesResponse } from "@/lib/api/types";
 
 import {
+  BASELINE_MIN_HOURS,
+  DEGRADED_RULE_DEFAULTS,
+  baselineGuides,
+  baselinePending,
+  chartCeilingMs,
+  readBaseline,
+  ruleView,
   LATENCY_LANE_START,
   LOSS_LANE,
   bucketIndexAt,
@@ -280,4 +287,94 @@ test("a window that switched methods says what else measured it, so its figures 
     { t: t0 + 2 * day, method: "icmp" },
   ]);
   assert.deepEqual(earlierMethods(retried, "ICMP"), { since: t0 + 2 * day, seconds: 2 * day, methods: ["tcp"] });
+});
+
+/* ---- Design 29 M3 (contract D13): the baseline and the previous period ---- */
+
+function m3Series(over: Partial<PathSeriesResponse> = {}): PathSeriesResponse {
+  const t0 = 1_760_600_000 - (1_760_600_000 % 300);
+  return {
+    window: "24h",
+    step_seconds: 300,
+    from: t0,
+    to: t0 + 4 * 300,
+    buckets: [0, 1, 3].map((i) => ({ t: t0 + i * 300, n: 5, expected: 5, fail: 0, p50_ms: 60 + i, p95_ms: 70 + i })),
+    baseline: {
+      from: "2026-10-09T08:00:00Z",
+      to: "2026-10-16T08:00:00Z",
+      hours: 168,
+      ready: true,
+      p50_ms: 64,
+      loss: 0.004,
+      trigger_p50_ms: 128,
+      trigger_loss: 0.02,
+      rule: { loss_percent: 2, loss_factor: 2, latency_factor: 2, latency_margin_ms: 30 },
+    },
+    previous: { from: t0 - 86400, to: t0 - 86400 + 1200, offset_seconds: 86400, step_seconds: 300, p50_ms: [58, null, 61] },
+    ...over,
+  };
+}
+
+test("baseline: read with its triggers and the rule in force; the guides are the 7-day p50 and the latency trigger", () => {
+  const s = seriesFromResponse(m3Series());
+  assert.equal(s.baseline!.ready, true);
+  assert.equal(s.baseline!.hours, 168);
+  assert.equal(s.baseline!.p50Ms, 64);
+  assert.equal(s.baseline!.triggerP50Ms, 128);
+  assert.equal(s.baseline!.triggerLoss, 0.02);
+  assert.deepEqual(s.baseline!.rule, DEGRADED_RULE_DEFAULTS);
+  assert.deepEqual(baselineGuides(s.baseline), [
+    { kind: "median", ms: 64 },
+    { kind: "trigger", ms: 128 },
+  ]);
+  assert.equal(baselinePending(s.baseline), undefined);
+});
+
+test("baseline: the ceiling covers the trigger, so the guide is always on the chart", () => {
+  const s = seriesFromResponse(m3Series());
+  assert.equal(seriesCeilingMs(s.points), 73, "the series alone tops out at its p95");
+  assert.equal(chartCeilingMs(s), 128);
+  const tall = seriesFromResponse(m3Series({ buckets: [{ t: 1_760_599_800, n: 5, expected: 5, fail: 0, p50_ms: 300, p95_ms: 400 }] }));
+  assert.equal(chartCeilingMs(tall), 400, "a series above its trigger keeps its own ceiling");
+});
+
+test("baseline: not ready under 24 hours, with no trigger and a note of how far it is", () => {
+  const raw = m3Series().baseline!;
+  const s = seriesFromResponse(m3Series({ baseline: { ...raw, hours: 14, ready: false, trigger_p50_ms: null, trigger_loss: null } }));
+  assert.equal(s.baseline!.ready, false);
+  assert.equal(s.baseline!.triggerP50Ms, undefined);
+  assert.deepEqual(baselineGuides(s.baseline), [], "no guide before the path is judged");
+  assert.deepEqual(baselinePending(s.baseline), { hours: 14, needed: BASELINE_MIN_HOURS });
+  assert.equal(readBaseline({ ...raw, hours: 23, ready: true })!.ready, false, "23 hourly buckets are not a baseline whatever the flag says");
+  assert.equal(readBaseline({ ...raw, hours: 24, ready: true })!.ready, true);
+});
+
+test("baseline: null for a path that is never judged, undefined from a server before M3", () => {
+  assert.equal(seriesFromResponse(m3Series({ baseline: null })).baseline, null);
+  const older = m3Series();
+  delete older.baseline;
+  assert.equal(seriesFromResponse(older).baseline, undefined);
+  assert.equal(baselinePending(null), undefined);
+  assert.deepEqual(baselineGuides(null), []);
+});
+
+test("baseline: a latency trigger needs a 7-day p50; a rule fills its defaults", () => {
+  const raw = m3Series().baseline!;
+  const s = readBaseline({ ...raw, p50_ms: null, trigger_p50_ms: 128 })!;
+  assert.equal(s.triggerP50Ms, undefined);
+  assert.deepEqual(baselineGuides(s), []);
+  assert.deepEqual(ruleView({ loss_percent: 5, latency_margin_ms: 0 }), { lossPercent: 5, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 });
+  assert.deepEqual(ruleView(null), DEGRADED_RULE_DEFAULTS);
+});
+
+test("previous: one entry per point, aligned by bucket; a step the console filled and a step with no run are null", () => {
+  const s = seriesFromResponse(m3Series());
+  assert.equal(s.points.length, 4, "the hole at bucket 2 is filled");
+  assert.deepEqual(s.previous, [58, null, null, 61]);
+  assert.equal(s.previousOffsetSec, 86400);
+  assert.equal(chartCeilingMs({ ...s, previous: [58, null, null, 200] }, true), 200, "a drawn overlay is covered too");
+  assert.equal(chartCeilingMs({ ...s, previous: [58, null, null, 200] }, false), 128);
+  const plain = m3Series();
+  delete plain.previous;
+  assert.equal(seriesFromResponse(plain).previous, undefined, "not asked, not there");
 });

@@ -46,6 +46,7 @@ import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQu
 import { isServerEvaluated } from "./monitorTypeModel";
 import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { verdictFor } from "./triangulationModel";
 import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
 import type { PathsData } from "./usePathsData";
 
@@ -584,7 +585,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                 <span class="min-w-0">
                   <span class="block truncate font-medium">{{ row.name }}</span>
                   <span v-if="row.paused" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.paused') }}</span>
-                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block text-xs break-words', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
+                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block text-xs break-words', row.path.state === 'down' ? 'text-destructive' : row.path.state === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')">
                     {{ displayLabel(row.path) }}: {{ whyText(row.path, failureOn(selected, row.source)) }}
                   </span>
                   <span v-else-if="row.latest?.reason" class="block text-xs break-words text-muted-foreground">{{ reasonText(row.latest.reason) }}</span>
@@ -619,6 +620,9 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           :failure="failureOn(selected, chosenRow.source)"
           :agent-version="nodes.find((n) => n.id === chosenRow!.source)?.agent_version"
           :paths-failed="!!data.pathsQuery.error.value && data.source.value === 'unknown'"
+          :owned="owned"
+          :judges-degraded="!!data.matrix.value?.judgesDegraded"
+          :verdict="data.triangulation.value && chosenRow.path ? verdictFor(data.triangulation.value, chosenRow.path) : undefined"
           @window="(w) => emit('window', w)"
         />
       </div>

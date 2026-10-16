@@ -13,11 +13,14 @@
  *     missing bucket can never be drawn as a line between its neighbours;
  *   - loss counts probes (design 29 M2a): lost over sent where a bucket has
  *     them, so a five-echo ICMP run that lost one is 20 percent, not a
- *     failed run; failed runs over runs in buckets written before M2a.
+ *     failed run; failed runs over runs in buckets written before M2a;
+ *   - the degraded rule's guides and the previous period come from the server
+ *     (design 29 D13): the console never re-derives a trigger, and a previous
+ *     step with no successful run is null, never joined to its neighbours.
  *
  * Kept free of Vue and of uPlot so `node --test` covers it directly.
  */
-import type { LatencySeries, MonitorWindow, PathSeriesResponse } from "@/lib/api/types";
+import type { LatencySeries, MonitorDegradedRule, MonitorWindow, PathBaseline, PathSeriesResponse } from "@/lib/api/types";
 
 import { chartCeiling } from "@/views/fleet/latencyModel";
 import { WINDOW_SECONDS } from "@/views/fleet/pathsModel";
@@ -95,6 +98,70 @@ export interface PathSeries {
   to: number;
   points: SeriesPoint[];
   methodChanges: MethodChange[];
+  /**
+   * The 7-day baseline the path is judged on (design 29 D13): undefined from a
+   * server before M3, null for a path that is never judged (a tls check).
+   */
+  baseline?: SeriesBaseline | null;
+  /** The previous period's p50, one entry per point (null where that step had no successful run); undefined when not asked for. */
+  previous?: (number | null)[];
+  /** How far back the previous period sits, seconds. */
+  previousOffsetSec?: number;
+}
+
+/** The degraded rule's thresholds with the defaults filled in (lattice-sdk MonitorDegradedRule defaults). */
+export interface DegradedRuleView {
+  lossPercent: number;
+  lossFactor: number;
+  latencyFactor: number;
+  latencyMarginMs: number;
+}
+
+export const DEGRADED_RULE_DEFAULTS: DegradedRuleView = { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 };
+/** lattice-sdk PathBaselineMinHours: a path is judged once its baseline holds this many hourly buckets with runs. */
+export const BASELINE_MIN_HOURS = 24;
+
+export interface SeriesBaseline {
+  from: number;
+  to: number;
+  hours: number;
+  ready: boolean;
+  p50Ms?: number;
+  loss?: number;
+  triggerP50Ms?: number;
+  triggerLoss?: number;
+  rule: DegradedRuleView;
+}
+
+/** A rule as sent, defaults filled in where a field is absent or zero. */
+export function ruleView(rule: MonitorDegradedRule | null | undefined): DegradedRuleView {
+  const pick = (v: number | undefined, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
+  return {
+    lossPercent: pick(rule?.loss_percent, DEGRADED_RULE_DEFAULTS.lossPercent),
+    lossFactor: pick(rule?.loss_factor, DEGRADED_RULE_DEFAULTS.lossFactor),
+    latencyFactor: pick(rule?.latency_factor, DEGRADED_RULE_DEFAULTS.latencyFactor),
+    latencyMarginMs: pick(rule?.latency_margin_ms, DEGRADED_RULE_DEFAULTS.latencyMarginMs),
+  };
+}
+
+/** The server's baseline, read. A trigger is kept only once the baseline is ready, as the server sends it. */
+export function readBaseline(raw: PathBaseline | null | undefined): SeriesBaseline | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const hours = Math.max(0, Math.floor(raw.hours ?? 0));
+  const ready = !!raw.ready && hours >= BASELINE_MIN_HOURS;
+  const out: SeriesBaseline = { from: toSeconds(raw.from), to: toSeconds(raw.to), hours, ready, rule: ruleView(raw.rule) };
+  const p50 = num(raw.p50_ms);
+  const loss = num(raw.loss);
+  if (p50 !== undefined) out.p50Ms = p50;
+  if (loss !== undefined) out.loss = loss;
+  if (ready) {
+    const trigger = num(raw.trigger_p50_ms);
+    const triggerLoss = num(raw.trigger_loss);
+    if (trigger !== undefined && p50 !== undefined) out.triggerP50Ms = trigger;
+    if (triggerLoss !== undefined) out.triggerLoss = triggerLoss;
+  }
+  return out;
 }
 
 /** Unix seconds from unix seconds, unix milliseconds or an ISO time; NaN when unreadable. */
@@ -195,7 +262,7 @@ export function seriesFromResponse(response: PathSeriesResponse): PathSeries {
   const points = fillSteps(raw, stepSec);
   const from = toSeconds(response.from);
   const to = toSeconds(response.to);
-  return {
+  const series: PathSeries = {
     stepSec,
     from: Number.isFinite(from) ? from : (points[0]?.t ?? 0),
     to: Number.isFinite(to) ? to : (points[points.length - 1]?.t ?? 0) + stepSec,
@@ -205,6 +272,15 @@ export function seriesFromResponse(response: PathSeriesResponse): PathSeries {
       .filter((c) => Number.isFinite(c.t) && !!c.method)
       .sort((a, b) => a.t - b.t),
   };
+  if (response.baseline !== undefined) series.baseline = readBaseline(response.baseline);
+  if (response.previous) {
+    // Entry i belongs to the server's bucket i; a step the console filled in has no earlier value.
+    const byT = new Map<number, number | null>();
+    raw.forEach((point, i) => byT.set(point.t, num(response.previous!.p50_ms?.[i]) ?? null));
+    series.previous = points.map((p) => byT.get(p.t) ?? null);
+    series.previousOffsetSec = response.previous.offset_seconds > 0 ? response.previous.offset_seconds : undefined;
+  }
+  return series;
 }
 
 /** A latency series from a server before design 29: no min, max or jitter, one method. */
@@ -388,6 +464,35 @@ export function seriesCeilingMs(points: readonly SeriesPoint[], withMax = false)
     if (v !== undefined && v > max) max = v;
   }
   return max;
+}
+
+/**
+ * The dashed guides of the degraded rule (design 29 D13): the 7-day p50 and
+ * the latency trigger, once the baseline is ready. None before it, and no
+ * loss guide: the loss lane is per bucket and the trigger is over an hour.
+ */
+export function baselineGuides(baseline: SeriesBaseline | null | undefined): { kind: "median" | "trigger"; ms: number }[] {
+  if (!baseline?.ready || baseline.p50Ms === undefined) return [];
+  const out: { kind: "median" | "trigger"; ms: number }[] = [{ kind: "median", ms: baseline.p50Ms }];
+  if (baseline.triggerP50Ms !== undefined) out.push({ kind: "trigger", ms: baseline.triggerP50Ms });
+  return out;
+}
+
+/**
+ * The latency the chart's scale must cover: the series, its guides (so the
+ * trigger is always on the chart) and the previous period when it is drawn.
+ */
+export function chartCeilingMs(series: Pick<PathSeries, "points" | "baseline" | "previous">, withPrevious = false): number {
+  let max = seriesCeilingMs(series.points);
+  for (const guide of baselineGuides(series.baseline)) max = Math.max(max, guide.ms);
+  if (withPrevious) for (const v of series.previous ?? []) if (v !== null && v > max) max = v;
+  return max;
+}
+
+/** Hours of history a not-yet-judged path has, for "Degraded is judged once this path has 24 hours of history (14 h so far)"; undefined when it is judged or never will be. */
+export function baselinePending(baseline: SeriesBaseline | null | undefined): { hours: number; needed: number } | undefined {
+  if (!baseline || baseline.ready) return undefined;
+  return { hours: baseline.hours, needed: BASELINE_MIN_HOURS };
 }
 
 /**

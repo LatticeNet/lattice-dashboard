@@ -405,3 +405,37 @@ test("the preview follows D12's order: Beacon where the plan admits the source, 
   const old = pathSetPreview(setSourceMethod(sg, "sh", "beacon"), p, [{ ...nodes[0]!, probe_methods: ["http", "icmp", "tcp"] }, ...nodes.slice(1)])[0]!;
   assert.deepEqual([old.refusal, old.refusalMethod, old.beacon, old.none], ["agent_too_old", "beacon", 0, 5]);
 });
+
+test("the path set keeps its alert, run count and thresholds through any save, a pause from the path sheet included (design 29 D13)", () => {
+  const config = {
+    enabled: true,
+    interval_sec: 60,
+    timeout_sec: 5,
+    sources: ["sh"],
+    auto_targets: true,
+    include_targets: [],
+    exclude_targets: [],
+    disabled_pairs: [],
+    alert: "down_and_degraded",
+    alert_after: 4,
+    degraded: { loss_percent: 5, latency_margin_ms: 50 },
+    version: 7,
+  };
+  const draft = draftFromConfig(config);
+  assert.equal(draft.alert, "down_and_degraded");
+  assert.equal(draft.alertAfter, 4);
+  const paused = draftToConfig(setPairEnabled(draft, "sh", "jp", false));
+  assert.equal(paused.alert, "down_and_degraded");
+  assert.equal(paused.alert_after, 4);
+  assert.deepEqual(paused.degraded, { loss_percent: 5, latency_margin_ms: 50 });
+  assert.deepEqual(paused.disabled_pairs, [{ source: "sh", target: "jp" }]);
+  // A stored path set without them sends none of them back: an older server decodes the body strictly.
+  const bare = draftToConfig(draftFromConfig({ ...config, alert: undefined, alert_after: undefined, degraded: undefined }));
+  assert.equal("alert" in bare || "alert_after" in bare || "degraded" in bare, false);
+  // The default run count and default thresholds are not stored.
+  const defaults = draftToConfig({ ...draft, alertAfter: 2, degraded: { lossPercent: 2, lossFactor: 2, latencyFactor: 2, latencyMarginMs: 30 } });
+  assert.equal(defaults.alert_after, undefined);
+  assert.equal(defaults.degraded, undefined);
+  assert.deepEqual(draftProblems({ ...draft, alertAfter: 25 }), ["alertAfter"]);
+  assert.deepEqual(draftProblems({ ...draft, degraded: { ...draft.degraded, lossFactor: 50 } }), ["degraded"]);
+});

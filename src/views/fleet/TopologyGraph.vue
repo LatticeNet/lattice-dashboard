@@ -23,16 +23,19 @@ import { ChevronDown, ChevronRight } from "lucide-vue-next";
 import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import { BAND_STYLE, formatLoss, formatMs, latencyBand } from "./latencyModel";
+import { formatLoss, formatMs } from "./latencyModel";
+import { usePathsCopy } from "./pathsCopy";
 import {
   CONTROL_PLANE,
   edgeStyle,
   edgesOf,
   layoutTopology,
   neighbourhood,
+  rowMarks,
   rowProbe,
   worstLive,
   type LayoutEdge,
+  type ProbeState,
   type LayoutRow,
   type TopoCheck,
   type TopoEdge,
@@ -40,7 +43,7 @@ import {
   type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
-import { edgeValue, freshnessDot, freshnessText, lastSampleText, partialText, quietText, stateLabel } from "./topologyCopy";
+import { PROBE_INK, PROBE_MARK, edgeValue, freshnessDot, freshnessText, lastSampleText, stateLabel } from "./topologyCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -63,6 +66,7 @@ const emit = defineEmits<{
 }>();
 
 const { t, locale } = useI18n();
+const { reasonText } = usePathsCopy();
 
 const PAD = 16;
 /** The card's frame of reference: wraps the scrolling frame and does not scroll itself. */
@@ -196,7 +200,7 @@ function bundleCountry(le: LayoutEdge): { row: Extract<LayoutRow, { type: "count
 }
 
 /** The state a bundle's members count as healthy, by kind. */
-const HEALTHY = { probe: "measured", check: "up", chain: "converged" } as const;
+const HEALTHY = { probe: "up", check: "up", chain: "converged" } as const;
 
 function onEdgeClick(le: LayoutEdge): void {
   const edge = le.edge;
@@ -242,28 +246,33 @@ interface RowValue {
   text: string;
   tone: string;
   loss?: string;
-  more: number;
+  /** One state mark per drawn source, in the picker's order; empty with a single source, whose value says it all. */
+  marks: { source: string; name: string; state?: ProbeState }[];
 }
 
 /** Each drawn node's value, worked out once per model rather than once per binding. */
 const rowValues = computed(() => {
   const out = new Map<string, RowValue>();
   const probes = props.model.layer === "all" || props.model.layer === "probes";
+  const several = props.model.drawnSourceIds.length > 1;
   for (const row of layout.value.rows) {
     if (row.type !== "node") continue;
     const node = row.node;
     const probe = rowProbe(props.model, node.id);
-    if (probe) out.set(node.id, { ...edgeValue(t, probe.edge), more: probe.count > 1 ? probe.count - 1 : 0 });
-    else if (node.probeTarget === "not_probeable" && probes) out.set(node.id, { text: t("fleet.monitoring.topology.value.notProbed"), tone: "text-muted-foreground", more: 0 });
+    const marks = several && probe ? rowMarks(props.model, node.id).map((m) => ({ ...m, name: nodeName(m.source) })) : [];
+    if (probe) out.set(node.id, { ...edgeValue(t, probe.edge), marks });
+    else if (node.probeTarget === "not_probeable" && probes) out.set(node.id, { text: t("fleet.monitoring.topology.value.notProbed"), tone: "text-muted-foreground", marks: [] });
   }
   return out;
 });
+/** A row's marks in words, for its label and the mark's tooltip. */
+const markText = (m: { name: string; state?: ProbeState }) => `${m.name}: ${m.state ? t(`fleet.monitoring.topology.state.${m.state}`) : t("fleet.monitoring.topology.value.noPath")}`;
 const rowValue = (node: TopoNode): RowValue | undefined => rowValues.value.get(node.id);
 
 /**
- * A folded country: the median p50 of its measured paths (the bundle's line
- * already shows the worst), and how many of its paths are failing, lossy or
- * quiet, so one bad node in 78 reads as one, not as the whole country.
+ * A folded country: the median p50 of its up and degraded paths (the
+ * bundle's line already shows the worst), and how many of its paths are down
+ * or degraded, so one bad node in 78 reads as one, not as the whole country.
  */
 const countrySummaries = computed(() => {
   const out = new Map<string, ReturnType<typeof summarizeCountry>>();
@@ -276,13 +285,12 @@ function summarizeCountry(row: Extract<LayoutRow, { type: "country" }>) {
   const ids = new Set(row.members.map((m) => m.id));
   const into = props.model.edges.filter((e) => e.kind === "probe" && ids.has(e.to));
   if (into.length === 0) return undefined;
-  const measured = into.filter((e) => (e.state === "measured" || e.state === "lossy") && e.p50Ms !== undefined).map((e) => e.p50Ms!).sort((a, b) => a - b);
-  const problems = into.filter((e) => e.state === "failing" || e.state === "lossy" || e.state === "quiet").length;
+  const measured = into.filter((e) => (e.state === "up" || e.state === "degraded") && e.p50Ms !== undefined).map((e) => e.p50Ms!).sort((a, b) => a - b);
+  const problems = into.filter((e) => e.state === "down" || e.state === "degraded").length;
   const median = measured.length ? measured[Math.floor(measured.length / 2)]! : undefined;
-  const band = median !== undefined ? latencyBand(median) : undefined;
   return {
     text: median !== undefined ? formatMs(median) : edgeValue(t, worstLive(into)).text,
-    tone: band ? BAND_STYLE[band].text : "text-muted-foreground",
+    tone: median !== undefined ? "text-foreground" : "text-muted-foreground",
     problems,
   };
 }
@@ -327,6 +335,7 @@ function rowLabel(node: TopoNode): string {
   const parts = [node.name, node.country ?? "", freshnessText(t, locale.value, node, props.now)];
   const value = rowValue(node);
   if (value) parts.push(value.text + (value.loss ? `, ${t("fleet.monitoring.latency.cell.loss", { loss: value.loss })}` : ""));
+  if (value?.marks.length) parts.push(value.marks.map(markText).join("; "));
   if (node.relay) parts.push(t("fleet.monitoring.topology.role.relay"));
   if (node.exit) parts.push(t("fleet.monitoring.topology.role.exit"));
   if (node.incidents) parts.push(t("fleet.monitoring.topology.incidents", { n: node.incidents }, node.incidents));
@@ -354,7 +363,7 @@ interface Card {
 
 function probeRows(edge: TopoEdge): CardRow[] {
   const rows: CardRow[] = [];
-  rows.push({ label: t("fleet.monitoring.topology.card.p50"), value: formatMs(edge.p50Ms) || t("common.misc.none"), tone: edgeValue(t, edge).tone });
+  rows.push({ label: t("fleet.monitoring.topology.card.p50"), value: formatMs(edge.p50Ms) || t("common.misc.none"), tone: PROBE_INK[edge.state as ProbeState] });
   rows.push({ label: t("fleet.monitoring.topology.card.p95"), value: formatMs(edge.p95Ms) || t("common.misc.none") });
   rows.push({
     label: t("fleet.monitoring.topology.card.loss"),
@@ -384,10 +393,9 @@ function edgeCard(le: LayoutEdge): Card {
   const title = t("fleet.monitoring.topology.card.pair", { from: nodeName(edge.from), to: nodeName(edge.to) });
   if (edge.kind === "probe") {
     const lines: Card["lines"] = [];
-    if (edge.state === "paused" && edge.pausedReason) lines.push({ text: t("fleet.monitoring.topology.card.paused", { reason: t(`fleet.monitoring.latency.paused.${edge.pausedReason}`) }) });
-    if (edge.state === "quiet") lines.push({ text: t("fleet.monitoring.topology.card.quiet", { reason: quietText(t, locale.value, edge, props.now) }), tone: "text-warning-text" });
-    const partial = partialText(t, edge);
-    if (partial) lines.push({ text: partial });
+    // Why it is not up, in the server's own reason: unknown, paused or degraded.
+    if (edge.state !== "up" && edge.reason) lines.push({ text: reasonText(edge.reason), tone: edge.state === "degraded" ? "text-warning-text" : undefined });
+    if (edge.method) lines.push({ text: t("fleet.monitoring.topology.card.method", { method: edge.method.toUpperCase() }) });
     return { title, subtitle: `${stateLabel(t, edge)} · ${props.windowLabel}`, rows: probeRows(edge), lines, hint: t("fleet.monitoring.topology.card.hint.probe") };
   }
   if (edge.kind === "chain") {
@@ -635,6 +643,8 @@ const cardStyle = computed(() => {
           <span class="flex min-w-0 items-center gap-2">
             <span :class="cn('size-2 shrink-0 rounded-full', freshnessDot(s.node))" aria-hidden="true" />
             <span class="truncate text-sm font-medium" :title="s.node.name">{{ s.node.name }}</span>
+            <!-- Its place in the row marks, when more than one source draws. -->
+            <span v-if="model.drawnSourceIds.length > 1" class="ms-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular" :title="$t('fleet.monitoring.topology.source.markOrder', { n: model.drawnSourceIds.indexOf(s.node.id) + 1 })">{{ model.drawnSourceIds.indexOf(s.node.id) + 1 }}</span>
           </span>
           <span v-if="s.node.freshness === 'quiet'" class="truncate ps-4 text-[11px] text-destructive">
             {{ $t('fleet.monitoring.topology.source.quiet', { age: quietAge(s.node) }) }}
@@ -705,10 +715,19 @@ const cardStyle = computed(() => {
             <span v-if="row.node.incidents" class="shrink-0 rounded-sm bg-destructive/12 px-1 font-mono text-[10px] font-semibold text-destructive tabular" aria-hidden="true">{{ row.node.incidents }}</span>
             <span v-if="row.node.relay" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.relay') }}</span>
             <span v-if="row.node.exit" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.exit') }}</span>
-            <span v-if="rowValue(row.node)" class="flex shrink-0 items-baseline gap-1 font-mono text-xs tabular">
-              <span v-if="rowValue(row.node)!.loss" class="text-[11px] text-destructive">{{ rowValue(row.node)!.loss }}</span>
+            <span v-if="rowValue(row.node)" class="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular">
+              <span v-if="rowValue(row.node)!.loss" class="text-[11px] text-muted-foreground">{{ rowValue(row.node)!.loss }}</span>
               <span :class="rowValue(row.node)!.tone">{{ rowValue(row.node)!.text }}</span>
-              <span v-if="rowValue(row.node)!.more" class="text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.value.more', { n: rowValue(row.node)!.more }) }}</span>
+              <!-- One mark per drawn source, in the picker's order, so overlapping fans stay readable. -->
+              <span v-if="rowValue(row.node)!.marks.length" class="flex items-center gap-0.5" aria-hidden="true" data-testid="topology-row-marks">
+                <span
+                  v-for="m in rowValue(row.node)!.marks"
+                  :key="m.source"
+                  :title="markText(m)"
+                  :data-mark="m.state ?? 'none'"
+                  :class="cn('size-2 rounded-[2px]', m.state ? PROBE_MARK[m.state] : 'border border-dashed border-muted-foreground/50')"
+                />
+              </span>
             </span>
           </button>
         </template>

@@ -13,6 +13,7 @@ function path(over: Partial<PathView>): PathView {
 function matrix(paths: PathView[]) {
   const response: PathsResponse = {
     window: "24h",
+    degraded_at: "2026-10-16T08:00:00Z",
     sources: [
       { node_id: "sh", name: "cd-hs-sh" },
       { node_id: "fsn", name: "hetzner-fsn" },
@@ -51,16 +52,17 @@ test("a node's paths split into those that end at it and those that start from i
   assert.deepEqual(nodePaths(undefined, "jp"), { reachedBy: [], reaches: [] });
 });
 
-test("worst first: down, unknown, paused, up; then the lossiest, then the slowest", () => {
+test("worst first: down, degraded, unknown, paused, up; then the lossiest, then the slowest", () => {
   const m = matrix([
+    path({ source: "sh", target_node: "de", monitor_id: "f", state: "degraded", reason: "degraded_latency", p50_ms: 300 }),
     path({ source: "sh", target_node: "us", monitor_id: "a", state: "up", p50_ms: 120 }),
     path({ source: "sh", target_node: "de", monitor_id: "b", state: "up", p50_ms: 240, loss: 0.02 }),
     path({ source: "sh", target_node: "jp", monitor_id: "c", state: "unknown", reason: "path_paused", p50_ms: null }),
     path({ source: "fsn", target_node: "jp", monitor_id: "d", state: "unknown", reason: "beacon_filtered", p50_ms: null }),
     path({ source: "fsn", target_node: "us", monitor_id: "e", state: "down", p50_ms: null }),
   ]);
-  assert.deepEqual([...m.paths].sort(worstFirst).map((p) => p.monitorId), ["e", "d", "c", "b", "a"]);
-  assert.deepEqual(stateCounts(m.paths), { up: 2, down: 1, unknown: 1, paused: 1 });
+  assert.deepEqual([...m.paths].sort(worstFirst).map((p) => p.monitorId), ["e", "f", "d", "c", "b", "a"]);
+  assert.deepEqual(stateCounts(m.paths), { up: 2, degraded: 1, down: 1, unknown: 1, paused: 1 });
 });
 
 test("the other end is the source when reached, the target when reaching; checks carry their names", () => {
