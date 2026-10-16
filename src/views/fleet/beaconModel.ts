@@ -288,9 +288,9 @@ export function plannedSettings(
   form: BeaconForm,
   view: Pick<BeaconView, "applied" | "suggested_port"> | undefined,
   node: Pick<Node, "internal_ip" | "public_ip"> | undefined,
-): { port?: number; bind?: string; endpoint?: string; endpointDefault: boolean; problems: BeaconFormProblem[] } {
+): { port?: number; portRandom: boolean; bind?: string; endpoint?: string; endpointDefault: boolean; problems: BeaconFormProblem[] } {
   const problems: BeaconFormProblem[] = [];
-  if (action === "disable") return { endpointDefault: false, problems };
+  if (action === "disable") return { portRandom: false, endpointDefault: false, problems };
   const current = action === "change" ? view?.applied ?? undefined : undefined;
   let port: number | undefined = current?.port || undefined;
   let portChanged = false;
@@ -306,6 +306,8 @@ export function plannedSettings(
     port = view.suggested_port;
     portChanged = true;
   }
+  // An enable with no port and no suggestion: the control plane draws one from 40000 to 59999 when it plans.
+  const portRandom = action === "enable" && !typedPort && !port;
 
   let bind: string | undefined = current?.bind || undefined;
   const typedBind = form.bind.trim();
@@ -335,9 +337,22 @@ export function plannedSettings(
   } else if (!endpoint || followsPort) {
     endpoint = defaultEndpoint(node, port) || undefined;
     endpointDefault = true;
-    if (!endpoint && port) problems.push({ field: "endpoint", code: "noDefault" });
+    if (!publicIPv4(node?.public_ip)) problems.push({ field: "endpoint", code: "noDefault" });
   }
-  return { port, bind, endpoint, endpointDefault, problems };
+  return { port, portRandom, bind, endpoint, endpointDefault, problems };
+}
+
+/**
+ * Whether an endpoint's address is one of the node's own (the server's
+ * beaconEndpointCurrent): its public or primary interface address. The
+ * server also accepts a provider edge a line on the node declares, which
+ * the console cannot see, so a miss is a warning, never a refusal.
+ */
+export function endpointIsOwn(endpoint: string | undefined, node: Pick<Node, "internal_ip" | "public_ip"> | undefined): boolean {
+  const parsed = parseBeaconEndpoint(endpoint ?? "");
+  if (!parsed.ok) return true;
+  const host = parsed.value.slice(0, parsed.value.lastIndexOf(":"));
+  return [node?.public_ip, node?.internal_ip].some((a) => (a ?? "").trim() === host);
 }
 
 /**

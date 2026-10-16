@@ -270,7 +270,7 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             <template v-if="state === 'off'">
               <p v-if="refuses" :class="cn(NOTE, 'bg-warning/10 text-warning-text')" data-testid="beacon-off-refused">{{ $t('fleet.monitoring.beacon.line.offRefused') }}</p>
               <template v-else>
-                <p v-if="view.suggested_port" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.line.offPort', { port: view.suggested_port }) }}</p>
+                <p class="text-xs text-muted-foreground">{{ view.suggested_port ? $t('fleet.monitoring.beacon.line.offPort', { port: view.suggested_port }) : $t('fleet.monitoring.beacon.line.offRandom') }}</p>
                 <p v-if="!responder" :class="cn(NOTE, 'bg-warning/10 text-warning-text')" data-testid="beacon-off-old">
                   {{ $t('fleet.monitoring.beacon.line.offNoResponder', { version }) }}
                   <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="ms-1 font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.beacon.updateAgent') }}</RouterLink>
@@ -320,6 +320,11 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             </p>
             <p class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.exposure.internet', { port: applied?.port ?? '' }) }}</p>
           </div>
+
+          <!-- The NetGuard rule a plan carries has not applied yet: nobody reaches the port until it does. -->
+          <p v-if="enabled && view.firewall_pending && !waiting.length" :class="cn(NOTE, 'bg-warning/10 text-warning-text')" role="status" data-testid="beacon-companion-pending">
+            {{ $t('fleet.monitoring.beacon.line.companionPending') }}
+          </p>
 
           <!-- Sources that use the beacon but are not admitted yet: firewall pending under NetGuard. -->
           <div v-if="waiting.length" :class="cn(NOTE, 'space-y-1.5 bg-warning/10 text-warning-text')" role="status" data-testid="beacon-waiting">

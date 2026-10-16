@@ -1890,6 +1890,8 @@ export default {
         line: {
           off: "Off. Nothing on this node listens for probes.",
           offPort: "Enabling it opens UDP {port}, picked at random for this node.",
+          offRandom: "Enabling it opens one UDP port, which the control plane picks at random from 40000 to 59999.",
+          companionPending: "NetGuard has not applied the beacon's rule yet. No source reaches the port until it does; its paths read \"firewall pending\".",
           offNoResponder: "Its agent does not run a beacon yet ({version}). A plan can be approved, but nothing listens until the agent is updated.",
           offRefused: "This node refuses a beacon: its agent runs with -no-beacon. Remove the flag on the node to allow one.",
           pending: "Enabled. Waiting for the agent to listen on {bind}:{port}.",
@@ -1976,12 +1978,16 @@ export default {
           },
           port: "UDP port",
           portHint: "Picked at random from 40000 to 59999 for this node, away from the ports on scan lists. Any port from 1024 to 65535.",
+          portRandom: "random",
           bind: "Bind address",
           bindHint: "The agent listens on this address only, never on every address. Empty takes the node's primary interface address, {address}; behind NAT that is its private address.",
           bindHintNone: "The agent listens on this address only, never on every address. The node reports no IPv4 address to default to, so enter one.",
           endpoint: "Advertised endpoint",
           endpointHint: "An IPv4 address and port. Empty advertises the node's public IPv4 with the port, {endpoint}. For a NAT node, enter the mapped public address and port.",
           endpointHintNone: "An IPv4 address and port. The node has no public IPv4, so enter the address and port sources can reach.",
+          endpointHintIp: "An IPv4 address and port. Empty advertises the node's public IPv4, {ip}, with the listen port. For a NAT node, enter the mapped public address and port.",
+          endpointOwn: "The address must be the node's own: its public or primary interface address, or an edge a line on the node declares.",
+          endpointForeign: "This is neither the node's public nor its primary interface address. The control plane refuses it unless a line on the node declares this edge.",
           keepHint: "Empty keeps {value}.",
           problem: {
             port: "Enter a port from 1024 to 65535.",
@@ -1994,6 +2000,8 @@ export default {
           },
           asks: {
             opens: "Opens UDP {port} on {bind}.",
+            opensRandom: "Opens one UDP port on {bind}, which the control plane picks at random from 40000 to 59999 when it writes the plan.",
+            sendRandom: "Sources send to {ip} at that port.",
             send: "Sources send to {endpoint}.",
             sources: "The source that will hold a key: {names}. | The sources that will hold a key: {names}.",
             noSources: "No source uses this beacon yet. The plan opens the port to nobody; once the path set or a Beacon check names a source, a change plan admits it.",
@@ -2009,7 +2017,6 @@ export default {
           create: "Create plan",
           failed: "The plan was not created: {reason}",
           blocked: "The control plane refused the plan:",
-          missing: "Still needed: {fields}",
           filed: {
             title: "Plan waiting for approval",
             kind: "Beacon plan",

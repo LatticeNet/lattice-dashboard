@@ -1874,6 +1874,8 @@ export default {
         line: {
           off: "关闭。这个节点上没有任何东西在监听探测。",
           offPort: "开启后会打开 UDP {port}，这是为这个节点随机选的端口。",
+          offRandom: "开启后会打开一个 UDP 端口，由控制面从 40000 到 59999 之间随机选取。",
+          companionPending: "NetGuard 还没有应用信标的规则。在应用之前没有源节点能到达这个端口，它的路径显示为“防火墙待批”。",
           offNoResponder: "它的 agent 还不支持信标（{version}）。计划可以被批准，但在升级 agent 之前不会有监听。",
           offRefused: "这个节点拒绝信标：它的 agent 带 -no-beacon 启动。要允许信标，请在节点上去掉这个参数。",
           pending: "已开启，等待 agent 在 {bind}:{port} 上监听。",
@@ -1960,12 +1962,16 @@ export default {
           },
           port: "UDP 端口",
           portHint: "为这个节点从 40000 到 59999 随机选取，避开扫描名单上的端口。可以用 1024 到 65535 之间的任意端口。",
+          portRandom: "随机",
           bind: "绑定地址",
           bindHint: "agent 只在这个地址上监听，从不监听所有地址。留空使用节点的主网卡地址 {address}；在 NAT 后面这是它的私有地址。",
           bindHintNone: "agent 只在这个地址上监听，从不监听所有地址。节点没有上报可用的 IPv4 地址，请填写一个。",
           endpoint: "公布的端点",
           endpointHint: "一个 IPv4 地址和端口。留空公布节点的公网 IPv4 加端口，即 {endpoint}。NAT 节点请填写映射后的公网地址和端口。",
           endpointHintNone: "一个 IPv4 地址和端口。节点没有公网 IPv4，请填写源节点能到达的地址和端口。",
+          endpointHintIp: "一个 IPv4 地址和端口。留空公布节点的公网 IPv4 {ip} 加监听端口。NAT 节点请填写映射后的公网地址和端口。",
+          endpointOwn: "地址必须是节点自己的：它的公网地址、主网卡地址，或者节点上某条线路声明的边缘地址。",
+          endpointForeign: "这既不是节点的公网地址，也不是它的主网卡地址。除非节点上有线路声明了这个边缘地址，控制面会拒绝它。",
           keepHint: "留空保持 {value}。",
           problem: {
             port: "请填写 1024 到 65535 之间的端口。",
@@ -1978,6 +1984,8 @@ export default {
           },
           asks: {
             opens: "在 {bind} 上打开 UDP {port}。",
+            opensRandom: "在 {bind} 上打开一个 UDP 端口，由控制面在写计划时从 40000 到 59999 之间随机选取。",
+            sendRandom: "源节点发往 {ip} 的这个端口。",
             send: "源节点发往 {endpoint}。",
             sources: "会拿到密钥的源节点：{names}。 | 会拿到密钥的源节点：{names}。",
             noSources: "还没有源节点用这个信标。计划打开的端口不放行任何人；路径集或信标检查用到某个源节点后，再由变更计划放行它。",
@@ -1993,7 +2001,6 @@ export default {
           create: "创建计划",
           failed: "计划没有创建：{reason}",
           blocked: "控制面拒绝了这个计划：",
-          missing: "还需要：{fields}",
           filed: {
             title: "计划等待批准",
             kind: "信标计划",

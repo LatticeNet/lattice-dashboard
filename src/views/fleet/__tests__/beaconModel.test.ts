@@ -16,6 +16,7 @@ import {
   companionAllowCount,
   defaultBind,
   defaultEndpoint,
+  endpointIsOwn,
   formFor,
   isReachabilityCheck,
   nextEpoch,
@@ -157,12 +158,30 @@ test("an enable opens on the suggested port and derives the rest", () => {
   const form = formFor("enable", off);
   assert.deepEqual(form, { port: "47231", bind: "", endpoint: "" });
   const planned = plannedSettings("enable", form, off, NODE);
-  assert.deepEqual(planned, { port: 47231, bind: "10.0.0.5", endpoint: "203.0.113.12:47231", endpointDefault: true, problems: [] });
+  assert.deepEqual(planned, { port: 47231, portRandom: false, bind: "10.0.0.5", endpoint: "203.0.113.12:47231", endpointDefault: true, problems: [] });
   assert.deepEqual(buildBeaconPlanRequest("jp", "enable", form, off), { node_id: "jp", action: "enable", port: 47231 });
   // A NAT node names its mapping.
   const nat = { ...form, endpoint: "198.51.100.40:50231" };
   assert.equal(plannedSettings("enable", nat, off, NODE).endpoint, "198.51.100.40:50231");
   assert.deepEqual(buildBeaconPlanRequest("jp", "enable", nat, off), { node_id: "jp", action: "enable", port: 47231, endpoint: "198.51.100.40:50231" });
+});
+
+test("an enable without a drawn port leaves the port to the control plane, which draws it when it plans", () => {
+  const fresh = view({ state: "off", applied: undefined, suggested_port: undefined });
+  const form = formFor("enable", fresh);
+  assert.equal(form.port, "");
+  const planned = plannedSettings("enable", form, fresh, NODE);
+  assert.deepEqual([planned.port, planned.portRandom, planned.endpoint, planned.problems], [undefined, true, undefined, []]);
+  assert.deepEqual(buildBeaconPlanRequest("jp", "enable", form, fresh), { node_id: "jp", action: "enable" });
+  // Without a public IPv4 there is nothing to advertise by default.
+  assert.deepEqual(plannedSettings("enable", form, fresh, { internal_ip: "10.0.0.5" }).problems, [{ field: "endpoint", code: "noDefault" }]);
+});
+
+test("an endpoint should be one of the node's own addresses; another is only a warning (a line may declare it)", () => {
+  assert.equal(endpointIsOwn("203.0.113.12:50231", NODE), true);
+  assert.equal(endpointIsOwn("10.0.0.5:47231", NODE), true);
+  assert.equal(endpointIsOwn("198.51.100.40:50231", NODE), false);
+  assert.equal(endpointIsOwn("not an endpoint", NODE), true, "a malformed endpoint is the parser's to refuse");
 });
 
 test("the form refuses what the server would, field by field", () => {

@@ -46,9 +46,13 @@ function heldFor(node: Node, shape: BeaconShape): Held {
   return h;
 }
 
-/** The random port the server assigned the node, kept once drawn. */
-function suggestedPort(node: Node, shape: BeaconShape): number {
-  return shape.port ?? 40000 + (hash(node.id) % 20000);
+/** The random port the server drew for the node's first plan, kept once drawn; a read never draws one. */
+function suggestedPort(shape: BeaconShape): number | undefined {
+  return shape.port ?? shape.drawnPort;
+}
+
+function drawPort(node: Node): number {
+  return 40000 + (hash(node.id) % 20000);
 }
 
 function exposureOf(node: Node, shape: BeaconShape): "netguard" | "internet" {
@@ -87,7 +91,7 @@ export function beaconViewFor(node: Node, nodes: readonly Node[], current: reado
     state: "off",
     agent: facts,
     sources: [],
-    suggested_port: suggestedPort(node, shape),
+    suggested_port: suggestedPort(shape),
     version: h.version,
     pending_approval_id: h.pendingApprovalId,
   };
@@ -123,7 +127,7 @@ export function beaconViewFor(node: Node, nodes: readonly Node[], current: reado
       ...(isCurrent && !approved && shape.enabled ? { reason: view.exposure === "netguard" ? "firewall_pending" : "beacon_source_pending" } : {}),
     };
   });
-  if (shape.enabled && view.exposure === "netguard") view.firewall_pending = view.sources!.some((s) => s.current !== s.approved);
+  if (shape.enabled && view.exposure === "netguard") view.firewall_pending = !!shape.companionPending || view.sources!.some((s) => s.current !== s.approved);
   return view;
 }
 
@@ -144,13 +148,18 @@ export async function planBeacon(input: BeaconPlanRequest, node: Node, nodes: re
   if (input.action === "disable") {
     settings = { ...before!, enabled: false };
   } else {
-    const port = input.port || before?.port || suggestedPort(node, shape);
+    const port = input.port || before?.port || suggestedPort(shape) || drawPort(node);
     const bind = input.bind?.trim() || before?.bind || shape.bind || node.internal_ip || node.public_ip || "";
     if (input.bind && !parseBeaconIPv4(input.bind.trim()).ok) return { ok: false, status: 400, message: `bind: beacon: not an IPv4 literal: "${input.bind}"` };
     const followed = before && port !== before.port && before.endpoint === `${node.public_ip}:${before.port}`;
     let endpoint = input.endpoint?.trim() || (followed ? "" : before?.endpoint) || "";
     if (input.endpoint && !parseBeaconEndpoint(input.endpoint).ok) return { ok: false, status: 400, message: `endpoint: beacon: not an IPv4 literal: "${input.endpoint}"` };
     if (!endpoint) endpoint = `${node.public_ip ?? "203.0.113.1"}:${port}`;
+    // The server's beaconEndpointCurrent: the endpoint is one of the node's own addresses.
+    const host = endpoint.slice(0, endpoint.lastIndexOf(":"));
+    if (host !== node.public_ip && host !== node.internal_ip) {
+      return { ok: false, status: 400, message: `endpoint ${endpoint} is not one of the node's addresses (its public IPv4, its primary interface address or a provider edge its lines declare)` };
+    }
     settings = { enabled: true, port, bind, endpoint, limits: DEFAULT_BEACON_LIMITS };
   }
 

@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { publicIPv4 } from "./checkRulesModel";
 import {
   BEACON_PORT_MAX,
   BEACON_PORT_MIN,
@@ -41,6 +42,7 @@ import {
   companionAllowCount,
   defaultBind,
   defaultEndpoint,
+  endpointIsOwn,
   formFor,
   plannedSettings,
   readBeaconPlan,
@@ -110,6 +112,9 @@ const applied = computed(() => props.view.applied ?? undefined);
 const fallbackBind = computed(() => defaultBind(props.node));
 // The default follows the port when it is valid, else the node's suggested one, so a bad port never reads as "no public IPv4".
 const fallbackEndpoint = computed(() => defaultEndpoint(props.node, planned.value.port ?? applied.value?.port ?? props.view.suggested_port));
+const publicIp = computed(() => publicIPv4(props.node.public_ip));
+/** A typed endpoint on an address that is not the node's own: the server accepts it only for an edge a line declares. */
+const foreignEndpoint = computed(() => !!form.value.endpoint.trim() && !problemOf("endpoint") && !endpointIsOwn(form.value.endpoint, props.node));
 
 /** The sources that will hold a key: the current set, which the plan approves. */
 const keySources = computed(() =>
@@ -121,13 +126,7 @@ const keySources = computed(() =>
 const changed = computed(() => (isChange.value ? changedSettings(form.value, props.view) : []));
 const limits = DEFAULT_BEACON_LIMITS;
 
-const missing = computed(() => {
-  const out: string[] = [];
-  if (props.action === "disable") return out;
-  if (!planned.value.port && !problemOf("port")) out.push(t("fleet.monitoring.beacon.plan.port"));
-  return out;
-});
-const canSubmit = computed(() => !pending.value && planned.value.problems.length === 0 && missing.value.length === 0);
+const canSubmit = computed(() => !pending.value && planned.value.problems.length === 0);
 
 async function submit(): Promise<void> {
   if (!canSubmit.value) return;
@@ -187,7 +186,7 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
               v-model="form.port"
               inputmode="numeric"
               class="font-mono"
-              :placeholder="isChange && applied?.port ? String(applied.port) : String(view.suggested_port ?? '')"
+              :placeholder="isChange && applied?.port ? String(applied.port) : view.suggested_port ? String(view.suggested_port) : $t('fleet.monitoring.beacon.plan.portRandom')"
               :aria-invalid="!!problemOf('port') || undefined"
               :aria-describedby="problemOf('port') ? 'beacon-port-error' : 'beacon-port-hint'"
             />
@@ -233,8 +232,12 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
           </div>
           <p id="beacon-endpoint-hint" class="text-xs text-muted-foreground">
             <template v-if="isChange && applied?.endpoint">{{ $t('fleet.monitoring.beacon.plan.keepHint', { value: applied.endpoint }) }}</template>
-            <template v-else>{{ fallbackEndpoint ? $t('fleet.monitoring.beacon.plan.endpointHint', { endpoint: fallbackEndpoint }) : $t('fleet.monitoring.beacon.plan.endpointHintNone') }}</template>
+            <template v-else-if="fallbackEndpoint">{{ $t('fleet.monitoring.beacon.plan.endpointHint', { endpoint: fallbackEndpoint }) }}</template>
+            <template v-else-if="publicIp">{{ $t('fleet.monitoring.beacon.plan.endpointHintIp', { ip: publicIp }) }}</template>
+            <template v-else>{{ $t('fleet.monitoring.beacon.plan.endpointHintNone') }}</template>
+            {{ $t('fleet.monitoring.beacon.plan.endpointOwn') }}
           </p>
+          <p v-if="foreignEndpoint" class="text-xs text-warning-text" data-testid="beacon-endpoint-foreign">{{ $t('fleet.monitoring.beacon.plan.endpointForeign') }}</p>
           <p v-if="problemOf('endpoint')" id="beacon-endpoint-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpoint')) }}</p>
         </fieldset>
       </template>
@@ -250,7 +253,9 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
           <template v-else>
             <li v-if="isChange && changed.length === 0">{{ $t('fleet.monitoring.beacon.plan.asks.resources') }}</li>
             <li v-if="planned.port && planned.bind" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.opens', { port: planned.port, bind: planned.bind }) }}</li>
+            <li v-else-if="planned.portRandom && planned.bind" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.opensRandom', { bind: planned.bind }) }}</li>
             <li v-if="planned.endpoint" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.send', { endpoint: planned.endpoint }) }}</li>
+            <li v-else-if="planned.portRandom && publicIp" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sendRandom', { ip: publicIp }) }}</li>
             <li v-if="keySources.length" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sources', { names: keySources.join(', ') }, keySources.length) }}</li>
             <li v-else class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.noSources') }}</li>
             <li v-if="view.exposure === 'netguard'">{{ $t('fleet.monitoring.beacon.plan.asks.netguard') }}</li>
@@ -366,7 +371,6 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
     <template #actions>
       <template v-if="stage === 'form'">
         <p v-if="refusal" role="alert" class="basis-full text-xs text-destructive" data-testid="beacon-plan-refused">{{ $t('fleet.monitoring.beacon.plan.failed', { reason: refusal }) }}</p>
-        <p v-if="missing.length" class="me-auto text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.missing', { fields: missing.join(', ') }) }}</p>
         <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
         <Button type="submit" form="beacon-plan" size="sm" :variant="action === 'disable' ? 'destructive' : 'default'" :disabled="!canSubmit" data-testid="beacon-plan-submit">
           <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
