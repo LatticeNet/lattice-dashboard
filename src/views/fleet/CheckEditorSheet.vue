@@ -250,6 +250,9 @@ const missing = computed(() => {
   const out: string[] = [];
   if (nodeMode.value ? !draft.value.targetNode : !draft.value.target.trim()) out.push(nodeMode.value ? t("fleet.monitoring.checks.editor.missing.node") : t("fleet.monitoring.checks.editor.missing.target"));
   if (problems.value.includes("sources")) out.push(t("fleet.monitoring.checks.editor.missing.sources"));
+  // An empty header field says so only once it is left; until then this line explains the disabled save.
+  const emptyHeader = draft.value.headers.some((h) => (headerProblemsNow.value.rows[h.key] ?? []).some((p) => p === "valueRequired" || (p === "nameLength" && !h.name.trim())));
+  if (showHttpExpect.value && emptyHeader) out.push(t("fleet.monitoring.checks.editor.missing.header"));
   return out;
 });
 

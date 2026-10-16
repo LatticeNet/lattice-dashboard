@@ -1721,6 +1721,7 @@ export default {
             target: "目标",
             sources: "运行它的节点",
             node: "目标节点",
+            header: "请求头的名称或值",
           },
           problem: {
             target: "目标的格式不适合这种方式。",

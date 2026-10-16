@@ -113,7 +113,8 @@ export function withPathVerdict(
   if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
   const unknown = paths.filter((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
   if (!unknown.length) return health;
-  // The reason that explains the failing results is the one on the paths of the sources that fail.
+  // The reason that explains the failing results is the one on the paths of the sources that fail. When none of
+  // those paths carries one (a failing source the matrix reads up), the check's other unknown paths speak for it.
   const failing = new Set(latest.filter((l) => !l.success && !l.reason).map((l) => l.node_id ?? ""));
   const own = unknown.filter((p) => p.source !== undefined && failing.has(p.source));
   const reasons = [...new Set((own.length ? own : unknown).map((p) => p.reason!))];
@@ -137,7 +138,7 @@ export function checkSourceSummary(
   for (const p of paths) ids.add(p.source);
   const unmeasured = new Set<string>();
   for (const p of paths) if (p.state === "unknown" && p.reason && !isChosenUnknown(p.reason)) unmeasured.add(p.source);
-  if (!paths.length) for (const l of monitor.latest ?? []) if (l.reason) unmeasured.add(l.node_id ?? "");
+  if (!paths.length) for (const l of monitor.latest ?? []) if (l.reason && l.node_id) unmeasured.add(l.node_id);
   return { ids: [...ids].sort(), unmeasured: unmeasured.size };
 }
 

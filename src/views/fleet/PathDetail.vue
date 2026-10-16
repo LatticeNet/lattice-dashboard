@@ -14,6 +14,7 @@ import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -69,6 +70,8 @@ const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
 const { whyText, stateLabel, windowLong, reasonText, reasonShort } = usePathsCopy();
+/** Agent updates needs node:admin; without it the sheet names the version and links nowhere. */
+const canUpdateAgents = computed(() => useAuthStore().can("node:admin"));
 
 /** The reason a path reads unknown when it measured nothing (not a pause or a choice): its figures and runs are then not an outage. */
 const unmeasured = computed(() => {
@@ -252,9 +255,9 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
         {{ reasonLine }}
       </p>
       <!-- What the operator can do about it, for the reasons that have a next step. -->
-      <p v-if="unmeasured === 'agent_too_old'" class="text-xs text-muted-foreground" data-testid="path-next">
+      <p v-if="unmeasured === 'agent_too_old' && (agentVersion || canUpdateAgents)" class="text-xs text-muted-foreground" data-testid="path-next">
         {{ agentVersion ? $t('fleet.monitoring.paths.sheet.agentNow', { version: agentVersion }) : '' }}
-        <RouterLink :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
+        <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
       </p>
       <p v-else-if="unmeasured === 'icmp_filtered'" class="text-xs text-muted-foreground" data-testid="path-next">{{ $t('fleet.monitoring.paths.sheet.filteredNext') }}</p>
     </div>

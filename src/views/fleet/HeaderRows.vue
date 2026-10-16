@@ -73,7 +73,8 @@ function replace(row: HeaderRow): void {
 
 function keep(row: HeaderRow): void {
   update(row.key, keepCurrent);
-  focusLater(fieldId(row, "replace"));
+  // Replace is drawn only for a secret the server says is set; otherwise the value field stays and keeps focus.
+  void nextTick(() => (document.getElementById(fieldId(row, "replace")) ?? document.getElementById(fieldId(row, "value")))?.focus());
 }
 
 const anySecret = computed(() => rows.value.some((r) => r.secret));
