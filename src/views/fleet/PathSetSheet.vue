@@ -47,6 +47,7 @@ import {
   draftsDiffer,
   pathSetPreview,
   setPairEnabled,
+  sourceMethod,
   setSourceMethod,
   setTargetMode,
   targetMode,
@@ -54,6 +55,7 @@ import {
   type SourceMethodPreview,
   type TargetMode,
 } from "./latencyModel";
+import { sourceSupport } from "./checkRulesModel";
 import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
@@ -128,6 +130,35 @@ function setMethod(method: string): void {
 function setPin(source: string, value: string): void {
   draft.value = setSourceMethod(draft.value, source, value || undefined);
 }
+
+/** Paths the save makes that will read unknown: each source's targets it cannot reach. */
+const unknownPaths = computed(() => methodPreview.value.reduce((sum, row) => sum + row.none, 0));
+
+/** The targets a source cannot reach, by name: the first eight, then a count. */
+function unreachedNames(row: SourceMethodPreview): string {
+  const names = row.noneTargets.slice(0, 8).map(nameOf);
+  const more = row.noneTargets.length - names.length;
+  return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
+}
+
+/**
+ * The source list flags, without disabling, a node that would ping (pinned
+ * to ICMP, or following a path set on ICMP) but cannot: a pin to TCP or
+ * Auto would make it measure, so it stays pickable.
+ */
+const sourceNotes = computed<Record<string, string>>(() => {
+  if (!props.m2a) return {};
+  const out: Record<string, string> = {};
+  for (const node of sourceNodes.value) {
+    if (sourceMethod(draft.value, node.id) !== "icmp") continue;
+    const support = sourceSupport(node, "icmp", true);
+    if (!support.ok) out[node.id] = t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(support.reason, "icmp") });
+  }
+  return out;
+});
+
+/** What the To where list's footnote says the targets are dialled on, by the method. */
+const ruleHint = computed(() => (props.m2a && draft.value.method && draft.value.method !== "tcp" ? t(`fleet.monitoring.pathSet.ruleHint.${draft.value.method}`) : t("fleet.monitoring.latency.config.ruleHint")));
 
 /** One line per source: the method it will use and what it reaches with it. */
 function previewLine(row: SourceMethodPreview): string {
@@ -218,7 +249,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${draft.method || 'tcp'}`) }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
-        <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.latency.config.probes')">
+        <!-- Its own label, so it does not read as a second method choice under the first. -->
+        <p class="mt-1 text-xs font-medium">{{ $t('fleet.monitoring.pathSet.probing') }}</p>
+        <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.pathSet.probing')">
           <button
             type="button"
             :class="cn('rounded px-2 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', draft.enabled && 'bg-secondary font-medium text-foreground')"
@@ -238,7 +271,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 2. From where -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.from') }}</legend>
-        <SourcePicker v-model="sources" :nodes="sourceNodes" :m2a="m2a" :label="$t('fleet.monitoring.checks.editor.step.from')" />
+        <SourcePicker v-model="sources" :nodes="sourceNodes" :m2a="m2a" :notes="sourceNotes" :label="$t('fleet.monitoring.checks.editor.step.from')" />
         <div v-if="m2a && methodPreview.length" class="grid gap-1.5" data-testid="path-set-pins">
           <p class="text-xs font-medium">{{ $t('fleet.monitoring.pathSet.pins') }}</p>
           <ul class="divide-y divide-border rounded-md border border-border">
@@ -249,6 +282,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
                   <span class="font-mono">{{ methodLabel(row.method) }}</span>
                   <span v-if="!row.pinned"> ({{ $t('fleet.monitoring.pathSet.followsSet') }})</span>
                   · {{ previewLine(row) }}
+                </span>
+                <span v-if="row.noneTargets.length && !row.refusal" class="block text-xs break-words text-muted-foreground" data-testid="pin-unreached">
+                  {{ $t('fleet.monitoring.pathSet.preview.unreached', { names: unreachedNames(row) }) }}
                 </span>
               </span>
               <select
@@ -309,7 +345,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           </li>
           <li v-if="filteredNodes.length === 0" class="px-3 py-5 text-center text-xs text-muted-foreground">{{ $t('fleet.monitoring.latency.config.noMatch') }}</li>
         </ul>
-        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.latency.config.ruleHint') }}</p>
+        <p class="text-xs text-muted-foreground" data-testid="path-set-rule">{{ ruleHint }}</p>
       </fieldset>
 
       <!-- 4. How often -->
@@ -341,7 +377,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
     </form>
     <template #actions>
       <p class="me-auto text-xs text-muted-foreground tabular" data-testid="latency-config-counts">
-        {{ dirty ? $t('fleet.monitoring.pathSet.counts', { sources: draft.sources.length, targets: targetCount, paths: pathCount }) : $t('fleet.monitoring.latency.config.unchanged') }}
+        <template v-if="!dirty">{{ $t('fleet.monitoring.latency.config.unchanged') }}</template>
+        <template v-else-if="unknownPaths">{{ $t('fleet.monitoring.pathSet.countsUnknown', { sources: draft.sources.length, targets: targetCount, paths: pathCount, unknown: unknownPaths }) }}</template>
+        <template v-else>{{ $t('fleet.monitoring.pathSet.counts', { sources: draft.sources.length, targets: targetCount, paths: pathCount }) }}</template>
       </p>
       <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
       <Button type="submit" form="path-set" size="sm" :disabled="pending || !dirty || problems.length > 0" data-testid="latency-config-save">

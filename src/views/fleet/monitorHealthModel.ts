@@ -42,7 +42,8 @@ export type MonitorHealth =
   | { kind: "none" }
   | { kind: "failing"; failing: number; total: number; lastAt: number }
   | { kind: "stale"; lastAt: number }
-  | { kind: "unmeasured"; total: number; reason: string; lastAt: number }
+  /** `reasons` counts the distinct reasons when there is more than one; `reason` is then empty. */
+  | { kind: "unmeasured"; total: number; reason: string; reasons?: number; lastAt: number }
   | { kind: "up"; total: number; latencyMs?: number; lastAt: number };
 
 /** Failing first, then what cannot be trusted, then what is fine. */

@@ -182,7 +182,7 @@ const criticalOpen = computed(() =>
 );
 const operatorChecks = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
 const healthOf = (m: MonitorView) =>
-  withPathVerdict(monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now()), (matrix.value?.paths ?? []).filter((p) => p.monitorId === m.id));
+  withPathVerdict(monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now()), (matrix.value?.paths ?? []).filter((p) => p.monitorId === m.id), m.latest);
 const failingChecks = computed(() => failingMonitors(operatorChecks.value, healthOf));
 
 const pathsProof = useProof(data.pathsQuery);
@@ -350,6 +350,8 @@ const plan = computed(() => data.planQuery.data.value);
  * paths route: a server without it is offered nothing it cannot take.
  */
 const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
+/** A source's agent version, said on a path whose agent is too old. */
+const agentOf = (id: string) => (nodesQuery.data.value ?? []).find((n) => n.id === id)?.agent_version;
 const shortestIntervalSec = computed(() => {
   const list = (monitorsQuery.data.value ?? []).filter((m) => m.enabled).map((m) => m.interval_sec);
   return list.length ? Math.min(...list) : undefined;
@@ -422,6 +424,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :offered="data.offered.value"
         :failure-of="failureOf"
         :no-sources="noSources"
+        :agent-of="agentOf"
         @path-set="openPathSet"
         @create-check="openCreate()"
         @open-check="openCheck"

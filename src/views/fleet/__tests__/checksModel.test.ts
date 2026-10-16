@@ -13,6 +13,7 @@ import {
   buildUpdate,
   budgetRechecked,
   canEditCheck,
+  checkSourceSummary,
   checkGroup,
   draftChanged,
   draftFromMonitor,
@@ -404,4 +405,29 @@ test("a check whose failing source reads unknown on its path reads unmeasured, n
   assert.deepEqual(withPathVerdict(failing, []), failing, "no paths read: the results decide");
   const up = { kind: "up" as const, total: 1, lastAt: 5 };
   assert.equal(withPathVerdict(up, [{ state: "unknown", reason: "icmp_filtered" }]), up);
+});
+
+test("the verdict names the reason on the failing sources' paths, or counts reasons that differ", () => {
+  const failing = { kind: "failing" as const, failing: 1, total: 1, lastAt: 5 };
+  const paths = [
+    { source: "sh", state: "unknown", reason: "icmp_filtered" },
+    { source: "volc", state: "unknown", reason: "agent_too_old" },
+  ];
+  const latest = [{ node_id: "sh", success: false }];
+  assert.deepEqual(withPathVerdict(failing, paths, latest), { kind: "unmeasured", total: 1, reason: "icmp_filtered", lastAt: 5 }, "not the first unknown path's reason");
+  assert.deepEqual(withPathVerdict(failing, paths), { kind: "unmeasured", total: 1, reason: "", reasons: 2, lastAt: 5 }, "two reasons and no failing source to choose by");
+});
+
+test("a check's sources: its own and every source its paths name, with how many measure nothing", () => {
+  const m = icmpCheck({ node_ids: ["sh", "mk", "kix"] });
+  const paths = [
+    { source: "sh", state: "up" },
+    { source: "mk", state: "unknown", reason: "agent_too_old" },
+    { source: "kix", state: "unknown", reason: "icmp_not_permitted" },
+    { source: "volc", state: "unknown", reason: "agent_too_old" },
+  ];
+  assert.deepEqual(checkSourceSummary(m, paths), { ids: ["kix", "mk", "sh", "volc"], unmeasured: 3 });
+  assert.deepEqual(checkSourceSummary(m, [{ source: "sh", state: "unknown", reason: "source_paused" }]).unmeasured, 0, "a pause is a choice, not a failure to measure");
+  const fromLatest = icmpCheck({ node_ids: ["sh"], latest: [{ node_id: "sh", at: "", success: false, fail_streak: 0, since: "", reason: "icmp_not_permitted" }] });
+  assert.equal(checkSourceSummary(fromLatest, []).unmeasured, 1, "without paths, the newest results say it");
 });

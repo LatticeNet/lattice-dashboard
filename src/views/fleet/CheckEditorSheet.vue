@@ -168,6 +168,12 @@ const budget = computed(() =>
 );
 const currentAgent = computed(() => m2a.value && draftNeedsCurrentAgent(draft.value));
 const unsupported = computed(() => (isTls.value ? [] : unsupportedSources(draft.value, props.nodes, m2a.value)));
+/** The unsupported sources by name: the first eight, then a count. */
+const unsupportedNames = computed(() => {
+  const names = unsupported.value.slice(0, PREVIEW_MAX).map((u) => nameOf(u.id));
+  const more = unsupported.value.length - names.length;
+  return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
+});
 /** What the unsupported sources cannot run: for http, only its headers or status set are new. */
 const unsupportedMethod = computed(() => (currentAgent.value && draft.value.type === "http" ? t("fleet.monitoring.checks.editor.methodCurrentHttp") : draft.value.type.toUpperCase()));
 const nameOf = (id: string) => nodesById.value.get(id)?.name || id;
@@ -408,6 +414,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             :m2a="m2a"
             :kind="draft.type"
             :current="currentAgent"
+            :restorable="monitor?.node_ids ?? []"
             :label="$t('fleet.monitoring.checks.editor.step.from')"
           />
           <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.nodeIdsManualHint') }}</p>
@@ -416,7 +423,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <p>
               {{
                 draft.assignAll
-                  ? $t('fleet.monitoring.checks.editor.unsupportedAll', { n: unsupported.length, total: nodes.length, method: unsupportedMethod })
+                  ? $t('fleet.monitoring.checks.editor.unsupportedAll', { n: unsupported.length, total: nodes.length, method: unsupportedMethod, names: unsupportedNames })
                   : $t('fleet.monitoring.checks.editor.unsupportedChosen', { n: unsupported.length, method: unsupportedMethod, names: unsupported.map((u) => nameOf(u.id)).join(', ') }, unsupported.length)
               }}
             </p>
@@ -450,7 +457,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <li v-for="row in sourcePreview.slice(0, PREVIEW_MAX)" :key="row.id" :class="cn('break-words', row.why && 'text-warning-text')">
               <template v-if="row.why">{{ $t('fleet.monitoring.checks.editor.target.previewCannot', { source: row.name, why: refusalText(row.why, draft.type) }) }}</template>
               <template v-else-if="nodeResolution.state === 'resolved'">
-                {{ $t(`fleet.monitoring.checks.editor.target.preview.${draft.type}`, { source: row.name, endpoint: nodeResolution.endpoint, n: draft.packets }) }}
+                {{ $t(`fleet.monitoring.checks.editor.target.preview.${draft.type}`, { source: row.name, node: targetNode?.name || draft.targetNode, endpoint: nodeResolution.endpoint, n: draft.packets }) }}
               </template>
               <template v-else>{{ $t('fleet.monitoring.checks.editor.target.previewOnSave', { source: row.name }) }}</template>
             </li>

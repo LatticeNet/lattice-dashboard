@@ -36,8 +36,12 @@ const props = withDefaults(
     kind?: string;
     /** The check needs an agent that reports its methods (checkRulesModel.needsCurrentAgent). */
     current?: boolean;
+    /** Sources the saved check has: one removed in this edit can be ticked again, whatever it can run. */
+    restorable?: string[];
+    /** A note per node that flags it without disabling it (the path set, where a pin can change its method). */
+    notes?: Record<string, string>;
   }>(),
-  { showPause: false, m2a: false, kind: undefined, current: false },
+  { showPause: false, m2a: false, kind: undefined, current: false, restorable: () => [], notes: () => ({}) },
 );
 const selected = defineModel<string[]>({ required: true });
 const paused = defineModel<string[]>("paused", { default: () => [] });
@@ -50,6 +54,17 @@ const query = ref("");
 function whyNot(node: Node): string | undefined {
   const support = props.kind ? sourceSupport(node, props.kind, props.m2a, props.current) : undefined;
   return support && !support.ok ? support.reason : undefined;
+}
+
+/** A node that cannot run the kind is not offered, unless it is chosen or the saved check had it. */
+function blocked(node: Node): boolean {
+  return !!whyNot(node) && !selected.value.includes(node.id) && !props.restorable.includes(node.id);
+}
+
+/** The line under the node's name that says why it cannot run what is asked. */
+function noteOf(node: Node): string | undefined {
+  const why = whyNot(node);
+  return why ? refusalText(why, props.kind ?? "") : props.notes[node.id];
 }
 
 const groups = computed(() => {
@@ -105,26 +120,24 @@ function togglePause(id: string, on: boolean): void {
           :key="node.id"
           class="flex items-center gap-2 border-b border-border/60 px-2.5 last:border-b-0"
           :data-source="node.id"
-          :data-unsupported="whyNot(node) ? 'true' : undefined"
+          :data-unsupported="noteOf(node) ? 'true' : undefined"
         >
-          <label
-            :class="cn('flex min-w-0 flex-1 items-center gap-2 py-1.5 pointer-coarse:min-h-11', !!whyNot(node) && !selected.includes(node.id) ? 'cursor-not-allowed' : 'cursor-pointer')"
-          >
+          <label :class="cn('flex min-w-0 flex-1 items-center gap-2 py-1.5 pointer-coarse:min-h-11', blocked(node) ? 'cursor-not-allowed' : 'cursor-pointer')">
             <Checkbox
               :model-value="selected.includes(node.id)"
-              :disabled="!!whyNot(node) && !selected.includes(node.id)"
-              :aria-describedby="whyNot(node) ? `source-why-${node.id}` : undefined"
+              :disabled="blocked(node)"
+              :aria-describedby="noteOf(node) ? `source-why-${node.id}` : undefined"
               @update:model-value="(v) => toggle(node.id, v === true)"
             />
             <span class="min-w-0 flex-1">
-              <span :class="cn('block truncate text-sm', !!whyNot(node) && !selected.includes(node.id) && 'text-muted-foreground')" :title="node.name || node.id">{{ node.name || node.id }}</span>
-              <span v-if="m2a || !!whyNot(node)" class="flex flex-wrap items-baseline gap-x-2 text-xs">
+              <span :class="cn('block truncate text-sm', blocked(node) && 'text-muted-foreground')" :title="node.name || node.id">{{ node.name || node.id }}</span>
+              <span v-if="m2a || !!noteOf(node)" class="flex flex-wrap items-baseline gap-x-2 text-xs">
                 <span v-if="m2a" class="font-mono text-muted-foreground">{{ effectiveProbeMethods(node).join(' ') }}</span>
                 <span
-                  v-if="!!whyNot(node)"
+                  v-if="!!noteOf(node)"
                   :id="`source-why-${node.id}`"
                   :class="selected.includes(node.id) ? 'text-warning-text' : 'text-muted-foreground'"
-                >{{ refusalText(whyNot(node) ?? '', kind ?? '') }}</span>
+                >{{ noteOf(node) }}</span>
               </span>
             </span>
             <span :class="cn('shrink-0 text-xs', node.online ? 'text-muted-foreground' : 'text-warning-text')">{{ node.online ? t('fleet.monitoring.checks.editor.online') : t('fleet.monitoring.checks.editor.offline') }}</span>

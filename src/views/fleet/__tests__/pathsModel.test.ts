@@ -25,6 +25,7 @@ import {
   legacyWindow,
   looksLikePaths,
   matrixSections,
+  methodsBySource,
   normalizeState,
   parseWindow,
   pathAttention,
@@ -387,4 +388,33 @@ test("runs that measured nothing for one reason are one row with a count, newest
     ["icmp_not_permitted x3 5..3", "run 2", "destination_refused x1 1..1", "icmp_not_permitted x1 0..0"],
   );
   assert.deepEqual(runRows([]), []);
+});
+
+test("on a path that reads unknown, failed runs fold into one row with the path's reason", () => {
+  const runs = [
+    { at: "3", success: false, error: "no echo" },
+    { at: "2", success: false, error: "no echo" },
+    { at: "1", success: true },
+    { at: "0", success: false, reason: "agent_too_old" },
+  ];
+  const rows = runRows(runs, "icmp_filtered");
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "run" ? `run ${r.run.at}` : `${r.reason} x${r.count}`)),
+    ["icmp_filtered x2", "run 1", "agent_too_old x1"],
+    "a run's own reason wins; a success stays a run",
+  );
+  assert.deepEqual(runRows(runs).map((r) => r.kind), ["run", "run", "run", "unmeasured"], "without a path reason a failure is a failure");
+});
+
+test("each source's methods: one names the column, several put the method on each cell", () => {
+  const by = methodsBySource([
+    { source: "sh", method: "icmp" },
+    { source: "sh", method: "icmp" },
+    { source: "mk", method: "tcp" },
+    { source: "mk", method: "icmp" },
+    { source: "old", method: "" },
+  ]);
+  assert.deepEqual(by.get("sh"), ["icmp"]);
+  assert.deepEqual(by.get("mk"), ["icmp", "tcp"]);
+  assert.equal(by.has("old"), false, "a path from before M2a names no method");
 });

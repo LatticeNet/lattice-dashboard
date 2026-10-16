@@ -345,4 +345,7 @@ test("the preview counts each source's targets by the method it will use", () =>
   const pinned = pathSetPreview(setSourceMethod({ ...draftFromConfig(p.config), method: "auto" }, "bj", "icmp"), p, nodes);
   // A pin never falls back: bj pinned to icmp reaches nothing and says why.
   assert.deepEqual([by(pinned, "bj").pinned, by(pinned, "bj").icmp, by(pinned, "bj").none, by(pinned, "bj").refusal], [true, 0, 5, "agent_too_old"]);
+  // The targets it cannot reach are named, so the preview can say which.
+  assert.deepEqual(by(tcp, "sh").noneTargets, ["hk"]);
+  assert.equal(by(pinned, "bj").noneTargets.length, 5);
 });

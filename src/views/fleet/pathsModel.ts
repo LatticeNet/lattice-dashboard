@@ -290,15 +290,17 @@ export type RunRow<R> = { kind: "run"; run: R } | { kind: "unmeasured"; reason: 
  * ICMP reports one every interval) is one row with its count and time span,
  * not twenty identical lines.
  */
-export function runRows<R extends { reason?: string }>(runs: readonly R[]): RunRow<R>[] {
+export function runRows<R extends { reason?: string; success?: boolean }>(runs: readonly R[], failedAs?: string): RunRow<R>[] {
   const out: RunRow<R>[] = [];
   for (const run of runs) {
     const last = out[out.length - 1];
-    if (run.reason && last?.kind === "unmeasured" && last.reason === run.reason) {
+    // On a path the server reads unknown (an ICMP target that never answered), a failed run measured nothing either.
+    const reason = run.reason || (failedAs && run.success === false ? failedAs : undefined);
+    if (reason && last?.kind === "unmeasured" && last.reason === reason) {
       last.count += 1;
       last.oldest = run;
-    } else if (run.reason) {
-      out.push({ kind: "unmeasured", reason: run.reason, count: 1, newest: run, oldest: run });
+    } else if (reason) {
+      out.push({ kind: "unmeasured", reason, count: 1, newest: run, oldest: run });
     } else {
       out.push({ kind: "run", run });
     }
@@ -309,6 +311,22 @@ export function runRows<R extends { reason?: string }>(runs: readonly R[]): RunR
 /* ------------------------------------------------------------------ */
 /* The matrix                                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The methods each source's paths use, sorted: one method names a column
+ * in its header; more than one (Auto falling back to TCP for some targets)
+ * puts the method on each cell instead.
+ */
+export function methodsBySource(paths: readonly { source: string; method: string }[]): Map<string, string[]> {
+  const sets = new Map<string, Set<string>>();
+  for (const p of paths) {
+    if (!p.method) continue;
+    const set = sets.get(p.source) ?? new Set<string>();
+    set.add(p.method);
+    sets.set(p.source, set);
+  }
+  return new Map([...sets].map(([source, set]) => [source, [...set].sort()]));
+}
 
 /** One path, normalized, with the names it is shown by. */
 export interface PathItem {

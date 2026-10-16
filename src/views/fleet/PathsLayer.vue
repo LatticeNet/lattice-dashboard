@@ -42,6 +42,7 @@ import {
   decodePathKey,
   isChosenUnknown,
   matrixSections,
+  methodsBySource,
   pathsQuerySchema,
   visibleMatrix,
   type PathItem,
@@ -62,6 +63,8 @@ const props = defineProps<{
   failureOf: (monitorId: string, source: string) => string | undefined;
   /** The path set exists with no source. */
   noSources: boolean;
+  /** A source's agent version, for a path whose agent is too old. */
+  agentOf?: (source: string) => string | undefined;
 }>();
 
 const emit = defineEmits<{
@@ -150,8 +153,22 @@ function mainClass(path: PathItem): string {
   return "text-foreground";
 }
 
+/**
+ * The methods each source's path set paths use: one names the column,
+ * several put the method on each cell. Your checks rows are left out: each
+ * is one check, which names its own method.
+ */
+const sourceMethods = computed(() => methodsBySource((matrix.value?.paths ?? []).filter((p) => !p.rowKey.startsWith("@"))));
+const columnMethod = (source: string) => {
+  const list = sourceMethods.value.get(source) ?? [];
+  return list.length === 1 ? list[0]!.toUpperCase() : "";
+};
+const mixedColumn = (source: string) => (sourceMethods.value.get(source)?.length ?? 0) > 1;
+/** What the path dials, "ICMP 203.0.113.24" or "TCP 203.0.113.24:443". */
+const dialled = (path: PathItem) => [path.method.toUpperCase(), path.target].filter(Boolean).join(" ");
+
 function cellLabel(path: PathItem): string {
-  const parts = [displayLabel(path)];
+  const parts = [displayLabel(path), dialled(path)];
   if (path.p50Ms !== undefined) parts.push(`p50 ${formatMs(path.p50Ms)}`);
   if (path.loss !== undefined && path.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(path.loss) }));
   if (path.state !== "up") parts.push(why(path));
@@ -159,8 +176,9 @@ function cellLabel(path: PathItem): string {
 }
 
 function rowDetail(row: PathRow): string {
-  const first = matrix.value?.paths.find((p) => p.rowKey === row.key && p.target);
-  return [row.kind === "node" ? row.country : undefined, first?.target].filter(Boolean).join(" · ");
+  // One endpoint for the row only when every source dials the same one; otherwise each cell's tooltip says it.
+  const targets = new Set((matrix.value?.paths ?? []).filter((p) => p.rowKey === row.key && p.target).map((p) => p.target));
+  return [row.kind === "node" ? row.country : undefined, targets.size === 1 ? [...targets][0] : undefined].filter(Boolean).join(" · ");
 }
 
 /**
@@ -324,7 +342,9 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                     {{ section.kind === 'checks' ? $t('fleet.monitoring.paths.matrix.check') : $t('fleet.monitoring.paths.matrix.target') }}
                   </th>
                   <th v-for="source in section.sources" :key="source.nodeId" scope="col" class="w-36 min-w-28 px-2 py-2 text-start align-bottom font-medium">
-                    <span class="block text-[10px] uppercase tracking-wide">{{ $t('fleet.monitoring.paths.matrix.from') }}</span>
+                    <span class="block text-[10px] uppercase tracking-wide">
+                      {{ $t('fleet.monitoring.paths.matrix.from') }}<template v-if="section.kind === 'nodes' && columnMethod(source.nodeId)"> · <span class="font-mono" data-column-method>{{ columnMethod(source.nodeId) }}</span></template>
+                    </span>
                     <span class="block truncate text-foreground" :title="source.name">{{ source.name }}</span>
                   </th>
                 </tr>
@@ -362,7 +382,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                     </th>
                     <td v-for="cell in cells" :key="cell.source.nodeId" class="p-1 align-middle">
                       <template v-if="cell.path">
-                        <Tooltip :disabled="cell.path.state === 'up'">
+                        <Tooltip>
                           <TooltipTrigger as-child>
                             <button
                               type="button"
@@ -381,15 +401,17 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                               @click="(e) => openCell(cell.path!, e.currentTarget as HTMLElement)"
                             >
                               <span :class="cn('absolute inset-y-1.5 start-1 w-[3px] rounded-full', railClass(cell.path))" aria-hidden="true" />
-                              <span class="min-w-0">
+                              <span class="min-w-0 flex-1">
                                 <span :class="cn('block truncate font-mono font-medium leading-tight tabular', mainClass(cell.path))">{{ cellMain(cell.path) }}</span>
                                 <span v-if="cellSub(cell.path)" class="block max-w-32 truncate text-[11px] leading-tight text-muted-foreground">{{ cellSub(cell.path) }}</span>
                               </span>
+                              <span v-if="section.kind === 'nodes' && mixedColumn(cell.source.nodeId) && cell.path.method" class="ms-1 shrink-0 self-start pt-1 font-mono text-[10px] text-muted-foreground" data-cell-method>{{ cell.path.method.toUpperCase() }}</span>
                             </button>
                           </TooltipTrigger>
                           <TooltipContent class="max-w-72">
                             <p class="font-medium">{{ displayLabel(cell.path) }}</p>
-                            <p class="text-xs">{{ why(cell.path) }}</p>
+                            <p v-if="cell.path.state !== 'up'" class="text-xs">{{ why(cell.path) }}</p>
+                            <p v-if="dialled(cell.path)" class="font-mono text-xs">{{ dialled(cell.path) }}</p>
                           </TooltipContent>
                         </Tooltip>
                       </template>
@@ -434,7 +456,9 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                         >
                           <span :class="cn('absolute inset-y-2 start-1 w-[3px] rounded-full', railClass(cell.path))" aria-hidden="true" />
                           <span class="min-w-0 ps-1">
-                            <span class="block truncate text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.list.from', { source: cell.source.name }) }}</span>
+                            <span class="block truncate text-xs text-muted-foreground">
+                              {{ $t('fleet.monitoring.paths.list.from', { source: cell.source.name }) }}<template v-if="cell.path.method"> · <span class="font-mono">{{ cell.path.method.toUpperCase() }}</span></template>
+                            </span>
                             <span v-if="cell.path.state !== 'up'" :class="cn('block text-xs', cell.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
                               {{ displayLabel(cell.path) }}: {{ why(cell.path) }}
                             </span>
@@ -477,6 +501,8 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
         :title="openTitle"
         :offered="offered"
         :failure="openPath.state === 'down' && !openPath.reason ? failureOf(openPath.monitorId, openPath.source) : undefined"
+        :agent-version="agentOf?.(openPath.source)"
+        :paths-failed="!!data.pathsQuery.error.value && data.source.value === 'unknown'"
         @window="(w) => emit('window', w)"
       />
       <template v-if="openPath" #actions>

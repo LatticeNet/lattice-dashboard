@@ -116,7 +116,8 @@ export function headerProblems(rows: readonly HeaderRow[], options: { https: boo
     if (name) problems.push(name);
     else if ((seen.get(canonicalHeaderName(row.name).toLowerCase()) ?? 0) > 1) problems.push("nameDuplicate");
     if (keptSecret(row)) {
-      if (options.newCheck) problems.push("secretNotCarried");
+      // Over http no secret can be sent at all; the list's secretsNeedHttps is the one instruction then.
+      if (options.newCheck && options.https) problems.push("secretNotCarried");
     } else if (!row.value) {
       problems.push("valueRequired");
     } else {

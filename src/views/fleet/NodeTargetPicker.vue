@@ -6,7 +6,7 @@
  * cannot be resolved for the method cannot be picked, with the reason; one
  * already chosen stays chosen so the editor can say why the save is refused.
  */
-import { computed, ref, useId } from "vue";
+import { computed, nextTick, onMounted, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { Search } from "lucide-vue-next";
 
@@ -53,6 +53,18 @@ const groups = computed(() => {
 /** A chosen id the node list does not hold (deleted, or not readable here). */
 const unknownChosen = computed(() => (selected.value && !props.nodes.some((n) => n.id === selected.value) ? selected.value : ""));
 const name = `target-node-${useId()}`;
+
+/** The list opens on the chosen node, scrolled inside its own box only, never the sheet. */
+const list = ref<HTMLElement>();
+onMounted(() =>
+  nextTick(() => {
+    const box = list.value;
+    const row = box?.querySelector<HTMLElement>(`[data-target-node="${CSS.escape(selected.value)}"]`);
+    if (!box || !row) return;
+    const header = 28;
+    if (row.offsetTop < box.scrollTop + header || row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = Math.max(0, row.offsetTop - header - 8);
+  }),
+);
 </script>
 
 <template>
@@ -61,7 +73,7 @@ const name = `target-node-${useId()}`;
       <Search class="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
       <Input v-model="query" class="ps-8" :placeholder="t('fleet.monitoring.checks.editor.searchNodes')" :aria-label="t('fleet.monitoring.checks.editor.searchNodes')" />
     </div>
-    <div class="max-h-64 overflow-auto rounded-md border border-border" role="radiogroup" :aria-label="label" data-testid="target-node-picker">
+    <div ref="list" class="relative max-h-64 overflow-auto rounded-md border border-border" role="radiogroup" :aria-label="label" data-testid="target-node-picker">
       <template v-for="group in groups" :key="group.region">
         <p class="sticky top-0 z-[1] bg-muted px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {{ t(`fleet.monitoring.topology.region.${group.region}`) }}

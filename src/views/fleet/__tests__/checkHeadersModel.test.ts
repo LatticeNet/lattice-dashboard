@@ -107,6 +107,10 @@ test("a new check cannot carry a saved secret: it must be entered again or remov
   assert.equal(p.rows["saved-1"], undefined);
   const entered = edit(rows, "saved-0", (r) => ({ ...startReplace(r), value: "again" }));
   assert.equal(headerProblems(entered, { https: true, newCheck: true }).any, false);
+  // Over http no secret is sent at all: one instruction for the list, not "enter it again" on every row.
+  const overHttp = headerProblems(rows, { https: false, newCheck: true });
+  assert.equal(overHttp.rows["saved-0"], undefined);
+  assert.deepEqual(overHttp.list, ["secretsNeedHttps"]);
   assert.deepEqual(headersForCreate(entered), [
     { name: "X-Api-Key", value: "again", secret: true },
     { name: "Accept", value: "application/json" },

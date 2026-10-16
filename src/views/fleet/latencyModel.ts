@@ -525,6 +525,8 @@ export interface SourceMethodPreview {
   tcp: number;
   none: number;
   onSave: number;
+  /** The targets counted in `none`, by node id, in the plan's order. */
+  noneTargets: string[];
 }
 
 /**
@@ -543,21 +545,25 @@ export function pathSetPreview(draft: LatencyDraft, plan: Pick<LatencyProbePlan,
   return draft.sources.map((source) => {
     const method = sourceMethod(draft, source);
     const support = sourceSupport(byId.get(source), "icmp", true);
-    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, none: 0, onSave: 0 };
+    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, none: 0, onSave: 0, noneTargets: [] };
     if (method === "icmp" && !support.ok) row.refusal = support.reason;
     for (const pn of targets) {
       if (pn.node_id === source) continue;
       const ipv4 = !!publicIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip);
       // A line port the plan knows; none when the plan says why there is none; else the server resolves it on save.
       const tcp = pn.endpoint && pn.target !== "not_probeable" ? "yes" : pn.target === "not_probeable" || pn.endpoint_note ? "none" : "onSave";
+      const unreached = () => {
+        row.none += 1;
+        row.noneTargets.push(pn.node_id);
+      };
       const viaTcp = () => {
         if (tcp === "yes") row.tcp += 1;
         else if (tcp === "onSave") row.onSave += 1;
-        else row.none += 1;
+        else unreached();
       };
       if (method === "icmp") {
         if (support.ok && ipv4) row.icmp += 1;
-        else row.none += 1;
+        else unreached();
       } else if (method === "auto" && support.ok && ipv4) {
         row.icmp += 1;
       } else {

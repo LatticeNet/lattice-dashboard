@@ -105,10 +105,40 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
  * reason that is not a pause, the check reads unmeasured with that reason,
  * as its paths do, rather than down.
  */
-export function withPathVerdict(health: MonitorHealth, paths: readonly { state: string; reason?: string }[]): MonitorHealth {
+export function withPathVerdict(
+  health: MonitorHealth,
+  paths: readonly { source?: string; state: string; reason?: string }[],
+  latest: readonly { node_id?: string; success: boolean; reason?: string }[] = [],
+): MonitorHealth {
   if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
-  const unknown = paths.find((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
-  return unknown ? { kind: "unmeasured", total: health.total, reason: unknown.reason!, lastAt: health.lastAt } : health;
+  const unknown = paths.filter((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
+  if (!unknown.length) return health;
+  // The reason that explains the failing results is the one on the paths of the sources that fail.
+  const failing = new Set(latest.filter((l) => !l.success && !l.reason).map((l) => l.node_id ?? ""));
+  const own = unknown.filter((p) => p.source !== undefined && failing.has(p.source));
+  const reasons = [...new Set((own.length ? own : unknown).map((p) => p.reason!))];
+  return reasons.length === 1
+    ? { kind: "unmeasured", total: health.total, reason: reasons[0]!, lastAt: health.lastAt }
+    : { kind: "unmeasured", total: health.total, reason: "", reasons: reasons.length, lastAt: health.lastAt };
+}
+
+/**
+ * The sources a check's row names, as its sheet lists them: the check's own
+ * list and every source its paths name (a path set target can have paths
+ * from sources its generated check does not run on), with how many of them
+ * measure nothing: a path unknown for a reason that is not a choice, or,
+ * without paths, a newest result with a reason.
+ */
+export function checkSourceSummary(
+  monitor: Pick<MonitorView, "node_ids" | "latest">,
+  paths: readonly { source: string; state: string; reason?: string }[],
+): { ids: string[]; unmeasured: number } {
+  const ids = new Set(monitor.node_ids ?? []);
+  for (const p of paths) ids.add(p.source);
+  const unmeasured = new Set<string>();
+  for (const p of paths) if (p.state === "unknown" && p.reason && !isChosenUnknown(p.reason)) unmeasured.add(p.source);
+  if (!paths.length) for (const l of monitor.latest ?? []) if (l.reason) unmeasured.add(l.node_id ?? "");
+  return { ids: [...ids].sort(), unmeasured: unmeasured.size };
 }
 
 export function canEditCheck(monitor: Pick<MonitorView, "managed_by">, serverEdits: boolean): boolean {
