@@ -23,7 +23,7 @@
  * sources that run the beacon client, and with a target chosen, the sheet
  * reads that node's beacon to say which sources its plan admits.
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
@@ -141,7 +141,7 @@ const m2b = computed(() => m2a.value && !!props.m2b);
 const editing = computed(() => !!props.monitor);
 const isTls = computed(() => isServerEvaluated(draft.value.type));
 const kinds = computed(() => {
-  const list = offeredKinds(m2a.value, m2b.value);
+  const list = offeredKinds(m2a.value, m2b.value, props.canReadNodes);
   // A check of a kind this server no longer offers still shows its own.
   return props.monitor && !list.includes(props.monitor.type as MonitorType) ? [...list, props.monitor.type as MonitorType] : list;
 });
@@ -211,6 +211,7 @@ watch(
   },
   { immediate: true },
 );
+onBeforeUnmount(() => beaconRead?.abort());
 /** Why a source would wait on the target's plan, or undefined when its plan admits it (or nothing is known). */
 function beaconWaiting(source: string): string | undefined {
   const view = targetBeacon.value;

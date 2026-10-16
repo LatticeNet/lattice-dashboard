@@ -16,6 +16,7 @@
  * Kept free of Vue so `node --test` covers it directly.
  */
 import type {
+  ApprovalView,
   BeaconFinding,
   BeaconLimits,
   BeaconPlan,
@@ -236,12 +237,60 @@ export function beaconActions(view: Pick<BeaconView, "state" | "exposure" | "age
 /* The plan form                                                        */
 /* ------------------------------------------------------------------ */
 
+/** The endpoint address choice that reveals a typed address. */
+export const OTHER_ADDRESS = "other";
+
 export interface BeaconForm {
   /** As typed; for an enable it opens on the node's suggested port. */
   port: string;
   /** Empty takes the default (enable) or keeps the current value (change). */
   bind: string;
-  endpoint: string;
+  /** The address sources send to: one of endpointAddresses, or OTHER_ADDRESS for endpointOther. */
+  endpointAddress: string;
+  /** The typed address when endpointAddress is OTHER_ADDRESS: an edge a line on the node declares. */
+  endpointOther: string;
+  /** The port sources send to; empty is the listen port. It differs only behind a NAT that maps another outside port. */
+  endpointPort: string;
+}
+
+export type EndpointAddressKind = "public" | "interface" | "current";
+
+export interface EndpointAddress {
+  address: string;
+  kind: EndpointAddressKind;
+}
+
+function endpointParts(endpoint: string | undefined): { host: string; port: number } | undefined {
+  const parsed = parseBeaconEndpoint(endpoint ?? "");
+  if (!parsed.ok) return undefined;
+  const at = parsed.value.lastIndexOf(":");
+  return { host: parsed.value.slice(0, at), port: Number(parsed.value.slice(at + 1)) };
+}
+
+/**
+ * The addresses the form offers for the endpoint, as far as the console
+ * sees the server's beaconNodeAddresses: the node's public IPv4 and its
+ * primary interface address, then the applied endpoint's address when it is
+ * neither (a provider edge a line declares, or an address the node has
+ * left). Line edges are not on this wire, so a new one is typed
+ * (OTHER_ADDRESS) and the server judges it.
+ */
+export function endpointAddresses(node: Pick<Node, "internal_ip" | "public_ip"> | undefined, applied?: Pick<BeaconSettings, "endpoint"> | null): EndpointAddress[] {
+  const out: EndpointAddress[] = [];
+  const add = (address: string | undefined, kind: EndpointAddressKind) => {
+    if (address && !out.some((a) => a.address === address)) out.push({ address, kind });
+  };
+  const pub = parseBeaconIPv4((node?.public_ip ?? "").trim());
+  add(pub.ok ? pub.value : undefined, "public");
+  const internal = parseBeaconIPv4((node?.internal_ip ?? "").trim());
+  add(internal.ok ? internal.value : undefined, "interface");
+  add(endpointParts(applied?.endpoint ?? undefined)?.host, "current");
+  return out;
+}
+
+/** The address an enable offers first: the public IPv4 the server would default to, else the first the node reports, else a typed one. */
+export function defaultEndpointAddress(node: Pick<Node, "internal_ip" | "public_ip"> | undefined): string {
+  return publicIPv4(node?.public_ip) ?? endpointAddresses(node)[0]?.address ?? OTHER_ADDRESS;
 }
 
 /** Where a node's beacon binds unless the operator says otherwise (the server's beaconDefaultBind): its primary interface address, else its public IPv4. */
@@ -253,34 +302,51 @@ export function defaultBind(node: Pick<Node, "internal_ip" | "public_ip"> | unde
   return "";
 }
 
-/** The endpoint an enable advertises by default: the node's public IPv4 (as the destination rule accepts it) and the port. */
-export function defaultEndpoint(node: Pick<Node, "public_ip"> | undefined, port: number | undefined): string {
-  const ip = publicIPv4(node?.public_ip);
-  return ip && port ? `${ip}:${port}` : "";
-}
-
-export function formFor(action: BeaconPlanAction, view: Pick<BeaconView, "applied" | "suggested_port"> | undefined): BeaconForm {
+/**
+ * The form a plan opens on. A change opens on the applied settings, its
+ * endpoint split into the address and, when a NAT maps another outside
+ * port, that port; an enable opens on the suggested port and the address
+ * the server would default to.
+ */
+export function formFor(
+  action: BeaconPlanAction,
+  view: Pick<BeaconView, "applied" | "suggested_port"> | undefined,
+  node: Pick<Node, "internal_ip" | "public_ip"> | undefined,
+): BeaconForm {
+  const empty: BeaconForm = { port: "", bind: "", endpointAddress: "", endpointOther: "", endpointPort: "" };
   if (action === "change" && view?.applied) {
-    return { port: view.applied.port ? String(view.applied.port) : "", bind: view.applied.bind ?? "", endpoint: view.applied.endpoint ?? "" };
+    const a = view.applied;
+    const ep = endpointParts(a.endpoint);
+    return {
+      port: a.port ? String(a.port) : "",
+      bind: a.bind ?? "",
+      endpointAddress: ep?.host ?? defaultEndpointAddress(node),
+      endpointOther: "",
+      endpointPort: ep && ep.port !== a.port ? String(ep.port) : "",
+    };
   }
-  if (action === "enable") return { port: view?.suggested_port ? String(view.suggested_port) : "", bind: "", endpoint: "" };
-  return { port: "", bind: "", endpoint: "" };
+  if (action === "enable") return { ...empty, port: view?.suggested_port ? String(view.suggested_port) : "", endpointAddress: defaultEndpointAddress(node) };
+  return empty;
 }
 
 export type BeaconFormProblem =
   | { field: "port"; code: "range" }
   | { field: "bind"; code: BeaconAddressProblem }
-  | { field: "endpoint"; code: BeaconEndpointProblem }
   /** Nothing typed and the node reports nothing to default to: the server refuses the plan. */
   | { field: "bind"; code: "noDefault" }
-  | { field: "endpoint"; code: "noDefault" };
+  /** No address chosen, or Another address with nothing typed. */
+  | { field: "endpointAddress"; code: BeaconAddressProblem | "missing" }
+  /** Not a port; or "needed": a typed address with the listen port still to be drawn. */
+  | { field: "endpointPort"; code: "range" | "needed" };
 
 /**
  * The settings the server will plan from the form (beaconSettingsFor): an
  * empty port takes the suggested one (enable) or keeps the current one
  * (change); an empty bind address takes the node's primary interface
- * address; an empty endpoint takes the public IPv4 with the port, and a
- * change of port moves an endpoint that was that default along with it.
+ * address. The endpoint is the chosen address with the endpoint port, or
+ * the listen port when that is empty, so a changed listen port moves an
+ * endpoint that followed it. An enable whose port the control plane will
+ * draw leaves the endpoint to the server when it is the public IPv4.
  * Fields the form gets wrong are left undefined with their problem.
  */
 export function plannedSettings(
@@ -293,18 +359,13 @@ export function plannedSettings(
   if (action === "disable") return { portRandom: false, endpointDefault: false, problems };
   const current = action === "change" ? view?.applied ?? undefined : undefined;
   let port: number | undefined = current?.port || undefined;
-  let portChanged = false;
   const typedPort = form.port.trim();
   if (typedPort) {
     const n = Number(typedPort);
     if (!/^\d+$/.test(typedPort) || !validListenPort(n)) problems.push({ field: "port", code: "range" });
-    else {
-      portChanged = n !== port;
-      port = n;
-    }
+    else port = n;
   } else if (!port && view?.suggested_port) {
     port = view.suggested_port;
-    portChanged = true;
   }
   // An enable with no port and no suggestion: the control plane draws one from 40000 to 59999 when it plans.
   const portRandom = action === "enable" && !typedPort && !port;
@@ -323,21 +384,33 @@ export function plannedSettings(
     if (!bind) problems.push({ field: "bind", code: "noDefault" });
   }
 
-  let endpoint: string | undefined = current?.endpoint || undefined;
+  let endpoint: string | undefined;
   let endpointDefault = false;
-  const typedEndpoint = form.endpoint.trim();
-  const followsPort = !!current?.endpoint && portChanged && current.endpoint === `${(node?.public_ip ?? "").trim()}:${current.port}`;
-  if (typedEndpoint && !(followsPort && typedEndpoint === current?.endpoint)) {
-    const parsed = parseBeaconEndpoint(typedEndpoint);
-    if (parsed.ok) endpoint = parsed.value;
-    else {
-      endpoint = undefined;
-      problems.push({ field: "endpoint", code: parsed.problem });
-    }
-  } else if (!endpoint || followsPort) {
-    endpoint = defaultEndpoint(node, port) || undefined;
-    endpointDefault = true;
-    if (!publicIPv4(node?.public_ip)) problems.push({ field: "endpoint", code: "noDefault" });
+  let host: string | undefined;
+  if (form.endpointAddress === OTHER_ADDRESS) {
+    const typed = form.endpointOther.trim();
+    const parsed = typed ? parseBeaconIPv4(typed) : undefined;
+    if (parsed?.ok) host = parsed.value;
+    else problems.push({ field: "endpointAddress", code: parsed ? parsed.problem : "missing" });
+  } else if (form.endpointAddress) {
+    host = form.endpointAddress;
+  } else {
+    problems.push({ field: "endpointAddress", code: "missing" });
+  }
+  const typedSendPort = form.endpointPort.trim();
+  let sendPort = port;
+  if (typedSendPort) {
+    const n = Number(typedSendPort);
+    if (!/^\d+$/.test(typedSendPort) || String(n) !== typedSendPort || n < 1 || n > 65535) {
+      sendPort = undefined;
+      problems.push({ field: "endpointPort", code: "range" });
+    } else sendPort = n;
+  }
+  if (host && sendPort) endpoint = `${host}:${sendPort}`;
+  else if (host && portRandom && !typedSendPort) {
+    // The server advertises the public IPv4 with the port it draws; any other address needs its port named.
+    if (host === publicIPv4(node?.public_ip)) endpointDefault = true;
+    else problems.push({ field: "endpointPort", code: "needed" });
   }
   return { port, portRandom, bind, endpoint, endpointDefault, problems };
 }
@@ -346,38 +419,95 @@ export function plannedSettings(
  * Whether an endpoint's address is one of the node's own (the server's
  * beaconEndpointCurrent): its public or primary interface address. The
  * server also accepts a provider edge a line on the node declares, which
- * the console cannot see, so a miss is a warning, never a refusal.
+ * the console cannot see, so a miss is a note, never a refusal.
  */
 export function endpointIsOwn(endpoint: string | undefined, node: Pick<Node, "internal_ip" | "public_ip"> | undefined): boolean {
-  const parsed = parseBeaconEndpoint(endpoint ?? "");
-  if (!parsed.ok) return true;
-  const host = parsed.value.slice(0, parsed.value.lastIndexOf(":"));
-  return [node?.public_ip, node?.internal_ip].some((a) => (a ?? "").trim() === host);
+  const host = endpointParts(endpoint)?.host;
+  if (!host) return true;
+  return endpointAddresses(node).some((a) => a.address === host);
 }
 
 /**
  * The plan request. An enable names the port (the field opens on the
- * suggested one) and only the addresses the operator typed; a change names
- * only what differs from the applied settings, so an untouched field keeps
- * its value; a disable names nothing.
+ * suggested one), the bind address the operator typed and the endpoint
+ * unless the server is to draw the port; a change names only what differs
+ * from the applied settings, so an untouched field keeps its value; a
+ * disable names nothing.
  */
-export function buildBeaconPlanRequest(nodeId: string, action: BeaconPlanAction, form: BeaconForm, view: Pick<BeaconView, "applied"> | undefined): BeaconPlanRequest {
-  const body: BeaconPlanRequest = { node_id: nodeId, action };
+export function buildBeaconPlanRequest(
+  node: Pick<Node, "id" | "internal_ip" | "public_ip">,
+  action: BeaconPlanAction,
+  form: BeaconForm,
+  view: Pick<BeaconView, "applied" | "suggested_port"> | undefined,
+): BeaconPlanRequest {
+  const body: BeaconPlanRequest = { node_id: node.id, action };
   if (action === "disable") return body;
   const current = action === "change" ? view?.applied ?? undefined : undefined;
   const port = Number(form.port.trim());
   if (form.port.trim() && validListenPort(port) && port !== current?.port) body.port = port;
   const bind = form.bind.trim();
   if (bind && bind !== current?.bind) body.bind = bind;
-  const endpoint = form.endpoint.trim();
+  const endpoint = plannedSettings(action, form, view, node).endpoint;
   if (endpoint && endpoint !== current?.endpoint) body.endpoint = endpoint;
   return body;
 }
 
 /** Which settings a change plan would move. A change that moves none re-plans the source set and the NetGuard rule. */
-export function changedSettings(form: BeaconForm, view: Pick<BeaconView, "applied"> | undefined): ("port" | "bind" | "endpoint")[] {
-  const body = buildBeaconPlanRequest("", "change", form, view);
+export function changedSettings(
+  form: BeaconForm,
+  view: Pick<BeaconView, "applied" | "suggested_port"> | undefined,
+  node: Pick<Node, "id" | "internal_ip" | "public_ip">,
+): ("port" | "bind" | "endpoint")[] {
+  const body = buildBeaconPlanRequest(node, "change", form, view);
   return (["port", "bind", "endpoint"] as const).filter((key) => body[key] !== undefined);
+}
+
+/* ------------------------------------------------------------------ */
+/* The NetGuard companion                                               */
+/* ------------------------------------------------------------------ */
+
+export type CompanionOutcome =
+  /** The apply task is queued or running, or waits on what the server's sentence names. */
+  | { kind: "applying"; reason?: string; blocked: boolean }
+  /** The task failed: NetGuard did not take the rule, and the beacon stays closed to every source. */
+  | { kind: "failed"; reason?: string }
+  | { kind: "applied" }
+  /** A status this console does not know. */
+  | { kind: "unknown" };
+
+/**
+ * The approval to read for the NetGuard companion's outcome: the applied
+ * plan's, while NetGuard guards the node and the view says firewall
+ * pending (design 29 D12: the beacon stays closed to sources until the
+ * companion task succeeds, and stays closed if it fails).
+ */
+export function companionApprovalToRead(view: Pick<BeaconView, "state" | "exposure" | "firewall_pending" | "applied_approval_id"> | undefined): string | undefined {
+  if (!view || !beaconEnabled(view) || view.exposure !== "netguard" || !view.firewall_pending) return undefined;
+  return view.applied_approval_id || undefined;
+}
+
+/** How the applied plan's NetGuard task went, read from its approval. */
+export function companionOutcome(approval: Pick<ApprovalView, "status" | "reason" | "waiting"> | undefined): CompanionOutcome {
+  switch (approval?.status) {
+    case "approved":
+      return { kind: "applying", reason: approval.waiting?.reason?.trim() || undefined, blocked: !!approval.waiting?.blocked };
+    case "applied":
+      return { kind: "applied" };
+    case "rejected":
+    case "failed":
+      return { kind: "failed", reason: approval.reason?.trim() || undefined };
+    default:
+      return { kind: "unknown" };
+  }
+}
+
+/**
+ * Why a plan or a read was refused with 403, in the terms D12 gives: a
+ * node.beacon plan names every source with its addresses, so filing or
+ * reading one needs monitor:read on each of them.
+ */
+export function beaconForbidden(error: unknown): boolean {
+  return (error as { status?: number } | null)?.status === 403;
 }
 
 /* ------------------------------------------------------------------ */

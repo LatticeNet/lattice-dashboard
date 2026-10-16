@@ -441,6 +441,7 @@ test("Beacon is offered on an M2b server only, first, as the method D2 prefers f
   assert.deepEqual(offeredKinds(true, true), ["beacon", "tcp", "icmp", "http", "tls"]);
   assert.deepEqual(offeredKinds(true, false), ["tcp", "icmp", "http", "tls"]);
   assert.deepEqual(offeredKinds(false, true), ["tcp", "http", "tls"], "M2b without M2a is not a server that exists; nothing new is offered");
+  assert.deepEqual(offeredKinds(true, true, false), ["tcp", "icmp", "http", "tls"], "a beacon check names a node, so a session without node:read is not offered one");
   assert.equal(multiPacket("beacon"), true);
   assert.equal(nodeOnly("beacon"), true);
   assert.equal(nodeOnly("icmp"), false);

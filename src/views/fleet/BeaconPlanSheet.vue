@@ -40,9 +40,10 @@ import {
   buildBeaconPlanRequest,
   changedSettings,
   companionAllowCount,
+  OTHER_ADDRESS,
+  beaconForbidden,
   defaultBind,
-  defaultEndpoint,
-  endpointIsOwn,
+  endpointAddresses,
   formFor,
   plannedSettings,
   readBeaconPlan,
@@ -52,6 +53,7 @@ import {
   sortFindings,
   type BeaconForm,
   type BeaconFormProblem,
+  type EndpointAddress,
 } from "./beaconModel";
 
 const props = defineProps<{
@@ -65,7 +67,7 @@ const emit = defineEmits<{ close: []; filed: [approvalId: string] }>();
 const { t } = useI18n();
 const planDigest = usePlanDigest();
 
-const form = ref<BeaconForm>(formFor(props.action, props.view));
+const form = ref<BeaconForm>(formFor(props.action, props.view, props.node));
 const stage = ref<"form" | "filed">("form");
 const pending = ref(false);
 const refusal = ref<string>();
@@ -78,7 +80,7 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return;
-    form.value = formFor(props.action, props.view);
+    form.value = formFor(props.action, props.view, props.node);
     stage.value = "form";
     refusal.value = undefined;
     blocked.value = [];
@@ -101,20 +103,30 @@ const problemOf = (field: BeaconFormProblem["field"]) => planned.value.problems.
 
 function problemText(p: BeaconFormProblem | undefined): string {
   if (!p) return "";
-  if (p.field === "port") return t("fleet.monitoring.beacon.plan.problem.port");
-  if (p.code === "noDefault") return t(p.field === "bind" ? "fleet.monitoring.beacon.plan.problem.noDefaultBind" : "fleet.monitoring.beacon.plan.problem.noDefaultEndpoint");
-  if (p.field === "endpoint" && p.code === "port") return t("fleet.monitoring.beacon.plan.problem.endpointPort");
-  return t(`fleet.monitoring.beacon.plan.problem.${p.code}`);
+  switch (p.field) {
+    case "port":
+      return t("fleet.monitoring.beacon.plan.problem.port");
+    case "bind":
+      return t(p.code === "noDefault" ? "fleet.monitoring.beacon.plan.problem.noDefaultBind" : `fleet.monitoring.beacon.plan.problem.${p.code}`);
+    case "endpointAddress":
+      return t(`fleet.monitoring.beacon.plan.problem.${p.code}`);
+    case "endpointPort":
+      return t(p.code === "needed" ? "fleet.monitoring.beacon.plan.problem.endpointPortNeeded" : "fleet.monitoring.beacon.plan.problem.endpointPort");
+  }
 }
 
 const isChange = computed(() => props.action === "change");
 const applied = computed(() => props.view.applied ?? undefined);
 const fallbackBind = computed(() => defaultBind(props.node));
-// The default follows the port when it is valid, else the node's suggested one, so a bad port never reads as "no public IPv4".
-const fallbackEndpoint = computed(() => defaultEndpoint(props.node, planned.value.port ?? applied.value?.port ?? props.view.suggested_port));
 const publicIp = computed(() => publicIPv4(props.node.public_ip));
-/** A typed endpoint on an address that is not the node's own: the server accepts it only for an edge a line declares. */
-const foreignEndpoint = computed(() => !!form.value.endpoint.trim() && !problemOf("endpoint") && !endpointIsOwn(form.value.endpoint, props.node));
+/** The node's own addresses, and on a change the applied endpoint's when it is neither; a line's edge is typed. */
+const addresses = computed(() => endpointAddresses(props.node, isChange.value ? applied.value : undefined));
+const chosen = computed(() => addresses.value.find((a) => a.address === form.value.endpointAddress));
+function addressLabel(a: EndpointAddress): string {
+  return t(`fleet.monitoring.beacon.plan.addressKind.${a.kind}`, { address: a.address });
+}
+/** What an empty send port means: the listen port the plan opens, or the one the control plane draws. */
+const listenPortText = computed(() => (planned.value.port ? String(planned.value.port) : t("fleet.monitoring.beacon.plan.portRandom")));
 
 /** The sources that will hold a key: the current set, which the plan approves. */
 const keySources = computed(() =>
@@ -123,7 +135,7 @@ const keySources = computed(() =>
     .map((s) => s.name || s.node_id)
     .sort((a, b) => a.localeCompare(b)),
 );
-const changed = computed(() => (isChange.value ? changedSettings(form.value, props.view) : []));
+const changed = computed(() => (isChange.value ? changedSettings(form.value, props.view, props.node) : []));
 const limits = DEFAULT_BEACON_LIMITS;
 
 const canSubmit = computed(() => !pending.value && planned.value.problems.length === 0);
@@ -133,19 +145,28 @@ async function submit(): Promise<void> {
   pending.value = true;
   refusal.value = undefined;
   blocked.value = [];
+  let response: BeaconPlanResponse;
   try {
-    const response = await api.nodes.beacon.plan(buildBeaconPlanRequest(props.node.id, props.action, form.value, props.view));
-    filed.value = response;
-    digest.value = await planDigest.digestFor(response.approval);
-    stage.value = "filed";
-    toast.success(t("fleet.monitoring.beacon.plan.filed.toast"));
-    emit("filed", response.approval.id);
+    response = await api.nodes.beacon.plan(buildBeaconPlanRequest(props.node, props.action, form.value, props.view));
   } catch (error) {
     const findings = refusedFindings(error);
     if (findings.length) blocked.value = findings;
-    else refusal.value = error instanceof Error ? error.message : String(error);
-  } finally {
+    // D12: a plan names every source with its addresses, so a session that cannot read one of them is refused.
+    else if (beaconForbidden(error)) refusal.value = t("fleet.monitoring.beacon.plan.forbidden");
+    else refusal.value = t("fleet.monitoring.beacon.plan.failed", { reason: error instanceof Error ? error.message : String(error) });
     pending.value = false;
+    return;
+  }
+  // The approval exists from here on: the sheet shows it even if the digest cannot be computed, so a second click never files another.
+  filed.value = response;
+  stage.value = "filed";
+  pending.value = false;
+  toast.success(t("fleet.monitoring.beacon.plan.filed.toast"));
+  emit("filed", response.approval.id);
+  try {
+    digest.value = await planDigest.digestFor(response.approval);
+  } catch {
+    digest.value = "";
   }
 }
 
@@ -218,27 +239,57 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
 
         <fieldset :class="SECTION">
           <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.beacon.plan.step.send') }}</legend>
-          <div class="grid max-w-72 gap-1.5">
-            <Label for="beacon-endpoint">{{ $t('fleet.monitoring.beacon.plan.endpoint') }}</Label>
+          <div class="grid max-w-96 gap-1.5">
+            <Label for="beacon-endpoint-address">{{ $t('fleet.monitoring.beacon.plan.endpointAddress') }}</Label>
+            <select
+              id="beacon-endpoint-address"
+              v-model="form.endpointAddress"
+              class="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm tabular-nums shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+              :aria-describedby="form.endpointAddress === OTHER_ADDRESS ? undefined : 'beacon-endpoint-address-hint'"
+              data-testid="beacon-endpoint-address"
+            >
+              <option v-for="a in addresses" :key="a.address" :value="a.address">{{ addressLabel(a) }}</option>
+              <option :value="OTHER_ADDRESS">{{ $t('fleet.monitoring.beacon.plan.addressKind.other') }}</option>
+            </select>
+          </div>
+          <p v-if="form.endpointAddress !== OTHER_ADDRESS" id="beacon-endpoint-address-hint" :class="cn('text-xs', chosen?.kind === 'current' ? 'text-warning-text' : 'text-muted-foreground')">
+            {{ chosen?.kind === 'current' ? $t('fleet.monitoring.beacon.plan.endpointCurrentHint') : $t('fleet.monitoring.beacon.plan.endpointAddressHint') }}
+          </p>
+
+          <template v-if="form.endpointAddress === OTHER_ADDRESS">
+            <div class="grid max-w-72 gap-1.5">
+              <Label for="beacon-endpoint-other">{{ $t('fleet.monitoring.beacon.plan.endpointOther') }}</Label>
+              <Input
+                id="beacon-endpoint-other"
+                v-model="form.endpointOther"
+                class="font-mono"
+                spellcheck="false"
+                inputmode="decimal"
+                placeholder="198.51.100.40"
+                :aria-invalid="!!problemOf('endpointAddress') || undefined"
+                :aria-describedby="problemOf('endpointAddress') ? 'beacon-endpoint-other-error' : 'beacon-endpoint-other-hint'"
+                data-testid="beacon-endpoint-other"
+              />
+            </div>
+            <p id="beacon-endpoint-other-hint" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.endpointOtherHint') }}</p>
+            <p v-if="problemOf('endpointAddress')" id="beacon-endpoint-other-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpointAddress')) }}</p>
+          </template>
+
+          <div class="grid max-w-48 gap-1.5">
+            <Label for="beacon-endpoint-port">{{ $t('fleet.monitoring.beacon.plan.endpointPort') }}</Label>
             <Input
-              id="beacon-endpoint"
-              v-model="form.endpoint"
+              id="beacon-endpoint-port"
+              v-model="form.endpointPort"
+              inputmode="numeric"
               class="font-mono"
-              spellcheck="false"
-              :placeholder="planned.endpointDefault ? fallbackEndpoint : applied?.endpoint"
-              :aria-invalid="!!problemOf('endpoint') || undefined"
-              :aria-describedby="problemOf('endpoint') ? 'beacon-endpoint-error' : 'beacon-endpoint-hint'"
+              :placeholder="listenPortText"
+              :aria-invalid="!!problemOf('endpointPort') || undefined"
+              :aria-describedby="problemOf('endpointPort') ? 'beacon-endpoint-port-error' : 'beacon-endpoint-port-hint'"
+              data-testid="beacon-endpoint-port"
             />
           </div>
-          <p id="beacon-endpoint-hint" class="text-xs text-muted-foreground">
-            <template v-if="isChange && applied?.endpoint">{{ $t('fleet.monitoring.beacon.plan.keepHint', { value: applied.endpoint }) }}</template>
-            <template v-else-if="fallbackEndpoint">{{ $t('fleet.monitoring.beacon.plan.endpointHint', { endpoint: fallbackEndpoint }) }}</template>
-            <template v-else-if="publicIp">{{ $t('fleet.monitoring.beacon.plan.endpointHintIp', { ip: publicIp }) }}</template>
-            <template v-else>{{ $t('fleet.monitoring.beacon.plan.endpointHintNone') }}</template>
-            {{ $t('fleet.monitoring.beacon.plan.endpointOwn') }}
-          </p>
-          <p v-if="foreignEndpoint" class="text-xs text-warning-text" data-testid="beacon-endpoint-foreign">{{ $t('fleet.monitoring.beacon.plan.endpointForeign') }}</p>
-          <p v-if="problemOf('endpoint')" id="beacon-endpoint-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpoint')) }}</p>
+          <p id="beacon-endpoint-port-hint" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.endpointPortHint') }}</p>
+          <p v-if="problemOf('endpointPort')" id="beacon-endpoint-port-error" role="alert" class="text-xs text-destructive">{{ problemText(problemOf('endpointPort')) }}</p>
         </fieldset>
       </template>
 
@@ -255,7 +306,7 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
             <li v-if="planned.port && planned.bind" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.opens', { port: planned.port, bind: planned.bind }) }}</li>
             <li v-else-if="planned.portRandom && planned.bind" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.opensRandom', { bind: planned.bind }) }}</li>
             <li v-if="planned.endpoint" class="font-mono break-all">{{ $t('fleet.monitoring.beacon.plan.asks.send', { endpoint: planned.endpoint }) }}</li>
-            <li v-else-if="planned.portRandom && publicIp" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sendRandom', { ip: publicIp }) }}</li>
+            <li v-else-if="planned.endpointDefault && publicIp" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sendRandom', { ip: publicIp }) }}</li>
             <li v-if="keySources.length" class="break-words">{{ $t('fleet.monitoring.beacon.plan.asks.sources', { names: keySources.join(', ') }, keySources.length) }}</li>
             <li v-else class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.plan.asks.noSources') }}</li>
             <li v-if="view.exposure === 'netguard'">{{ $t('fleet.monitoring.beacon.plan.asks.netguard') }}</li>
@@ -356,7 +407,7 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
 
       <section :class="SECTION">
         <h3 :class="STEP">{{ $t('fleet.monitoring.beacon.plan.filed.planText') }}</h3>
-        <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-2.5 text-xs" data-testid="beacon-plan-digest">
+        <div v-if="digest" class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-2.5 text-xs" data-testid="beacon-plan-digest">
           <span class="font-medium">{{ $t('fleet.monitoring.beacon.plan.filed.digest') }}</span>
           <code class="min-w-0 break-all font-mono">{{ digest }}</code>
           <CopyButton :value="digest" />
@@ -370,7 +421,7 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
 
     <template #actions>
       <template v-if="stage === 'form'">
-        <p v-if="refusal" role="alert" class="basis-full text-xs text-destructive" data-testid="beacon-plan-refused">{{ $t('fleet.monitoring.beacon.plan.failed', { reason: refusal }) }}</p>
+        <p v-if="refusal" role="alert" class="basis-full text-xs break-words text-destructive" data-testid="beacon-plan-refused">{{ refusal }}</p>
         <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
         <Button type="submit" form="beacon-plan" size="sm" :variant="action === 'disable' ? 'destructive' : 'default'" :disabled="!canSubmit" data-testid="beacon-plan-submit">
           <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />

@@ -15,7 +15,12 @@ import {
   changedSettings,
   companionAllowCount,
   defaultBind,
-  defaultEndpoint,
+  beaconForbidden,
+  companionApprovalToRead,
+  companionOutcome,
+  defaultEndpointAddress,
+  endpointAddresses,
+  OTHER_ADDRESS,
   endpointIsOwn,
   formFor,
   isReachabilityCheck,
@@ -144,81 +149,151 @@ test("actions follow the state and the scopes; NetGuard adds netguard:admin to p
 /* ---- The plan form ---- */
 
 const NODE = { internal_ip: "10.0.0.5", public_ip: "203.0.113.12" };
+const JP = { id: "jp", ...NODE };
 
-test("defaults follow the server: the primary interface address, the public IPv4 with the port", () => {
+test("the bind default follows the server: the primary interface address, else the public IPv4", () => {
   assert.equal(defaultBind(NODE), "10.0.0.5");
   assert.equal(defaultBind({ internal_ip: "fe80::1", public_ip: "203.0.113.12" }), "203.0.113.12");
   assert.equal(defaultBind({}), "");
-  assert.equal(defaultEndpoint(NODE, 47231), "203.0.113.12:47231");
-  assert.equal(defaultEndpoint({ public_ip: "10.0.0.5" }, 47231), "", "a private address is not a public IPv4");
 });
 
-test("an enable opens on the suggested port and derives the rest", () => {
+test("the endpoint is chosen from the node's own addresses, with the applied one kept when it is neither", () => {
+  assert.deepEqual(endpointAddresses(NODE), [
+    { address: "203.0.113.12", kind: "public" },
+    { address: "10.0.0.5", kind: "interface" },
+  ]);
+  assert.deepEqual(endpointAddresses({ public_ip: "203.0.113.12", internal_ip: "203.0.113.12" }), [{ address: "203.0.113.12", kind: "public" }], "one address once");
+  assert.deepEqual(endpointAddresses({ public_ip: "host.example", internal_ip: "127.0.0.1" }), [], "nothing the server would accept");
+  assert.deepEqual(endpointAddresses(NODE, { endpoint: "198.51.100.40:50231" }).map((a) => a.kind), ["public", "interface", "current"]);
+  assert.equal(endpointAddresses(NODE, { endpoint: "10.0.0.5:47231" }).length, 2, "an applied own address is not listed twice");
+  assert.equal(defaultEndpointAddress(NODE), "203.0.113.12");
+  assert.equal(defaultEndpointAddress({ internal_ip: "10.0.0.5" }), "10.0.0.5", "no public IPv4: the interface address");
+  assert.equal(defaultEndpointAddress({}), OTHER_ADDRESS);
+});
+
+test("an enable opens on the suggested port and the public IPv4, and derives the rest", () => {
   const off = view({ state: "off", applied: undefined, epoch: undefined });
-  const form = formFor("enable", off);
-  assert.deepEqual(form, { port: "47231", bind: "", endpoint: "" });
+  const form = formFor("enable", off, NODE);
+  assert.deepEqual(form, { port: "47231", bind: "", endpointAddress: "203.0.113.12", endpointOther: "", endpointPort: "" });
   const planned = plannedSettings("enable", form, off, NODE);
-  assert.deepEqual(planned, { port: 47231, portRandom: false, bind: "10.0.0.5", endpoint: "203.0.113.12:47231", endpointDefault: true, problems: [] });
-  assert.deepEqual(buildBeaconPlanRequest("jp", "enable", form, off), { node_id: "jp", action: "enable", port: 47231 });
-  // A NAT node names its mapping.
-  const nat = { ...form, endpoint: "198.51.100.40:50231" };
-  assert.equal(plannedSettings("enable", nat, off, NODE).endpoint, "198.51.100.40:50231");
-  assert.deepEqual(buildBeaconPlanRequest("jp", "enable", nat, off), { node_id: "jp", action: "enable", port: 47231, endpoint: "198.51.100.40:50231" });
+  assert.deepEqual(planned, { port: 47231, portRandom: false, bind: "10.0.0.5", endpoint: "203.0.113.12:47231", endpointDefault: false, problems: [] });
+  assert.deepEqual(buildBeaconPlanRequest(JP, "enable", form, off), { node_id: "jp", action: "enable", port: 47231, endpoint: "203.0.113.12:47231" });
+  // A NAT node names the outside port its router maps to the listen port.
+  const nat = { ...form, endpointPort: "50231" };
+  assert.equal(plannedSettings("enable", nat, off, NODE).endpoint, "203.0.113.12:50231");
+  assert.deepEqual(buildBeaconPlanRequest(JP, "enable", nat, off), { node_id: "jp", action: "enable", port: 47231, endpoint: "203.0.113.12:50231" });
 });
 
-test("an enable without a drawn port leaves the port to the control plane, which draws it when it plans", () => {
-  const fresh = view({ state: "off", applied: undefined, suggested_port: undefined });
-  const form = formFor("enable", fresh);
-  assert.equal(form.port, "");
-  const planned = plannedSettings("enable", form, fresh, NODE);
-  assert.deepEqual([planned.port, planned.portRandom, planned.endpoint, planned.problems], [undefined, true, undefined, []]);
-  assert.deepEqual(buildBeaconPlanRequest("jp", "enable", form, fresh), { node_id: "jp", action: "enable" });
-  // Without a public IPv4 there is nothing to advertise by default.
-  assert.deepEqual(plannedSettings("enable", form, fresh, { internal_ip: "10.0.0.5" }).problems, [{ field: "endpoint", code: "noDefault" }]);
-});
-
-test("an endpoint should be one of the node's own addresses; another is only a warning (a line may declare it)", () => {
+test("another address is typed and judged by the server; the form refuses only what is not an address", () => {
+  const off = view({ state: "off", applied: undefined });
+  const typed = { ...formFor("enable", off, NODE), endpointAddress: OTHER_ADDRESS, endpointOther: " 198.51.100.40 " };
+  assert.equal(plannedSettings("enable", typed, off, NODE).endpoint, "198.51.100.40:47231");
+  assert.deepEqual(plannedSettings("enable", { ...typed, endpointOther: "" }, off, NODE).problems, [{ field: "endpointAddress", code: "missing" }]);
+  assert.deepEqual(plannedSettings("enable", { ...typed, endpointOther: "edge.example.net" }, off, NODE).problems, [{ field: "endpointAddress", code: "notIPv4" }]);
+  assert.deepEqual(plannedSettings("enable", { ...typed, endpointOther: "169.254.169.254" }, off, NODE).problems, [{ field: "endpointAddress", code: "refused" }]);
   assert.equal(endpointIsOwn("203.0.113.12:50231", NODE), true);
   assert.equal(endpointIsOwn("10.0.0.5:47231", NODE), true);
   assert.equal(endpointIsOwn("198.51.100.40:50231", NODE), false);
   assert.equal(endpointIsOwn("not an endpoint", NODE), true, "a malformed endpoint is the parser's to refuse");
 });
 
+test("an enable without a drawn port leaves the port, and the public endpoint, to the control plane", () => {
+  const fresh = view({ state: "off", applied: undefined, suggested_port: undefined });
+  const form = formFor("enable", fresh, NODE);
+  assert.equal(form.port, "");
+  const planned = plannedSettings("enable", form, fresh, NODE);
+  assert.deepEqual([planned.port, planned.portRandom, planned.endpoint, planned.endpointDefault, planned.problems], [undefined, true, undefined, true, []]);
+  assert.deepEqual(buildBeaconPlanRequest(JP, "enable", form, fresh), { node_id: "jp", action: "enable" });
+  // Any other address needs its port named: the server advertises only the public IPv4 with the port it draws.
+  const inside = { ...form, endpointAddress: "10.0.0.5" };
+  assert.deepEqual(plannedSettings("enable", inside, fresh, NODE).problems, [{ field: "endpointPort", code: "needed" }]);
+  assert.equal(plannedSettings("enable", { ...inside, endpointPort: "50231" }, fresh, NODE).endpoint, "10.0.0.5:50231");
+});
+
 test("the form refuses what the server would, field by field", () => {
   const off = view({ state: "off", applied: undefined });
-  const bad = plannedSettings("enable", { port: "80", bind: "127.0.0.1", endpoint: "beacon.example.net:443" }, off, NODE);
+  const bad = plannedSettings("enable", { port: "80", bind: "127.0.0.1", endpointAddress: "203.0.113.12", endpointOther: "", endpointPort: "70000" }, off, NODE);
   assert.deepEqual(bad.problems, [
     { field: "port", code: "range" },
     { field: "bind", code: "refused" },
-    { field: "endpoint", code: "notIPv4" },
+    { field: "endpointPort", code: "range" },
   ]);
-  const bare = plannedSettings("enable", { port: "47231", bind: "", endpoint: "" }, off, {});
+  const bare = plannedSettings("enable", formFor("enable", off, {}), off, {});
   assert.deepEqual(bare.problems, [
     { field: "bind", code: "noDefault" },
-    { field: "endpoint", code: "noDefault" },
+    { field: "endpointAddress", code: "missing" },
   ]);
+  for (const raw of ["0", "080", "+80", "1.5"]) {
+    assert.deepEqual(plannedSettings("enable", { ...formFor("enable", off, NODE), endpointPort: raw }, off, NODE).problems, [{ field: "endpointPort", code: "range" }], raw);
+  }
 });
 
-test("a change sends only what moved, and a default endpoint follows a new port", () => {
+test("a change opens on the applied settings and sends only what moved; an endpoint on the listen port follows it", () => {
   const on = view({ applied: { enabled: true, port: 47231, bind: "10.0.0.5", endpoint: "203.0.113.12:47231", limits: DEFAULT_BEACON_LIMITS } });
-  const form = formFor("change", on);
-  assert.deepEqual(form, { port: "47231", bind: "10.0.0.5", endpoint: "203.0.113.12:47231" });
-  assert.deepEqual(buildBeaconPlanRequest("jp", "change", form, on), { node_id: "jp", action: "change" });
-  assert.deepEqual(changedSettings(form, on), [], "nothing moved: the plan re-plans the source set");
+  const form = formFor("change", on, NODE);
+  assert.deepEqual(form, { port: "47231", bind: "10.0.0.5", endpointAddress: "203.0.113.12", endpointOther: "", endpointPort: "" });
+  assert.deepEqual(buildBeaconPlanRequest(JP, "change", form, on), { node_id: "jp", action: "change" });
+  assert.deepEqual(changedSettings(form, on, JP), [], "nothing moved: the plan re-plans the source set");
   const moved = { ...form, port: "51000" };
-  assert.deepEqual(buildBeaconPlanRequest("jp", "change", moved, on), { node_id: "jp", action: "change", port: 51000 });
-  // The endpoint was the default (public IPv4 and the old port), so the server moves it with the port.
-  assert.equal(plannedSettings("change", moved, on, NODE).endpoint, "203.0.113.12:51000");
-  // A mapped endpoint stays where the operator put it.
+  assert.deepEqual(buildBeaconPlanRequest(JP, "change", moved, on), { node_id: "jp", action: "change", port: 51000, endpoint: "203.0.113.12:51000" });
+  assert.deepEqual(changedSettings(moved, on, JP), ["port", "endpoint"]);
+  // A mapped endpoint opens with its outside port and stays where the operator put it.
   const mapped = view();
-  assert.equal(plannedSettings("change", { ...formFor("change", mapped), port: "51000" }, mapped, NODE).endpoint, "203.0.113.12:50231");
+  const mappedForm = formFor("change", mapped, NODE);
+  assert.equal(mappedForm.endpointPort, "50231");
+  assert.equal(plannedSettings("change", { ...mappedForm, port: "51000" }, mapped, NODE).endpoint, "203.0.113.12:50231");
   // An emptied field keeps the current value.
-  assert.equal(plannedSettings("change", { port: "", bind: "", endpoint: "" }, mapped, NODE).bind, "10.0.0.5");
+  assert.equal(plannedSettings("change", { ...mappedForm, port: "", bind: "" }, mapped, NODE).bind, "10.0.0.5");
+  // An applied edge address stays chosen, and unchanged it is not sent.
+  const edge = view({ applied: { enabled: true, port: 47231, bind: "10.0.0.5", endpoint: "198.51.100.40:47231", limits: DEFAULT_BEACON_LIMITS } });
+  const edgeForm = formFor("change", edge, NODE);
+  assert.equal(edgeForm.endpointAddress, "198.51.100.40");
+  assert.deepEqual(buildBeaconPlanRequest(JP, "change", edgeForm, edge), { node_id: "jp", action: "change" });
 });
 
 test("a disable names nothing but the action", () => {
-  assert.deepEqual(buildBeaconPlanRequest("jp", "disable", { port: "1", bind: "x", endpoint: "y" }, view()), { node_id: "jp", action: "disable" });
-  assert.deepEqual(plannedSettings("disable", { port: "", bind: "", endpoint: "" }, view(), NODE).problems, []);
+  const junk = { port: "1", bind: "x", endpointAddress: "y", endpointOther: "z", endpointPort: "0" };
+  assert.deepEqual(buildBeaconPlanRequest(JP, "disable", junk, view()), { node_id: "jp", action: "disable" });
+  assert.deepEqual(plannedSettings("disable", formFor("disable", view(), NODE), view(), NODE).problems, []);
+});
+
+/* ---- The NetGuard companion ---- */
+
+test("the companion's outcome is read only while NetGuard holds the beacon closed", () => {
+  const pending = view({ firewall_pending: true, applied_approval_id: "approval_b1" });
+  assert.equal(companionApprovalToRead(pending), "approval_b1");
+  assert.equal(companionApprovalToRead({ ...pending, firewall_pending: false }), undefined);
+  assert.equal(companionApprovalToRead({ ...pending, exposure: "internet" }), undefined, "no NetGuard, no companion");
+  assert.equal(companionApprovalToRead({ ...pending, state: "off" }), undefined);
+  assert.equal(companionApprovalToRead({ ...pending, applied_approval_id: undefined }), undefined);
+});
+
+test("the companion's outcome follows its approval: applying, failed in the task's words, or applied", () => {
+  assert.deepEqual(companionOutcome({ status: "approved", waiting: { code: "task_running", reason: " Task task_9c1 is running on gomami. ", blocked: false } }), {
+    kind: "applying",
+    reason: "Task task_9c1 is running on gomami.",
+    blocked: false,
+  });
+  assert.deepEqual(companionOutcome({ status: "approved", waiting: { code: "node_offline", reason: "gomami has been offline for 2 hours.", blocked: true } }), {
+    kind: "applying",
+    reason: "gomami has been offline for 2 hours.",
+    blocked: true,
+  });
+  assert.deepEqual(companionOutcome({ status: "approved" }), { kind: "applying", reason: undefined, blocked: false });
+  assert.deepEqual(companionOutcome({ status: "rejected", reason: "nft: Could not process rule: No such file or directory" }), {
+    kind: "failed",
+    reason: "nft: Could not process rule: No such file or directory",
+  });
+  assert.deepEqual(companionOutcome({ status: "failed" }), { kind: "failed", reason: undefined });
+  assert.deepEqual(companionOutcome({ status: "applied" }), { kind: "applied" });
+  assert.deepEqual(companionOutcome({ status: "pending" }), { kind: "unknown" });
+  assert.deepEqual(companionOutcome(undefined), { kind: "unknown" });
+});
+
+test("a 403 is told apart from other refusals", () => {
+  assert.equal(beaconForbidden({ status: 403 }), true);
+  assert.equal(beaconForbidden({ status: 404 }), false);
+  assert.equal(beaconForbidden(null), false);
 });
 
 /* ---- The plan document ---- */

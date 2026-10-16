@@ -248,3 +248,45 @@ export function rotateBeacon(node: Node): { ok: true; epoch: number } | { ok: fa
   h.rotatedAt = new Date().toISOString();
   return { ok: true, epoch: h.epoch };
 }
+
+/**
+ * GET /api/network/approvals?id= for an applied beacon plan, which the
+ * Beacon card reads for its NetGuard task: still running, failed in the
+ * task's words, or applied. Undefined for any other id.
+ */
+export function appliedBeaconApproval(id: string, nodes: readonly Node[]): ApprovalView | undefined {
+  const node = nodes.find((n) => `approval_beacon_applied_${n.id.slice(-4)}` === id);
+  const shape = beaconShape(node?.name);
+  if (!node || !shape.enabled) return undefined;
+  const base: ApprovalView = {
+    id,
+    node_id: node.id,
+    plugin: "beacon",
+    action: "node.beacon",
+    plan: "{}",
+    status: "applied",
+    actor_id: "cdcd",
+    approved_by: "cdcd",
+    created_at: iso(-(3 * DAY) - 6 * 60_000),
+    updated_at: iso(-(3 * DAY)),
+  };
+  if (shape.companionTask === "running") {
+    return {
+      ...base,
+      status: "approved",
+      waiting: {
+        code: "task_running",
+        reason: `Task task_7f3a1c applies the NetGuard rule on ${node.name}; it has been running for 40 seconds.`,
+        blocked: false,
+        node_id: node.id,
+        node_name: node.name,
+        task_id: "task_7f3a1c",
+        task_status: "running",
+      },
+    };
+  }
+  if (shape.companionTask === "failed") {
+    return { ...base, status: "rejected", reason: "netguard apply: nft: Error: Could not process rule: Device or resource busy (table inet lattice_guard, chain raw_pre)" };
+  }
+  return base;
+}

@@ -6,6 +6,12 @@
  * card's loading state while it reads.
  */
 let beaconRouteSeen = false;
+/**
+ * Whether the route answered 404 or 405 in this session: a server before
+ * M2b. The card then asks no more, on this node page or the next, until the
+ * console reloads (a server upgrade reloads it).
+ */
+let beaconRouteMissing = false;
 </script>
 
 <script setup lang="ts">
@@ -30,7 +36,7 @@ import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute } from "vue-router";
 import { KeyRound, Power, RadioTower, ShieldAlert, SlidersHorizontal } from "lucide-vue-next";
 
-import { api, type BeaconPlanAction, type BeaconView, type Node } from "@/lib/api";
+import { api, type ApprovalView, type BeaconPlanAction, type BeaconView, type Node } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -48,9 +54,13 @@ import {
   agentHasResponder,
   beaconActions,
   beaconEnabled,
+  beaconForbidden,
   beaconSources,
   beaconState,
   beaconTone,
+  companionApprovalToRead,
+  companionOutcome,
+  endpointIsOwn,
   nextEpoch,
   nodeRefusesBeacon,
   notListeningCause,
@@ -66,36 +76,70 @@ const auth = useAuthStore();
 const route = useRoute();
 const canRead = computed(() => auth.can("monitor:read"));
 
-type BeaconRead = { kind: "view"; view: BeaconView } | { kind: "missing" } | { kind: "denied" };
+/** The applied plan's approval, read for its NetGuard task's outcome; "denied" when this session may not read it. */
+type CompanionRead = { kind: "approval"; approval: ApprovalView } | { kind: "denied" } | { kind: "unread" };
+type BeaconRead = { kind: "view"; view: BeaconView; companion?: CompanionRead } | { kind: "missing" } | { kind: "denied" };
+
+/**
+ * D12: with a NetGuard companion the beacon stays closed to sources until
+ * the companion task succeeds, and stays closed if it fails. The view says
+ * firewall pending either way; the applied plan's approval says which.
+ * Reading it needs monitor:read on every source the plan names, so a 403
+ * is an answer, not an error.
+ */
+async function readCompanion(view: BeaconView, signal: AbortSignal): Promise<CompanionRead | undefined> {
+  const id = companionApprovalToRead(view);
+  if (!id) return undefined;
+  if (!auth.can("approval:read")) return { kind: "denied" };
+  try {
+    return { kind: "approval", approval: await api.approvals.get(id, { signal }) };
+  } catch (error) {
+    if ((error as Error)?.name === "AbortError") throw error;
+    return { kind: beaconForbidden(error) ? "denied" : "unread" };
+  }
+}
 
 const query = useAsyncData<BeaconRead | undefined>(
   async (signal) => {
     if (!canRead.value) return undefined;
+    if (beaconRouteMissing) return { kind: "missing" };
     try {
       const view = await api.nodes.beacon.get(props.node.id, { signal });
       // Anything but the view (an HTML fallback) is a server without the route.
-      if (!view || typeof view !== "object" || typeof view.state !== "string") return { kind: "missing" };
+      if (!view || typeof view !== "object" || typeof view.state !== "string") {
+        beaconRouteMissing = true;
+        return { kind: "missing" };
+      }
       beaconRouteSeen = true;
-      return { kind: "view", view };
+      return { kind: "view", view, companion: await readCompanion(view, signal) };
     } catch (error) {
-      // A server before M2b has no such route: no card, never an error.
-      if (isMissingRoute(error)) return { kind: "missing" };
-      if ((error as { status?: number }).status === 403) return { kind: "denied" };
+      // A server before M2b has no such route: no card, never an error, and no further requests.
+      if (isMissingRoute(error)) {
+        beaconRouteMissing = true;
+        return { kind: "missing" };
+      }
+      if (beaconForbidden(error)) return { kind: "denied" };
       throw error;
     }
   },
-  { pollInterval: 20000, immediate: canRead.value },
+  { pollInterval: 20000, immediate: canRead.value && !beaconRouteMissing },
 );
 
 const read = computed(() => query.data.value);
+watch(read, (r) => {
+  if (r?.kind === "missing") query.stop();
+});
 const view = computed(() => (read.value?.kind === "view" ? read.value.view : undefined));
+const companion = computed(() => (read.value?.kind === "view" ? read.value.companion : undefined));
+/** How the NetGuard task went, when the card could read it. */
+const companionState = computed(() => (companion.value?.kind === "approval" ? companionOutcome(companion.value.approval) : undefined));
 /**
  * Drawn once the route has answered, or while it is read when this session
  * has seen it answer or the node's agent reports beacon facts (only an M2b
  * server sends them); a failed read draws its error.
  */
 const visible = computed(() => {
-  if (!canRead.value) return false;
+  if (!canRead.value || beaconRouteMissing) return false;
   if (read.value) return read.value.kind !== "missing";
   if (query.error.value) return true;
   return beaconRouteSeen || !!props.node.beacon;
@@ -153,16 +197,37 @@ const stateLine = computed(() => {
   }
 });
 
+/**
+ * The plan's NetGuard rule has not applied: its task runs, or the card
+ * cannot tell and no source waits on a change plan (the server says
+ * firewall pending for either reason).
+ */
+const companionClosed = computed(() => {
+  const v = view.value;
+  if (!v || !enabled.value || v.exposure !== "netguard" || !v.firewall_pending) return false;
+  const kind = companionState.value?.kind;
+  if (kind === "applying") return true;
+  if (kind === "applied") return false;
+  return companion.value?.kind === "denied" || !waiting.value.length;
+});
+
 /** The approved sources NetGuard admits, counted for the exposure line. */
 const admitted = computed(() => sources.value.active.length + sources.value.idle.length);
 const exposure = computed(() => {
   const v = view.value;
   if (!v || !enabled.value) return undefined;
-  if (v.exposure === "netguard") return admitted.value ? t("fleet.monitoring.beacon.exposure.netguard", { n: admitted.value }, admitted.value) : t("fleet.monitoring.beacon.exposure.netguardNone");
+  if (v.exposure === "netguard") {
+    // Until the plan's NetGuard task succeeds the rule admits nobody (D12), whatever the plan approved.
+    if (companionState.value?.kind === "failed") return t("fleet.monitoring.beacon.exposure.netguardFailed");
+    if (companionClosed.value) return t("fleet.monitoring.beacon.exposure.netguardApplying");
+    return admitted.value ? t("fleet.monitoring.beacon.exposure.netguard", { n: admitted.value }, admitted.value) : t("fleet.monitoring.beacon.exposure.netguardNone");
+  }
   if (v.exposure === "internet") return t("fleet.monitoring.beacon.exposure.internetShort");
   return t("fleet.monitoring.beacon.exposure.unknown");
 });
 const openToInternet = computed(() => enabled.value && view.value?.exposure === "internet");
+/** The applied endpoint is not the node's public or interface address: a line's edge, or an address the node has left. */
+const endpointForeign = computed(() => enabled.value && !!applied.value?.endpoint && !endpointIsOwn(applied.value.endpoint, props.node));
 
 const reachLine = computed(() => {
   const v = view.value;
@@ -296,6 +361,7 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             <dd :class="DD">{{ applied.port }}</dd>
             <dt :class="DT">{{ $t('fleet.monitoring.beacon.facts.endpoint') }}</dt>
             <dd :class="DD">{{ applied.endpoint }} <span class="break-normal font-sans text-muted-foreground">({{ $t('fleet.monitoring.beacon.facts.endpointHint') }})</span></dd>
+            <dd v-if="endpointForeign" :class="cn(DD_TEXT, 'col-start-2 -mt-1 text-muted-foreground')" data-testid="beacon-endpoint-not-own">{{ $t('fleet.monitoring.beacon.facts.endpointNotOwn') }}</dd>
             <dt :class="DT">{{ $t('fleet.monitoring.beacon.facts.bind') }}</dt>
             <dd :class="DD">{{ applied.bind }}</dd>
             <template v-if="view.epoch">
@@ -321,10 +387,35 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             <p class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.exposure.internet', { port: applied?.port ?? '' }) }}</p>
           </div>
 
-          <!-- The NetGuard rule a plan carries has not applied yet: nobody reaches the port until it does. -->
-          <p v-if="enabled && view.firewall_pending && !waiting.length" :class="cn(NOTE, 'bg-warning/10 text-warning-text')" role="status" data-testid="beacon-companion-pending">
-            {{ $t('fleet.monitoring.beacon.line.companionPending') }}
-          </p>
+          <!-- D12: with a NetGuard companion the beacon stays closed to sources until its task succeeds, and stays closed if it fails. -->
+          <div v-if="companionState?.kind === 'failed'" :class="cn(NOTE, 'space-y-1.5 border border-destructive/40 bg-destructive/5')" role="alert" data-testid="beacon-companion-failed">
+            <p class="flex items-center gap-1.5 font-medium text-destructive">
+              <ShieldAlert class="size-4 shrink-0" aria-hidden="true" />
+              {{ $t('fleet.monitoring.beacon.companion.failedTitle') }}
+            </p>
+            <p v-if="companionState.reason" class="font-mono break-words text-foreground">{{ companionState.reason }}</p>
+            <p class="text-muted-foreground">{{ $t('fleet.monitoring.beacon.companion.failed') }}</p>
+            <p class="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <button v-if="actions.change" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-companion-replan" @click="openPlan('change')">
+                {{ $t('fleet.monitoring.beacon.waiting.action') }}
+              </button>
+              <RouterLink
+                v-if="view.applied_approval_id"
+                :to="{ name: 'approvals', query: { open: view.applied_approval_id } }"
+                class="font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              >
+                {{ $t('fleet.monitoring.beacon.companion.openPlan') }}
+              </RouterLink>
+            </p>
+          </div>
+          <div v-else-if="companionState?.kind === 'applying'" :class="cn(NOTE, 'space-y-1 bg-warning/10 text-warning-text')" role="status" data-testid="beacon-companion-applying" :data-blocked="companionState.blocked || undefined">
+            <p class="break-words">{{ $t('fleet.monitoring.beacon.companion.applying') }}</p>
+            <p v-if="companionState.reason" :class="cn('break-words', companionState.blocked ? 'font-medium' : 'text-foreground/80')">{{ companionState.reason }}</p>
+          </div>
+          <div v-else-if="companionClosed" :class="cn(NOTE, 'space-y-1 bg-warning/10 text-warning-text')" role="status" data-testid="beacon-companion-pending">
+            <p class="break-words">{{ $t('fleet.monitoring.beacon.line.companionPending') }}</p>
+            <p v-if="companion?.kind === 'denied'" class="break-words text-foreground/80" data-testid="beacon-companion-denied">{{ $t('fleet.monitoring.beacon.companion.denied') }}</p>
+          </div>
 
           <!-- Sources that use the beacon but are not admitted yet: firewall pending under NetGuard. -->
           <div v-if="waiting.length" :class="cn(NOTE, 'space-y-1.5 bg-warning/10 text-warning-text')" role="status" data-testid="beacon-waiting">

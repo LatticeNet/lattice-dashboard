@@ -18,7 +18,7 @@
  * the path reads in usePathsData) and the editors, so Overview and Paths can
  * open the path set or a new check without leaving for Checks first.
  */
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
@@ -67,11 +67,17 @@ const canReadNodes = computed(() => auth.can("node:read"));
 const canAdminMonitors = computed(() => auth.can("monitor:admin"));
 
 // A beacon's reachability check (design 29 D12) is neither the operator's check nor a path: the node page's Beacon
-// card shows its verdict, and nothing here lists it.
+// card shows its verdict, and nothing here lists it. It still sends packets, so the editor's budget counts it
+// as the server does (monitorPacketLoad): `allMonitors` keeps it for that.
+const allMonitors = shallowRef<MonitorView[]>([]);
 const monitorsQuery = useAsyncData(
   (signal) =>
     canReadMonitors.value
-      ? api.monitors.list({ signal }).then((r) => unwrap(r, "monitors").filter((m) => !isReachabilityCheck(m)))
+      ? api.monitors.list({ signal }).then((r) => {
+          const all = unwrap(r, "monitors");
+          allMonitors.value = all;
+          return all.filter((m) => !isReachabilityCheck(m));
+        })
       : Promise.resolve([] as MonitorView[]),
   { pollInterval: 10000, immediate: canReadMonitors.value },
 );
@@ -491,7 +497,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :with-alert="data.source.value === 'paths'"
       :m2a="m2a && data.source.value === 'paths'"
       :m2b="m2b && data.source.value === 'paths'"
-      :monitors="monitorsQuery.data.value ?? []"
+      :monitors="allMonitors"
       :plan="plan"
       @close="editorOpen = false; backToSheet()"
       @saved="onCheckSaved"

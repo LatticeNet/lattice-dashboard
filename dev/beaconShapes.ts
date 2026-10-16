@@ -16,6 +16,10 @@
  *   [cd]-racknerd-la               listening, NetGuard, cd-hs-sh not admitted
  *   [cd]-gomami-hk-turin-mini      enabled a minute ago: the agent not listening yet,
  *                                  its NetGuard rule still applying (firewall pending)
+ *   [cd]-vultr-syd                 listening, but its NetGuard rule failed to apply:
+ *                                  closed to every source (firewall pending)
+ *   [Metix]-DMIT-2                 listening, its endpoint on an address the node
+ *                                  has left (beacon paths not probeable)
  *   [cd]-qqpw-vds-cd1              enabled, bind failed (address in use)
  *   [Metix]-qqpw-cd3-VDS           enabled, circuit breaker open
  *   [cd]-Oracle-KIX-arm            enabled, but the node runs -no-beacon
@@ -48,6 +52,10 @@ export interface BeaconShape {
   reach?: "reachable" | "filtered" | "not_listening" | "no_source" | "pending";
   /** The NetGuard rule of the applied plan has not applied yet: no source may probe. */
   companionPending?: boolean;
+  /** How the applied plan's NetGuard task stands (its approval): running, or failed; applied when unset. */
+  companionTask?: "running" | "failed";
+  /** The endpoint's address when it is no longer the node's own (the node moved). */
+  endpointHost?: string;
   /** The port the server drew for an earlier plan of a beacon that is off now. */
   drawnPort?: number;
   pendingApproval?: boolean;
@@ -61,7 +69,9 @@ const SHAPES: Record<string, BeaconShape> = {
   "[cd]-hetzner-hel": { enabled: true, agent: "listening", port: 51388, exposure: "internet", approved: ["cd-hs-sh"], reach: "filtered", epoch: 2 },
   "[Metix]-DMIT-1": { enabled: true, agent: "listening", port: 42006, exposure: "internet", approved: [], reach: "no_source", epoch: 1 },
   "[cd]-racknerd-la": { enabled: true, agent: "listening", port: 49152, exposure: "netguard", approved: [], reach: "no_source", epoch: 1 },
-  "[cd]-gomami-hk-turin-mini": { enabled: true, agent: "off", port: 45509, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 1, companionPending: true },
+  "[cd]-gomami-hk-turin-mini": { enabled: true, agent: "off", port: 45509, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 1, companionPending: true, companionTask: "running" },
+  "[cd]-vultr-syd": { enabled: true, agent: "listening", port: 48890, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 1, companionPending: true, companionTask: "failed" },
+  "[Metix]-DMIT-2": { enabled: true, agent: "listening", port: 43117, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 2, endpointHost: "198.51.100.77" },
   "[cd]-qqpw-vds-cd1": { enabled: true, agent: "bind_failed", port: 47000, bind: "10.0.1.7", mappedPort: 50170, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 1, error: "listen udp 10.0.1.7:47000: bind: address already in use" },
   "[Metix]-qqpw-cd3-VDS": { enabled: true, agent: "circuit_open", port: 46022, exposure: "internet", approved: ["cd-hs-sh"], epoch: 2, error: "drops above 50000 a second for 60 s; closed for 300 s" },
   "[cd]-Oracle-KIX-arm": { enabled: true, agent: "refused", port: 53111, exposure: "netguard", approved: ["cd-hs-sh"], epoch: 1 },
@@ -85,7 +95,7 @@ export function runsBeaconClient(name: string | undefined): boolean {
 
 /** The endpoint sources send to: the node's public IPv4 with the mapped port, or the listen port. */
 export function beaconEndpoint(shape: BeaconShape, publicIp: string | undefined): string {
-  return `${publicIp ?? "203.0.113.1"}:${shape.mappedPort ?? shape.port}`;
+  return `${shape.endpointHost ?? publicIp ?? "203.0.113.1"}:${shape.mappedPort ?? shape.port}`;
 }
 
 /** Why no source may use the target's beacon (the server's beaconTargetGate), "" when sources may. */
@@ -94,6 +104,8 @@ export function beaconTargetGate(shape: BeaconShape): string {
   if (shape.companionPending) return "firewall_pending";
   if (shape.agent === "refused") return "refused_by_node";
   if (shape.agent === "none") return "beacon_not_listening";
+  // beaconMonitorGate: an endpoint no longer on the node's addresses is not probed.
+  if (shape.endpointHost) return "not_probeable";
   return "";
 }
 

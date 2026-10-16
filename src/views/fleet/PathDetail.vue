@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
 import { methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
-import { isChosenUnknown, runEchoes, runRows } from "./pathsModel";
+import { isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
 import {
   availability,
   formatDeltaLoss,
@@ -81,7 +81,7 @@ const unmeasured = computed(() => {
 
 /** Beacon reasons the target's Beacon card explains and fixes: no beacon, not admitted, refused, not listening, filtered. */
 const BEACON_ON_TARGET = new Set(["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "beacon_not_listening", "beacon_filtered"]);
-const beaconFixOnTarget = computed(() => !!unmeasured.value && BEACON_ON_TARGET.has(unmeasured.value));
+const beaconFixOnTarget = computed(() => BEACON_ON_TARGET.has(reasonCode(unmeasured.value) ?? ""));
 
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */

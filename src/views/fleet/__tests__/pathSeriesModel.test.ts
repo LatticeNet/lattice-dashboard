@@ -167,6 +167,27 @@ test("method changes: the server's list starts with the method in force, and onl
   assert.equal(methodAt(none, t0, "tcp"), "tcp", "a series that names no method reads the path's");
 });
 
+test("Auto's switch back is a switch too: ICMP filtered falls back to TCP, and ICMP is tried again after 24 hours", () => {
+  const t0 = 1_760_000_000;
+  const day = 86_400;
+  const series = seriesFromResponse(
+    response({
+      method_changes: [
+        { t: t0, method: "icmp" },
+        { t: t0 + 3600, method: "tcp" },
+        { t: t0 + 3600 + day, method: "icmp" },
+        { t: t0 + 3600 + day + 1800, method: "tcp" },
+      ],
+    }),
+  );
+  assert.deepEqual(methodMarkers(series), [
+    { t: t0 + 3600, from: "icmp", to: "tcp" },
+    { t: t0 + 3600 + day, from: "tcp", to: "icmp" },
+    { t: t0 + 3600 + day + 1800, from: "icmp", to: "tcp" },
+  ]);
+  assert.equal(methodAt(series, t0 + 3600 + day + 600, "tcp"), "icmp", "the retry window reads ICMP");
+});
+
 test("lanes: 0 ms sits above the loss lane and 100% loss reaches the lane's top", () => {
   const lanes = laneLayout(168);
   assert.equal(lanes.msMax, 200);

@@ -42,8 +42,9 @@ import {
  */
 export const CHECK_KINDS: readonly MonitorType[] = ["beacon", "tcp", "icmp", "http", "tls"];
 
-export function offeredKinds(m2a: boolean, m2b = false): MonitorType[] {
-  return CHECK_KINDS.filter((k) => (k === "icmp" ? m2a : k === "beacon" ? m2a && m2b : true));
+export function offeredKinds(m2a: boolean, m2b = false, canReadNodes = true): MonitorType[] {
+  // A beacon check names its target node and nothing else, so a session that cannot read the node list cannot write one.
+  return CHECK_KINDS.filter((k) => (k === "icmp" ? m2a : k === "beacon" ? m2a && m2b && canReadNodes : true));
 }
 
 /** Kinds that send several packets a run, 200 ms apart, and report loss (icmp, beacon). */

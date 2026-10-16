@@ -31,7 +31,8 @@
  * beacon routes answer, nodes report beacon facts, and plans and rotations
  * change the in-memory state; without it those routes answer 404, as a
  * server before M2b does. `?fail=beacon` fails the beacon read, `?deny=beacon`
- * refuses it (403) and `?beaconMs=` slows it.
+ * refuses it (403), `?deny=beaconplan` refuses a plan (403), `?deny=approvals`
+ * refuses the companion's approval read, and `?beaconMs=` slows the read.
  * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
  * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
  * reads, and saving the probe settings recomputes the plan by the server's rule.
@@ -85,7 +86,7 @@ import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindo
 import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, probeFacts, rollupsFor, seriesFor } from "./latencyFixture";
 import { lineChains } from "./topologyFixture";
 import { M2B, beaconShape, runsBeaconClient } from "./beaconShapes";
-import { beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
+import { appliedBeaconApproval, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
 import { PATHS_SHAPE, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
@@ -386,6 +387,8 @@ export const api = {
       plan: async (input: BeaconPlanRequest) => {
         if (!M2B) return missingRoute("/api/nodes/beacon/plan");
         await delay(undefined, 260);
+        // ?deny=beaconplan: a source of the plan is a node this session may not read (D12).
+        if (DENY.has("beaconplan")) throw new ApiError(403, "capability_denied", "forbidden: a source of this beacon is a node this token may not read");
         const outcome = await planBeacon(input, beaconNode(input.node_id), nodes, currentBeaconSources(input.node_id));
         // The server answers a blocked plan with its findings beside the error, as a plain string.
         if (!outcome.ok) throw new ApiError(outcome.status, String(outcome.status), outcome.message, undefined, outcome.findings ? { error: outcome.message, findings: outcome.findings } : undefined);
@@ -463,6 +466,13 @@ export const api = {
         return { pending, approved: 0, stale: 0, applied: 1144, rejected: 207, dismissed: 0, total: 1351 + pending };
       }),
     list: () => answer("approvals", () => ({ approvals: [], total: 0, limit: 50, offset: 0 })),
+    // The applied plan of a beacon, which the Beacon card reads for its NetGuard task (?deny=approvals refuses it).
+    get: (id: string) =>
+      answer("approvals", () => {
+        const approval = appliedBeaconApproval(id, nodes);
+        if (!approval) throw new ApiError(404, "not_found", "approval not found");
+        return approval;
+      }),
   },
   tasks: {
     counts: () => answer("counts", () => taskCounts()),
