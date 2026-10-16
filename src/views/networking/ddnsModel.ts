@@ -483,3 +483,21 @@ export function ddnsErrorText(
     })
     .join("\n");
 }
+
+/** The text lattice-server sends for a 5xx it keeps to itself. */
+const MASKED_UPSTREAM_MESSAGE = "upstream service error";
+
+/**
+ * What a failed Run now should say, or undefined when the server kept the
+ * reason to itself. Since alpha-0.2.2a125 a Cloudflare refusal answers 502
+ * with the same text the profile records; an internal failure still answers
+ * the masked message, and older servers mask every 502.
+ */
+export function ddnsRunFailureText(
+  serverMessage: string | undefined,
+  refused?: (status: string, said: string) => string,
+): string | undefined {
+  const message = (serverMessage ?? "").trim();
+  if (!message || message === MASKED_UPSTREAM_MESSAGE) return undefined;
+  return ddnsErrorText(message, refused) || undefined;
+}

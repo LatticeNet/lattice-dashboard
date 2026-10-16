@@ -67,6 +67,7 @@ import {
   ddnsMatchesShow,
   ddnsNormalizeHost,
   ddnsRecordType,
+  ddnsRunFailureText,
   ddnsRunPreview,
   ddnsTargetProblem,
   ddnsTemplateProblem,
@@ -954,7 +955,8 @@ async function confirmRun() {
     void profilesQuery.refresh();
   } catch (error) {
     if (error instanceof ApiError && error.status === 502) {
-      toast.error(t("networking.ddns.toastRunBadGateway"));
+      const reason = ddnsRunFailureText(error.serverMessage, (status, said) => t("networking.ddns.cloudflareRefused", { status, said }));
+      toast.error(reason ?? t("networking.ddns.toastRunBadGateway"));
     } else {
       toast.error(error instanceof Error ? error.message : t("networking.ddns.toastRunFailed"));
     }
