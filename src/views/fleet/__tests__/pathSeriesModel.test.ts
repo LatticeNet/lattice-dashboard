@@ -14,6 +14,7 @@ import {
   inferStep,
   laneLayout,
   methodAt,
+  earlierMethods,
   methodMarkers,
   seriesCeilingMs,
   seriesFromLatency,
@@ -167,6 +168,27 @@ test("method changes: the server's list starts with the method in force, and onl
   assert.equal(methodAt(none, t0, "tcp"), "tcp", "a series that names no method reads the path's");
 });
 
+test("Auto's switch back is a switch too: ICMP filtered falls back to TCP, and ICMP is tried again after 24 hours", () => {
+  const t0 = 1_760_000_000;
+  const day = 86_400;
+  const series = seriesFromResponse(
+    response({
+      method_changes: [
+        { t: t0, method: "icmp" },
+        { t: t0 + 3600, method: "tcp" },
+        { t: t0 + 3600 + day, method: "icmp" },
+        { t: t0 + 3600 + day + 1800, method: "tcp" },
+      ],
+    }),
+  );
+  assert.deepEqual(methodMarkers(series), [
+    { t: t0 + 3600, from: "icmp", to: "tcp" },
+    { t: t0 + 3600 + day, from: "tcp", to: "icmp" },
+    { t: t0 + 3600 + day + 1800, from: "icmp", to: "tcp" },
+  ]);
+  assert.equal(methodAt(series, t0 + 3600 + day + 600, "tcp"), "icmp", "the retry window reads ICMP");
+});
+
 test("lanes: 0 ms sits above the loss lane and 100% loss reaches the lane's top", () => {
   const lanes = laneLayout(168);
   assert.equal(lanes.msMax, 200);
@@ -238,4 +260,24 @@ test("loss counts probes: lost over sent where a bucket has them, failed runs ov
   // Probes: 5 runs, 25 echoes, 5 runs; lost: 1 run, 3 echoes, 0.
   assert.equal(stats.loss, 4 / 35);
   assert.equal(stats.availability, 14 / 15, "availability stays successful runs over expected runs");
+});
+
+test("a window that switched methods says what else measured it, so its figures are not read as the current method's", () => {
+  const t0 = 1_760_000_000;
+  const day = 86_400;
+  const base = (changes: { t: number; method: string }[]) => ({ ...seriesFromResponse(response({ method_changes: changes })), from: t0, to: t0 + 7 * day });
+  const switched = base([
+    { t: t0 - day, method: "tcp" },
+    { t: t0 + 5 * day, method: "beacon" },
+  ]);
+  assert.deepEqual(earlierMethods(switched, "beacon"), { since: t0 + 5 * day, seconds: 5 * day, methods: ["tcp"] });
+  assert.equal(earlierMethods(switched, "tcp"), undefined, "the series does not end on that method");
+  assert.equal(earlierMethods(base([{ t: t0 - day, method: "beacon" }]), "beacon"), undefined, "one method measured the whole window");
+  // Auto's 24 hour retry: ICMP, then TCP, then ICMP again; the window reads ICMP now and TCP measured part of it.
+  const retried = base([
+    { t: t0, method: "icmp" },
+    { t: t0 + day, method: "tcp" },
+    { t: t0 + 2 * day, method: "icmp" },
+  ]);
+  assert.deepEqual(earlierMethods(retried, "ICMP"), { since: t0 + 2 * day, seconds: 2 * day, methods: ["tcp"] });
 });

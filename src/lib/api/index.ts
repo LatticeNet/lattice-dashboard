@@ -62,6 +62,10 @@ import type {
   MonitorUpdateInput,
   MonitorView,
   MonitorWindow,
+  BeaconPlanRequest,
+  BeaconPlanResponse,
+  BeaconRotateResponse,
+  BeaconView,
   PathSeriesQuery,
   PathSeriesResponse,
   PathsResponse,
@@ -379,6 +383,18 @@ export const api = {
     // ddns, groups, …) without mutating anything (mutated=false).
     deletePlan: (node_id: string) =>
       http.post<NodeDeletePlanView>("/api/nodes/delete/plan", { node_id }),
+    /**
+     * The measurement beacon (design 29 D3, D12). The read needs monitor:read
+     * on the node and answers 404 from a server before M2b, which the node
+     * page reads as "no beacon here", never as an error. A plan files a
+     * pending node.beacon approval (409 with `findings` when a finding blocks
+     * it); rotate moves the node's key to a new epoch and is audited.
+     */
+    beacon: {
+      get: (node_id: string, opts?: RequestOptions) => http.get<BeaconView>("/api/nodes/beacon", { node_id }, opts),
+      plan: (input: BeaconPlanRequest) => http.post<BeaconPlanResponse>("/api/nodes/beacon/plan", input),
+      rotate: (node_id: string) => http.post<BeaconRotateResponse>("/api/nodes/beacon/rotate", { node_id }),
+    },
     // Hard-delete the node and cascade-clean every dependent record. Irreversible;
     // returns the applied cleanup counts (mutated=true).
     delete: (node_id: string) =>

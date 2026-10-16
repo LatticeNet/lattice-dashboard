@@ -18,7 +18,7 @@
  * the path reads in usePathsData) and the editors, so Overview and Paths can
  * open the path set or a new check without leaving for Checks first.
  */
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
@@ -54,7 +54,8 @@ import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
 import { DEFAULT_WINDOW, LEGACY_WINDOWS, MONITORING_LAYERS, legacyMonitoringRedirect, legacyWindow, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
-import { serverSpeaksM2a } from "./checkRulesModel";
+import { isReachabilityCheck } from "./beaconModel";
+import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
 
 const auth = useAuthStore();
@@ -65,8 +66,19 @@ const canReadMonitors = computed(() => auth.can("monitor:read"));
 const canReadNodes = computed(() => auth.can("node:read"));
 const canAdminMonitors = computed(() => auth.can("monitor:admin"));
 
+// A beacon's reachability check (design 29 D12) is neither the operator's check nor a path: the node page's Beacon
+// card shows its verdict, and nothing here lists it. It still sends packets, so the editor's budget counts it
+// as the server does (monitorPacketLoad): `allMonitors` keeps it for that.
+const allMonitors = shallowRef<MonitorView[]>([]);
 const monitorsQuery = useAsyncData(
-  (signal) => (canReadMonitors.value ? api.monitors.list({ signal }).then((r) => unwrap(r, "monitors")) : Promise.resolve([] as MonitorView[])),
+  (signal) =>
+    canReadMonitors.value
+      ? api.monitors.list({ signal }).then((r) => {
+          const all = unwrap(r, "monitors");
+          allMonitors.value = all;
+          return all.filter((m) => !isReachabilityCheck(m));
+        })
+      : Promise.resolve([] as MonitorView[]),
   { pollInterval: 10000, immediate: canReadMonitors.value },
 );
 const nodesQuery = useAsyncData(
@@ -350,6 +362,8 @@ const plan = computed(() => data.planQuery.data.value);
  * paths route: a server without it is offered nothing it cannot take.
  */
 const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
+/** Whether it speaks M2b, the beacon, read the same way (checkRulesModel.serverSpeaksM2b). */
+const m2b = computed(() => serverSpeaksM2b(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
 /** A source's agent version, said on a path whose agent is too old. */
 const agentOf = (id: string) => (nodesQuery.data.value ?? []).find((n) => n.id === id)?.agent_version;
 const shortestIntervalSec = computed(() => {
@@ -482,7 +496,8 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :can-read-nodes="canReadNodes"
       :with-alert="data.source.value === 'paths'"
       :m2a="m2a && data.source.value === 'paths'"
-      :monitors="monitorsQuery.data.value ?? []"
+      :m2b="m2b && data.source.value === 'paths'"
+      :monitors="allMonitors"
       :plan="plan"
       @close="editorOpen = false; backToSheet()"
       @saved="onCheckSaved"
@@ -494,6 +509,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :plan="plan"
       :nodes="nodes"
       :m2a="m2a && data.source.value === 'paths'"
+      :m2b="m2b && data.source.value === 'paths'"
       @close="pathSetOpen = false; backToSheet()"
       @saved="(next) => { data.planQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"

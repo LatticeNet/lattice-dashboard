@@ -27,6 +27,12 @@
  * `?incidents=some` gives the Keepalive layer, Home and the node pages their
  * incidents, maintenance windows and loop health (dev/keepaliveFixture.ts);
  * acknowledging, snoozing and editing windows change the in-memory state.
+ * `?m2b=1` answers as a design 29 M2b server (dev/beaconShapes.ts): the
+ * beacon routes answer, nodes report beacon facts, and plans and rotations
+ * change the in-memory state; without it those routes answer 404, as a
+ * server before M2b does. `?fail=beacon` fails the beacon read, `?deny=beacon`
+ * refuses it (403), `?deny=beaconplan` refuses a plan (403), `?deny=approvals`
+ * refuses the companion's approval read, and `?beaconMs=` slows the read.
  * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
  * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
  * reads, and saving the probe settings recomputes the plan by the server's rule.
@@ -50,7 +56,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
+import type { AuditEvent, BeaconPlanRequest, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
 import { canonicalHeaderName, monitorOrigin } from "@/views/fleet/checkRulesModel";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
@@ -79,6 +85,8 @@ import {
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
 import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, probeFacts, rollupsFor, seriesFor } from "./latencyFixture";
 import { lineChains } from "./topologyFixture";
+import { M2B, beaconShape, runsBeaconClient } from "./beaconShapes";
+import { appliedBeaconApproval, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
 import { PATHS_SHAPE, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
@@ -161,6 +169,10 @@ const principal: Principal = {
     "inventory:admin",
     "monitor:read",
     "monitor:admin",
+    // A beacon plan needs these beside monitor:admin and node:admin (design 29 D12); ?drop= takes them away.
+    "network:plan",
+    "network:apply",
+    "netguard:admin",
     "ddns:admin",
     "sshguard:admin",
     "notify:admin",
@@ -175,7 +187,9 @@ const principal: Principal = {
 // cd-hs-sh joins only on latency renders; every node, it included, carries
 // the keepalive state and loop health the incidents fixture gives it.
 let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : []), ...manyNodes(), ...EXTRA_NODES].map((node, index) => {
-  const shaped = { ...node, ...keepaliveNodeState(node), ...probeFacts(node) };
+  // A node whose beacon binds a private address (NAT) reports that address as its primary interface's.
+  const bind = M2B ? beaconShape(node.name).bind : undefined;
+  const shaped = { ...node, ...(bind ? { internal_ip: bind } : {}), ...keepaliveNodeState(node), ...probeFacts(node) };
   return { ...shaped, loop_health: loopHealthFor(shaped, index) };
 });
 
@@ -267,6 +281,44 @@ function pathsLatest(monitorId: string) {
 }
 const pathPlan = () => planFor(latency.config, latency.stored);
 
+/** The sources that use a target's beacon now: the path set's beacon pairs and the beacon checks naming it, if their agents run the client. */
+function currentBeaconSources(targetId: string): string[] {
+  const runs = (id: string) => runsBeaconClient(nodes.find((n) => n.id === id)?.name);
+  // D12: every path set source whose method for the target is auto or beacon, with the pair on, whichever method Auto picked.
+  const setting = (source: string) => latency.config.source_methods?.[source] || latency.config.method || "tcp";
+  const fromPlan = pathPlan()
+    .pairs.filter((p) => p.target === targetId && p.enabled && latency.config.enabled && ["auto", "beacon"].includes(setting(p.source)))
+    .map((p) => p.source);
+  const fromChecks = monitors.filter((m) => m.type === "beacon" && m.enabled && m.target_node === targetId).flatMap((m) => m.node_ids ?? []);
+  return [...new Set([...fromPlan, ...fromChecks])].filter(runs).sort();
+}
+
+function reachabilityCheck(): MonitorView {
+  const target = nodes.find((n) => n.name === "[cd]-gomami-hk-turin-mini");
+  const at = new Date(Date.now() - 40_000).toISOString();
+  return {
+    id: `mon_beaconr_${target?.id ?? "node_012"}`,
+    name: `Beacon reachability of ${target?.name ?? "gomami"}`,
+    type: "beacon",
+    target: `${target?.public_ip ?? "203.0.113.21"}:45509`,
+    target_node: target?.id,
+    packets: 3,
+    interval_sec: 60,
+    timeout_sec: 2,
+    node_ids: ["node_sh"],
+    enabled: true,
+    managed_by: "beacon",
+    alert: "off",
+    latest: [{ node_id: "node_sh", at, success: false, error: "no reply within 2s", fail_streak: 4, since: at, sent: 3, lost: 3 }],
+  };
+}
+
+function beaconNode(nodeId: string) {
+  const node = nodes.find((n) => n.id === nodeId);
+  if (!node) throw new ApiError(404, "not_found", "node not found");
+  return node;
+}
+
 interface AuditParams {
   action?: string;
   decision?: string;
@@ -329,6 +381,27 @@ export const api = {
   },
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
+    beacon: {
+      get: (nodeId: string) =>
+        !M2B ? missingRoute("/api/nodes/beacon") : answer("beacon", () => beaconViewFor(beaconNode(nodeId), nodes, currentBeaconSources(nodeId)), Number(PARAMS.get("beaconMs")) || LATENCY_MS),
+      plan: async (input: BeaconPlanRequest) => {
+        if (!M2B) return missingRoute("/api/nodes/beacon/plan");
+        await delay(undefined, 260);
+        // ?deny=beaconplan: a source of the plan is a node this session may not read (D12).
+        if (DENY.has("beaconplan")) throw new ApiError(403, "capability_denied", "forbidden: a source of this beacon is a node this token may not read");
+        const outcome = await planBeacon(input, beaconNode(input.node_id), nodes, currentBeaconSources(input.node_id));
+        // The server answers a blocked plan with its findings beside the error, as a plain string.
+        if (!outcome.ok) throw new ApiError(outcome.status, String(outcome.status), outcome.message, undefined, outcome.findings ? { error: outcome.message, findings: outcome.findings } : undefined);
+        return outcome.response;
+      },
+      rotate: async (nodeId: string) => {
+        if (!M2B) return missingRoute("/api/nodes/beacon/rotate");
+        await delay(undefined, 320);
+        const outcome = rotateBeacon(beaconNode(nodeId));
+        if (!outcome.ok) throw new ApiError(409, "409", outcome.message);
+        return { node_id: nodeId, epoch: outcome.epoch };
+      },
+    },
     geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     // ?history=empty|disabled|unavailable|gaps shapes the node page's History card (dev/systemFixture.ts).
     history: (nodeId: string, range: MetricsRange) => {
@@ -393,6 +466,13 @@ export const api = {
         return { pending, approved: 0, stale: 0, applied: 1144, rejected: 207, dismissed: 0, total: 1351 + pending };
       }),
     list: () => answer("approvals", () => ({ approvals: [], total: 0, limit: 50, offset: 0 })),
+    // The applied plan of a beacon, which the Beacon card reads for its NetGuard task (?deny=approvals refuses it).
+    get: (id: string) =>
+      answer("approvals", () => {
+        const approval = appliedBeaconApproval(id, nodes);
+        if (!approval) throw new ApiError(404, "not_found", "approval not found");
+        return approval;
+      }),
   },
   tasks: {
     counts: () => answer("counts", () => taskCounts()),
@@ -559,6 +639,8 @@ export const api = {
           ...(PARAMS.has("latency") || PARAMS.has("paths")
             ? generatedLatencyMonitors(planFor(latency.config, latency.stored)).map((m) => (PARAMS.has("paths") ? { ...m, latest: pathsLatest(m.id) } : m))
             : []),
+          // A beacon's reachability check (design 29 D12), still running and failing: the console must list it nowhere.
+          ...(M2B && PARAMS.has("paths") ? [reachabilityCheck()] : []),
         ],
       })),
     // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.

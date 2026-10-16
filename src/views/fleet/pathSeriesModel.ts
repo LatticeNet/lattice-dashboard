@@ -305,6 +305,21 @@ export function methodMarkers(series: PathSeries): MethodSwitch[] {
 }
 
 /**
+ * What else measured the window when the method switched inside it, so the
+ * window's figures are not read as the current method's alone: the last
+ * switch to the current method, the span before it, and the methods that
+ * ran then. Undefined when one method measured the whole window, or the
+ * series ends on another method.
+ */
+export function earlierMethods(series: PathSeries, current: string): { since: number; seconds: number; methods: string[] } | undefined {
+  const inside = methodMarkers(series).filter((m) => m.t > series.from && m.t <= series.to);
+  const last = inside[inside.length - 1];
+  if (!last || last.to.toLowerCase() !== current.toLowerCase()) return undefined;
+  const methods = [...new Set([inside[0]!.from, ...inside.slice(0, -1).map((m) => m.to)])].filter((m) => m !== last.to);
+  return methods.length ? { since: last.t, seconds: last.t - series.from, methods } : undefined;
+}
+
+/**
  * The method in force at a time: the bucket's own, else the last start at or
  * before it, else the first start (before any data, the first method is
  * the one that ran), else the path's current method.

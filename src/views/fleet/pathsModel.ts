@@ -31,6 +31,7 @@ import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState"
 import type { QueryField, QuerySchema } from "@/lib/query/engine";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
+import { isReachabilityCheck } from "@/views/fleet/beaconModel";
 import { isTarget, latencySources, quietAfterMs } from "@/views/fleet/latencyModel";
 
 /* ------------------------------------------------------------------ */
@@ -210,6 +211,15 @@ export const UNKNOWN_REASONS = [
   "icmp_filtered",
   "beacon_not_enabled",
   "firewall_pending",
+  // Design 29 M2b (D12): the beacon's own reasons.
+  "beacon_source_pending",
+  "refused_by_node",
+  "beacon_not_listening",
+  "beacon_filtered",
+  "beacon_stale",
+  "beacon_unknown_epoch",
+  "beacon_rate_limited",
+  "beacon_no_key",
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
 
@@ -235,7 +245,6 @@ const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
   quiet: "results_stopped",
   method_unsupported: "agent_too_old",
   unsupported_method: "agent_too_old",
-  refused_by_node: "method_refused",
   beacon_off: "beacon_not_enabled",
 };
 
@@ -337,6 +346,8 @@ export interface PathItem {
   sourceName: string;
   targetNode?: string;
   targetName: string;
+  /** The target node's own name, also on an operator check's path, whose row is named by the check. */
+  targetNodeName?: string;
   country?: string;
   region: RegionKey;
   target: string;
@@ -440,6 +451,8 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
   const paths: PathItem[] = [];
   const cells = new Map<string, PathItem>();
   for (const raw of response.paths ?? []) {
+    // A beacon's reachability check is not a path (design 29 D12); the server leaves it out, and so does the console.
+    if (isReachabilityCheck({ monitor_id: raw.monitor_id })) continue;
     const source = raw.source ?? "";
     if (!seenSources.has(source)) {
       seenSources.add(source);
@@ -465,6 +478,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       sourceName: sources.find((s) => s.nodeId === source)?.name ?? source,
       targetNode: raw.target_node || undefined,
       targetName: row.kind === "check" ? row.name : row.name,
+      targetNodeName: raw.target_node ? targetNodeView?.name || names.nodeName?.(raw.target_node) || (row.kind === "node" ? row.name : undefined) : undefined,
       country: targetNodeView?.country ?? row.country,
       region: regionOf(targetNodeView?.country ?? row.country),
       target: raw.target ?? "",

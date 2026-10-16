@@ -56,6 +56,7 @@ export const APPROVAL_KINDS = [
   "sshGuardConfirm",
   "witnessConfigure",
   "witnessRemove",
+  "nodeBeacon",
 ] as const;
 
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
@@ -110,6 +111,9 @@ export function approvalKind(source: ApprovalKindSource): ApprovalKind | null {
       if (prefix === "sshguard-arm") return "sshGuardArm";
       if (prefix === "sshguard-confirm") return "sshGuardConfirm";
       return null;
+    case "beacon":
+      // Design 29 D12: a node.beacon plan opens, changes or closes a node's measurement beacon.
+      return prefix === "node.beacon" ? "nodeBeacon" : null;
     case "controlplane-witness":
       if (prefix === "witness-configure") return "witnessConfigure";
       if (prefix === "witness-remove") return "witnessRemove";

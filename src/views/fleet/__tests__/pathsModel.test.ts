@@ -418,3 +418,27 @@ test("each source's methods: one names the column, several put the method on eac
   assert.deepEqual(by.get("mk"), ["icmp", "tcp"]);
   assert.equal(by.has("old"), false, "a path from before M2a names no method");
 });
+
+test("the beacon's reasons are known codes, and refused_by_node is its own reason, not a refused method", () => {
+  for (const code of ["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "beacon_not_listening", "beacon_filtered", "beacon_stale", "beacon_unknown_epoch", "beacon_rate_limited", "beacon_no_key"]) {
+    assert.equal(reasonCode(code), code, code);
+    assert.equal(isChosenUnknown(code), false, `${code} is not a pause`);
+  }
+  assert.equal(reasonCode("refused by node"), "refused_by_node");
+  assert.equal(reasonCode("method_refused"), "method_refused");
+});
+
+test("a beacon's reachability check is not a path: the matrix leaves it out", () => {
+  const m = buildPathsMatrix({
+    window: "1h",
+    sources: [{ node_id: "sh", name: "cd-hs-sh" }],
+    targets: [{ node_id: "jp", name: "xuezhang-jp-nat", country: "JP" }],
+    paths: [
+      { source: "sh", target_node: "jp", target: "203.0.113.12:50231", monitor_id: "mon_latb_jp", managed: true, method: "beacon", state: "up", p50_ms: 66, samples: 60, expected: 60 },
+      { source: "sh", target_node: "jp", target: "203.0.113.12:50231", monitor_id: "mon_beaconr_jp", managed: false, method: "beacon", state: "up", p50_ms: 66, samples: 1, expected: 1 },
+    ],
+  });
+  assert.deepEqual(m.paths.map((p) => p.monitorId), ["mon_latb_jp"]);
+  assert.equal(m.counts.paths, 1);
+  assert.equal(m.rows.length, 1, "no row for the reachability check");
+});

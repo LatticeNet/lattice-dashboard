@@ -93,6 +93,7 @@ export default {
         sshGuardConfirm: "Confirm the SSH Guard arm",
         witnessConfigure: "Set up the control-plane witness",
         witnessRemove: "Remove the control-plane witness",
+        nodeBeacon: "Open, change or close a node's beacon",
         generic: "{action} ({plugin})",
       },
       /** An agent update plan's stale reason, read from the server's English (approvalsModel.describeAgentUpdateStale). */

@@ -15,15 +15,15 @@ import { RouterLink } from "vue-router";
 
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { Badge } from "@/components/ui/badge";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
-import { methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
-import { isChosenUnknown, runEchoes, runRows } from "./pathsModel";
+import { earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
 import {
   availability,
   formatDeltaLoss,
@@ -69,7 +69,7 @@ const props = defineProps<{
 const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
-const { whyText, stateLabel, windowLong, reasonText, reasonShort } = usePathsCopy();
+const { whyText, stateLabel, windowLong, reasonText, reasonShort, methodName } = usePathsCopy();
 /** Agent updates needs node:admin; without it the sheet names the version and links nowhere. */
 const canUpdateAgents = computed(() => useAuthStore().can("node:admin"));
 
@@ -78,6 +78,10 @@ const unmeasured = computed(() => {
   const p = props.path;
   return p?.state === "unknown" && p.reason && !isChosenUnknown(p.reason) ? p.reason : undefined;
 });
+
+/** Beacon reasons the target's Beacon card explains and fixes: no beacon, not admitted, refused, not listening, filtered. */
+const BEACON_ON_TARGET = new Set(["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "beacon_not_listening", "beacon_filtered"]);
+const beaconFixOnTarget = computed(() => BEACON_ON_TARGET.has(reasonCode(unmeasured.value) ?? ""));
 
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */
@@ -176,6 +180,27 @@ const figuresCaption = computed(() => {
   return hasDelta ? t("fleet.monitoring.paths.stats.windowDelta", { window: windowLong(props.window) }) : t("fleet.monitoring.paths.stats.window", { window: windowLong(props.window) });
 });
 
+/**
+ * The window's figures span every method that measured it. After a switch
+ * (Auto moving a NAT node from TCP to Beacon, or back to ICMP after its
+ * 24 hour retry) the sheet says how much of the window the earlier method
+ * measured, so a loss from before the switch is not read as the current
+ * method's.
+ */
+const mixedNote = computed(() => {
+  const s = series.value;
+  const current = props.path?.method;
+  if (zoom.value || !s || !current) return "";
+  const mix = earlierMethods(s, current);
+  if (!mix) return "";
+  return t("fleet.monitoring.paths.stats.mixed", {
+    span: formatDuration(mix.seconds),
+    methods: mix.methods.map(methodName).join(", "),
+    method: methodName(current),
+    age: formatRelativeTime(mix.since * 1000),
+  });
+});
+
 const tone = computed<"success" | "destructive" | "muted">(() => (props.path?.state === "up" ? "success" : props.path?.state === "down" ? "destructive" : "muted"));
 
 /* ---- Runs ---- */
@@ -260,6 +285,13 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
         <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
       </p>
       <p v-else-if="unmeasured === 'icmp_filtered'" class="text-xs text-muted-foreground" data-testid="path-next">{{ $t('fleet.monitoring.paths.sheet.filteredNext') }}</p>
+      <!-- A beacon reason whose fix is on the target: its Beacon card on the node page (design 29 D12). -->
+      <p v-else-if="beaconFixOnTarget && path?.targetNode" class="text-xs text-muted-foreground" data-testid="path-next">
+        <RouterLink
+          :to="{ name: 'node-detail', params: { id: path.targetNode }, hash: '#node-beacon' }"
+          class="font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+        >{{ $t('fleet.monitoring.paths.sheet.beaconNext', { name: path.targetNodeName || path.targetNode }) }}</RouterLink>
+      </p>
     </div>
 
     <p
@@ -281,6 +313,7 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
           @update:model-value="(w) => emit('window', w)"
         />
       </div>
+      <p v-if="mixedNote" class="text-xs break-words text-muted-foreground" data-testid="path-stats-mixed">{{ mixedNote }}</p>
       <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
         <div v-for="f in figures" :key="f.key" class="min-w-0">
           <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>

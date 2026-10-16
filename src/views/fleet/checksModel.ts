@@ -22,6 +22,7 @@ import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorT
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
 import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
+import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
 
 import {
@@ -35,11 +36,26 @@ import {
   targetError,
 } from "@/views/fleet/monitorTypeModel";
 
-/** The kinds a check can be created as: M1's, and icmp on an M2a server (beacon arrives with M2b). */
-export const CHECK_KINDS: readonly MonitorType[] = ["tcp", "icmp", "http", "tls"];
+/**
+ * The kinds a check can be created as: M1's, icmp on an M2a server, and
+ * beacon on an M2b server, first because it is the method design 29 D2
+ * prefers for a node.
+ */
+export const CHECK_KINDS: readonly MonitorType[] = ["beacon", "tcp", "icmp", "http", "tls"];
 
-export function offeredKinds(m2a: boolean): MonitorType[] {
-  return CHECK_KINDS.filter((k) => m2a || k !== "icmp");
+export function offeredKinds(m2a: boolean, m2b = false, canReadNodes = true): MonitorType[] {
+  // A beacon check names its target node and nothing else, so a session that cannot read the node list cannot write one.
+  return CHECK_KINDS.filter((k) => (k === "icmp" ? m2a : k === "beacon" ? m2a && m2b && canReadNodes : true));
+}
+
+/** Kinds that send several packets a run, 200 ms apart, and report loss (icmp, beacon). */
+export function multiPacket(kind: string): boolean {
+  return kind === "icmp" || kind === "beacon";
+}
+
+/** A beacon check always names its node and never an address (design 29 D12). */
+export function nodeOnly(kind: string): boolean {
+  return kind === "beacon";
 }
 
 /** lattice-sdk MonitorPacketsDefault, MonitorPacketsMax, MonitorPacketSpacingMs, MonitorPacketsPerSecondMax. */
@@ -48,9 +64,9 @@ export const PACKETS_MAX = 10;
 export const PACKET_SPACING_MS = 200;
 export const PACKETS_PER_SECOND_MAX = 2;
 
-/** Kinds whose target may be a node, resolved by the server (design 29 D11). */
+/** Kinds whose target may be a node, resolved by the server (design 29 D11, D12). */
 export function takesNodeTarget(kind: string): boolean {
-  return kind === "icmp" || kind === "tcp";
+  return kind === "icmp" || kind === "tcp" || kind === "beacon";
 }
 
 /** Bounds the server enforces on a check. */
@@ -179,7 +195,7 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     type,
     name: "",
     target: "",
-    targetMode: "address",
+    targetMode: nodeOnly(type) ? "node" : "address",
     targetNode: "",
     packets: PACKETS_DEFAULT,
     expectStatus: "",
@@ -205,7 +221,7 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     type,
     name: monitor.name ?? "",
     target: monitor.target ?? "",
-    targetMode: monitor.target_node && takesNodeTarget(type) ? "node" : "address",
+    targetMode: (monitor.target_node && takesNodeTarget(type)) || nodeOnly(type) ? "node" : "address",
     targetNode: monitor.target_node ?? "",
     packets: monitor.packets && monitor.packets > 0 ? monitor.packets : PACKETS_DEFAULT,
     expectStatus: monitor.expect_status ?? "",
@@ -223,11 +239,12 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
 
 /** Whether the draft names a node as its target. */
 export function usesNodeTarget(draft: Pick<CheckDraft, "type" | "targetMode">): boolean {
-  return draft.targetMode === "node" && takesNodeTarget(draft.type);
+  return nodeOnly(draft.type) || (draft.targetMode === "node" && takesNodeTarget(draft.type));
 }
 
-/** A name the form offers until the operator types one: "HTTP status.example.com", or "ICMP xuezhang-jp-nat" for a node. */
+/** A name the form offers until the operator types one: "HTTP status.example.com", "ICMP xuezhang-jp-nat", or "Beacon to xuezhang-jp-nat" as the server names its own. */
 export function suggestName(type: string, target: string, nodeName?: string): string {
+  if (nodeName && type === "beacon") return `Beacon to ${nodeName}`.slice(0, 80);
   if (nodeName) return `${type.toUpperCase()} ${nodeName}`.slice(0, 80);
   const value = target.trim();
   if (!value) return "";
@@ -278,7 +295,7 @@ export interface DraftRules {
   newCheck?: boolean;
 }
 
-/** The longest an icmp run takes, in seconds: every echo but the last spaced out, then the last one's timeout. */
+/** The longest a multi-packet run (icmp, beacon) takes, in seconds: every packet but the last spaced out, then the last one's timeout. */
 export function icmpRunSeconds(packets: number, timeoutSec: number): number {
   return ((Math.max(1, packets) - 1) * PACKET_SPACING_MS) / 1000 + timeoutSec;
 }
@@ -297,7 +314,7 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
   const timeout = Number(draft.timeoutSec);
   if (!Number.isInteger(interval) || interval < CHECK_MIN_INTERVAL_SEC || interval > CHECK_MAX_INTERVAL_SEC) out.push("interval");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > CHECK_MAX_TIMEOUT_SEC) out.push("timeout");
-  if (draft.type === "icmp") {
+  if (multiPacket(draft.type)) {
     const packets = Number(draft.packets);
     if (!Number.isInteger(packets) || packets < 1 || packets > PACKETS_MAX) out.push("packets");
     else if (!out.includes("interval") && !out.includes("timeout") && icmpRunSeconds(packets, timeout) >= interval) out.push("runLength");
@@ -387,7 +404,7 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft, options: Bo
   if (name !== before.name) body.name = name;
   if (Number(draft.intervalSec) !== before.intervalSec) body.interval_sec = Number(draft.intervalSec);
   if (Number(draft.timeoutSec) !== before.timeoutSec) body.timeout_sec = Number(draft.timeoutSec);
-  if (draft.type === "icmp" && Number(draft.packets) !== before.packets) body.packets = Number(draft.packets);
+  if (multiPacket(draft.type) && Number(draft.packets) !== before.packets) body.packets = Number(draft.packets);
   if (draft.type === "http" && options.m2a) {
     // Compared by meaning: an empty field and "200-399" are the same set.
     const next = canonicalStatusSet(draft.expectStatus);
@@ -421,7 +438,7 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean, options: Body
   // A node target is resolved by the server; the address it resolves to is not the operator's to write.
   if (usesNodeTarget(draft)) base.target_node = draft.targetNode;
   else base.target = draft.target.trim();
-  if (draft.type === "icmp") base.packets = Number(draft.packets);
+  if (multiPacket(draft.type)) base.packets = Number(draft.packets);
   if (draft.type === "http" && options.m2a) {
     if (draft.expectStatus.trim()) base.expect_status = canonicalStatusSet(draft.expectStatus) ?? draft.expectStatus.trim();
     const headers = headersForCreate(draft.headers);
@@ -475,7 +492,8 @@ export function sourcePaused(monitor: Pick<MonitorView, "paused_node_ids">, sour
 /* ------------------------------------------------------------------ */
 
 export type NodeTargetResolution =
-  | { state: "resolved"; endpoint: string }
+  /** `note` says why the target answers nobody now although the server takes it (a beacon refused, too old or not listening). */
+  | { state: "resolved"; endpoint: string; note?: string }
   | { state: "refused"; reason: string }
   /** The server resolves it when the check is saved; the console cannot tell the line port beforehand. */
   | { state: "onSave" };
@@ -489,14 +507,23 @@ export type NodeTargetResolution =
  */
 export function resolveNodeTarget(
   kind: string,
-  node: Pick<Node, "public_ip"> | undefined,
-  planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target">,
+  node: Pick<Node, "public_ip" | "beacon"> | undefined,
+  planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target" | "beacon_target">,
   setMethod?: string,
 ): NodeTargetResolution {
   if (kind === "icmp") {
     // The server pings only a public IPv4 the destination rule accepts (latencyPublicIPv4).
     const ip = publicIPv4(planNode?.icmp_target || node?.public_ip);
     return ip ? { state: "resolved", endpoint: ip } : { state: "refused", reason: "no_public_ipv4" };
+  }
+  if (kind === "beacon") {
+    // The server resolves a beacon check to the node's advertised endpoint, which the plan carries while an applied plan enables it.
+    if (!planNode?.beacon_target) return { state: "refused", reason: "no_beacon" };
+    // The server saves a check to any enabled beacon; one whose agent refuses it, has no responder or has no socket
+    // answers no source until that changes, which the note says (and the picker does not offer the first two).
+    const block = beaconTargetBlock(node);
+    const note = block === "refused_by_node" ? "beacon_refused" : block === "agent_too_old" ? "beacon_agent_too_old" : block;
+    return note ? { state: "resolved", endpoint: planNode.beacon_target, note } : { state: "resolved", endpoint: planNode.beacon_target };
   }
   if (kind === "tcp") {
     if (planNode?.endpoint && planNode.target !== "not_probeable") return { state: "resolved", endpoint: planNode.endpoint };
@@ -533,6 +560,8 @@ export function unsupportedSources(draft: Pick<CheckDraft, "type" | "assignAll" 
   return out;
 }
 
+type BudgetMonitor = Pick<MonitorView, "id" | "type" | "target" | "target_node" | "enabled" | "assign_all" | "node_ids" | "paused_node_ids" | "packets" | "interval_sec">;
+
 /**
  * The packets per second the busiest source would send to one address, this
  * draft included: every other enabled icmp check that runs on the source and
@@ -542,16 +571,42 @@ export function icmpBudget(
   address: string,
   sources: readonly string[],
   draft: Pick<CheckDraft, "packets" | "intervalSec">,
-  monitors: readonly Pick<MonitorView, "id" | "type" | "target" | "enabled" | "assign_all" | "node_ids" | "paused_node_ids" | "packets" | "interval_sec">[],
+  monitors: readonly BudgetMonitor[],
+  editingId?: string,
+): { pps: number; source?: string } {
+  return packetBudget("icmp", address, sources, draft, monitors, editingId);
+}
+
+/**
+ * The same budget for a beacon check (D12): per source and target node, the
+ * packets per second of every enabled beacon check to that node together,
+ * the generated mon_latb_ ones included, may not exceed 2.
+ */
+export function beaconBudget(
+  targetNode: string,
+  sources: readonly string[],
+  draft: Pick<CheckDraft, "packets" | "intervalSec">,
+  monitors: readonly BudgetMonitor[],
+  editingId?: string,
+): { pps: number; source?: string } {
+  return packetBudget("beacon", targetNode, sources, draft, monitors, editingId);
+}
+
+function packetBudget(
+  kind: "icmp" | "beacon",
+  key: string,
+  sources: readonly string[],
+  draft: Pick<CheckDraft, "packets" | "intervalSec">,
+  monitors: readonly BudgetMonitor[],
   editingId?: string,
 ): { pps: number; source?: string } {
   const own = Number(draft.packets) / Math.max(1, Number(draft.intervalSec) || 1);
   let worst = { pps: own, source: sources[0] as string | undefined };
-  if (!address) return worst;
+  if (!key) return worst;
   for (const source of sources) {
     let pps = own;
     for (const m of monitors) {
-      if (m.id === editingId || m.type !== "icmp" || !m.enabled || m.target !== address) continue;
+      if (m.id === editingId || m.type !== kind || !m.enabled || (kind === "icmp" ? m.target : m.target_node) !== key) continue;
       if (!m.assign_all && !(m.node_ids ?? []).includes(source)) continue;
       if ((m.paused_node_ids ?? []).includes(source)) continue;
       pps += (m.packets && m.packets > 0 ? m.packets : PACKETS_DEFAULT) / Math.max(1, m.interval_sec || 1);
@@ -561,7 +616,7 @@ export function icmpBudget(
   return worst;
 }
 
-/** When switching method, carry the assignment over: tls takes none and wants an hourly cadence. */
+/** When switching method, carry the assignment over: tls takes none and wants an hourly cadence; a beacon always targets a node. */
 export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pick<CheckDraft, "assignAll" | "nodeIds" | "intervalSec" | "timeoutSec">): { draft: CheckDraft; stash?: Pick<CheckDraft, "assignAll" | "nodeIds" | "intervalSec" | "timeoutSec"> } {
   if (next === draft.type) return { draft, stash };
   const toTls = isServerEvaluated(next);
@@ -574,7 +629,12 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
   }
   if (fromTls && !toTls) {
     const back = stash ?? { assignAll: true, nodeIds: [], intervalSec: AGENT_DEFAULT_INTERVAL_SEC, timeoutSec: AGENT_DEFAULT_TIMEOUT_SEC };
-    return { stash: undefined, draft: { ...draft, type: next, ...back, nodeIds: [...back.nodeIds] } };
+    return { stash: undefined, draft: { ...draft, type: next, ...back, nodeIds: [...back.nodeIds], targetMode: nodeOnly(next) ? "node" : draft.targetMode } };
   }
-  return { draft: { ...draft, type: next }, stash };
+  return { draft: { ...draft, type: next, targetMode: nodeOnly(next) ? "node" : draft.targetMode }, stash };
+}
+
+/** A note that keeps a node out of the target picker: its beacon cannot answer until the node itself changes. */
+export function unpickableNote(resolution: NodeTargetResolution | undefined): boolean {
+  return resolution?.state === "resolved" && (resolution.note === "beacon_refused" || resolution.note === "beacon_agent_too_old");
 }

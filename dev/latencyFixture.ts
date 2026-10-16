@@ -25,6 +25,13 @@
  * it), plan pairs name their method and reason, and plan nodes their ICMP
  * target. `?m2a=auto` also saves the path set on Auto, and on `?paths=three`
  * pins cd-volcengine-shanghai (an agent too old for ICMP) to ICMP.
+ *
+ * `?m2b=1` answers as a design 29 M2b server (dev/beaconShapes.ts), and
+ * implies `?m2a=1`: agents of this release also run the beacon client and
+ * report their responder, plan nodes carry the endpoint of an enabled
+ * beacon, and on Auto a pair goes by beacon where the target's plan admits
+ * the source and it listens. `?pin=beacon` pins cd-hs-sh to Beacon, so the
+ * matrix shows every reason a beacon path can read.
  */
 import type {
   LatencyBucket,
@@ -41,6 +48,7 @@ import type {
 } from "@/lib/api/index";
 
 import { HOUR, MINUTE, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
+import { M2B, beaconEndpoint, beaconListening, beaconShape, beaconSourceGate, beaconTargetGate, runsBeaconClient } from "./beaconShapes";
 
 export const LATENCY_SHAPE = (PARAMS.get("latency") ?? "one") as "one" | "three" | "defaults" | "nosource" | "off";
 export const SOURCE_ID = "node_sh";
@@ -63,18 +71,41 @@ const id = (name: string) => nodeByName(name)?.id ?? name;
 
 /* ---- Design 29 M2a: what each agent runs ---- */
 
-export const M2A = (PARAMS.get("m2a") ?? "") as "" | "1" | "auto";
+export const M2A = (PARAMS.get("m2a") ?? (M2B ? "1" : "")) as "" | "1" | "auto";
 /** Agents older than M2a: the server reads their methods as tcp and http. */
 const TOO_OLD = new Set(["[cd]-volcengine-shanghai", "[Metix]-mkcloud-hr-iplc"]);
 /** A host whose ping_group_range excludes the agent's group. */
 const ICMP_REFUSED = new Set(["[cd]-Oracle-KIX-arm"]);
 
 /** The probe facts an M2a server lists on a node: the effective methods, and the host's refusals. */
-export function probeFacts(node: Pick<Node, "name">): Pick<Node, "probe_methods" | "probe_refusals"> {
+export function probeFacts(node: Pick<Node, "name"> & Partial<Pick<Node, "public_ip">>): Pick<Node, "probe_methods" | "probe_refusals" | "beacon"> {
   if (!M2A) return {};
   if (TOO_OLD.has(node.name)) return { probe_methods: ["http", "tcp"] };
-  if (ICMP_REFUSED.has(node.name)) return { probe_methods: ["http", "tcp"], probe_refusals: { icmp: "icmp_not_permitted" } };
-  return { probe_methods: ["http", "icmp", "tcp"] };
+  const beacon = M2B ? ["beacon"] : [];
+  const facts: Pick<Node, "probe_methods" | "probe_refusals" | "beacon"> = ICMP_REFUSED.has(node.name)
+    ? { probe_methods: [...beacon, "http", "tcp"], probe_refusals: { icmp: "icmp_not_permitted" } }
+    : { probe_methods: [...beacon, "http", "icmp", "tcp"] };
+  if (M2B) facts.beacon = beaconFacts(node);
+  return facts;
+}
+
+/** What an M2b agent reports about its responder (model.BeaconFacts). */
+function beaconFacts(node: Pick<Node, "name"> & Partial<Pick<Node, "public_ip">>): Node["beacon"] {
+  const shape = beaconShape(node.name);
+  if (shape.agent === "none") return undefined;
+  if (shape.agent === "refused") return { responder: true, refusal: "refused_by_node", state: "refused" };
+  const bind = shape.bind ?? node.public_ip;
+  if (!shape.enabled) return { responder: true, state: "off" };
+  return {
+    responder: true,
+    state: shape.agent,
+    bind,
+    port: shape.port,
+    epoch: shape.agent === "listening" ? shape.epoch : undefined,
+    sources: (shape.approved ?? []).length,
+    last_auth_at: shape.agent === "listening" && (shape.approved ?? []).length ? iso(-12_000) : undefined,
+    error: shape.error,
+  };
 }
 
 /** Whether the node's agent predates M2a and so reports no methods. */
@@ -177,6 +208,7 @@ export function initialConfig(): { config: LatencyProbeConfig; stored: boolean }
       exclude_targets: [id("[cd]-mac-air")],
       disabled_pairs: [{ source: SOURCE_ID, target: id("[cd]-vultr-syd") }],
       ...(M2A === "auto" ? { method: "auto", ...(paths === "three" ? { source_methods: { [id("[cd]-volcengine-shanghai")]: "icmp" } } : {}) } : {}),
+      ...(PARAMS.get("pin") === "beacon" ? { method: M2A === "auto" ? "auto" : undefined, source_methods: { [SOURCE_ID]: "beacon" } } : {}),
     };
     return { config, stored: true };
   }
@@ -224,11 +256,16 @@ export function planFor(config: LatencyProbeConfig, stored: boolean): LatencyPro
     else if (!config.auto_targets) pn.target_reason = "auto_off";
     else if (r === "outside_mainland") [target, pn.target_reason] = [true, "auto"];
     else pn.target_reason = r === "mainland" ? "mainland" : "region_unknown";
+    // An enabled beacon's endpoint is on every node, a target or not (the server sets it before the target rule).
+    const bs = M2B ? beaconShape(node.name) : undefined;
+    if (bs?.enabled) pn.beacon_target = beaconEndpoint(bs, node.public_ip);
     if (!target) {
       planNodes.push(pn);
       continue;
     }
     const note = NOT_PROBEABLE[node.name];
+    const beaconId = `mon_latb_${node.id}`;
+    let beaconUsed = false;
     const monitorId = `mon_lat_${node.id}`;
     const icmpId = `mon_lati_${node.id}`;
     const ipv4 = M2A ? ipv4Of(node) : undefined;
@@ -243,9 +280,20 @@ export function planFor(config: LatencyProbeConfig, stored: boolean): LatencyPro
         // The planner's rule (design 29 D11): a pin over the path set's method; auto picks icmp where both ends can.
         const chosen = config.source_methods?.[sid] || config.method || "tcp";
         const refusal = icmpRefusal(byId.get(sid));
-        const method = chosen === "icmp" || (chosen === "auto" && !refusal && ipv4) ? "icmp" : "tcp";
+        // Design 29 D12: a pin to beacon never falls back; auto takes the beacon where the target's plan admits the source and it listens.
+        const sourceName = byId.get(sid)?.name ?? "";
+        const client = runsBeaconClient(sourceName);
+        const gate = bs ? beaconTargetGate(bs) || beaconSourceGate(bs, sourceName) : "beacon_not_enabled";
+        const byBeacon = chosen === "beacon" || (chosen === "auto" && client && !gate && !!bs && beaconListening(bs));
+        const method = byBeacon ? "beacon" : chosen === "icmp" || (chosen === "auto" && !refusal && ipv4) ? "icmp" : "tcp";
         pair.method = method;
-        if (method === "icmp") {
+        if (method === "beacon") {
+          const reason = !client ? "agent_too_old" : gate || undefined;
+          pair.monitor_id = beaconId;
+          pair.active = !reason && enabled && config.enabled;
+          if (reason && enabled) pair.reason = reason;
+          beaconUsed = true;
+        } else if (method === "icmp") {
           const reason = refusal ?? (ipv4 ? undefined : "not_probeable");
           pair.monitor_id = icmpId;
           pair.active = !reason && enabled && config.enabled;
@@ -260,6 +308,7 @@ export function planFor(config: LatencyProbeConfig, stored: boolean): LatencyPro
     }
     if (ipv4) pn.icmp_target = ipv4;
     if (icmpUsed) pn.icmp_monitor_id = icmpId;
+    if (beaconUsed && pn.beacon_target) pn.beacon_monitor_id = beaconId;
     if (note) {
       // A node with no TCP line is still a target for the sources that ping it.
       planNodes.push({ ...pn, target: active.length ? "probed" : "not_probeable", endpoint_note: note });
@@ -437,7 +486,27 @@ export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] 
         latest: [],
       } as MonitorView;
     });
-  return [...tcpGenerated(plan), ...icmp];
+  // The beacon checks of design 29 M2b, named as the server names them.
+  const beacon = plan.nodes
+    .filter((n) => n.beacon_monitor_id && n.beacon_target)
+    .map((n) => {
+      const sources = plan.pairs.filter((p) => p.target === n.node_id && p.active && p.monitor_id === n.beacon_monitor_id).map((p) => p.source);
+      return {
+        id: n.beacon_monitor_id!,
+        name: `Beacon to ${n.name}`,
+        type: "beacon",
+        target: n.beacon_target!,
+        target_node: n.node_id,
+        packets: 5,
+        interval_sec: plan.config.interval_sec,
+        timeout_sec: plan.config.timeout_sec,
+        node_ids: sources,
+        enabled: sources.length > 0,
+        managed_by: "latency",
+        latest: [],
+      } as MonitorView;
+    });
+  return [...tcpGenerated(plan), ...icmp, ...beacon];
 }
 
 function tcpGenerated(plan: LatencyProbePlan): MonitorView[] {

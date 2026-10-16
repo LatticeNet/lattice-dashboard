@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, withPathVerdict } from "./checksModel";
+import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, multiPacket, withPathVerdict } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -318,7 +318,7 @@ const settingsRows = computed(() => {
   if (!m) return [];
   const rows: { key: string; label: string; value: string; mono?: boolean; heading?: boolean }[] = [];
   if (m.target_node) rows.push({ key: "node", label: t("fleet.monitoring.checks.sheet.targetNode"), value: t("fleet.monitoring.checks.sheet.targetNodeValue", { name: nodeName(m.target_node), endpoint: m.target || t("common.misc.none") }) });
-  if (m.type === "icmp") rows.push({ key: "packets", label: t("fleet.monitoring.checks.editor.packets"), value: String(m.packets && m.packets > 0 ? m.packets : PACKETS_DEFAULT), mono: true });
+  if (multiPacket(m.type)) rows.push({ key: "packets", label: t(m.type === "beacon" ? "fleet.monitoring.checks.editor.packetsBeacon" : "fleet.monitoring.checks.editor.packets"), value: String(m.packets && m.packets > 0 ? m.packets : PACKETS_DEFAULT), mono: true });
   if (m.type === "http" && (m.expect_status !== undefined || m.headers?.length || m.secrets_origin)) {
     rows.push({ key: "status", label: t("fleet.monitoring.checks.editor.expectStatus.label"), value: m.expect_status || EXPECT_STATUS_DEFAULT, mono: true });
   }

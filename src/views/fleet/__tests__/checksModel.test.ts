@@ -25,11 +25,15 @@ import {
   suggestName,
   switchDraftKind,
   draftSources,
+  beaconBudget,
   icmpBudget,
   icmpRunSeconds,
+  multiPacket,
+  nodeOnly,
   offeredKinds,
   resolveNodeTarget,
   unsupportedSources,
+  unpickableNote,
   usesNodeTarget,
   withPathVerdict,
   type CheckDraft,
@@ -430,4 +434,61 @@ test("a check's sources: its own and every source its paths name, with how many 
   assert.deepEqual(checkSourceSummary(m, [{ source: "sh", state: "unknown", reason: "source_paused" }]).unmeasured, 0, "a pause is a choice, not a failure to measure");
   const fromLatest = icmpCheck({ node_ids: ["sh"], latest: [{ node_id: "sh", at: "", success: false, fail_streak: 0, since: "", reason: "icmp_not_permitted" }] });
   assert.equal(checkSourceSummary(fromLatest, []).unmeasured, 1, "without paths, the newest results say it");
+});
+
+/* ---- Beacon checks (design 29 M2b, D12) ---- */
+
+test("Beacon is offered on an M2b server only, first, as the method D2 prefers for a node", () => {
+  assert.deepEqual(offeredKinds(true, true), ["beacon", "tcp", "icmp", "http", "tls"]);
+  assert.deepEqual(offeredKinds(true, false), ["tcp", "icmp", "http", "tls"]);
+  assert.deepEqual(offeredKinds(false, true), ["tcp", "http", "tls"], "M2b without M2a is not a server that exists; nothing new is offered");
+  assert.deepEqual(offeredKinds(true, true, false), ["tcp", "icmp", "http", "tls"], "a beacon check names a node, so a session without node:read is not offered one");
+  assert.equal(multiPacket("beacon"), true);
+  assert.equal(nodeOnly("beacon"), true);
+  assert.equal(nodeOnly("icmp"), false);
+});
+
+test("a beacon check always targets a node and resolves to its advertised endpoint", () => {
+  const draft = emptyDraft("beacon");
+  assert.equal(draft.targetMode, "node");
+  assert.equal(usesNodeTarget({ type: "beacon", targetMode: "address" }), true, "no address mode exists for a beacon");
+  const listening = { public_ip: "203.0.113.12", beacon: { responder: true, state: "listening" } };
+  assert.deepEqual(resolveNodeTarget("beacon", listening, { beacon_target: "203.0.113.12:50231" }), { state: "resolved", endpoint: "203.0.113.12:50231" });
+  // The server saves a check to any enabled beacon; one that cannot answer carries a note, and the first two are not offered.
+  const noted = (beacon?: { responder?: boolean; refusal?: string; state?: string }) => resolveNodeTarget("beacon", { public_ip: "203.0.113.12", beacon }, { beacon_target: "203.0.113.12:50231" });
+  assert.deepEqual(noted({ responder: true, refusal: "refused_by_node", state: "refused" }), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_refused" });
+  assert.deepEqual(noted(undefined), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_agent_too_old" });
+  assert.deepEqual(noted({ responder: true, state: "circuit_open" }), { state: "resolved", endpoint: "203.0.113.12:50231", note: "beacon_not_listening" });
+  assert.equal(unpickableNote(noted({ responder: true, refusal: "refused_by_node" })), true);
+  assert.equal(unpickableNote(noted(undefined)), true);
+  assert.equal(unpickableNote(noted({ responder: true, state: "bind_failed" })), false, "a socket that is down can come back; the check may be written now");
+  assert.equal(unpickableNote(noted({ responder: true, state: "off" })), false, "a beacon still opening is not blocked");
+  assert.deepEqual(resolveNodeTarget("beacon", { public_ip: "203.0.113.12" }, {}), { state: "refused", reason: "no_beacon" });
+  assert.deepEqual(resolveNodeTarget("beacon", { public_ip: "203.0.113.12" }), { state: "refused", reason: "no_beacon" });
+  const switched = switchDraftKind({ ...emptyDraft("http"), target: "https://status.example.com" }, "beacon").draft;
+  assert.equal(switched.targetMode, "node");
+  assert.equal(suggestName("beacon", "", "xuezhang-jp-nat"), "Beacon to xuezhang-jp-nat");
+});
+
+test("a beacon check is read, created and edited with its node and packets", () => {
+  const saved = monitor({ id: "mon_b", type: "beacon", target: "203.0.113.12:50231", target_node: "jp", packets: 4, interval_sec: 30, timeout_sec: 2, version: 2 });
+  const draft = draftFromMonitor(saved);
+  assert.deepEqual([draft.type, draft.targetMode, draft.targetNode, draft.packets], ["beacon", "node", "jp", 4]);
+  const body = buildCreate({ ...emptyDraft("beacon"), targetNode: "jp", packets: 5, nodeIds: ["sh"], assignAll: false, intervalSec: 30, timeoutSec: 2 }, true, { m2a: true, nodeName: "xuezhang-jp-nat" });
+  assert.equal(body.target, undefined, "the server resolves the endpoint");
+  assert.deepEqual([body.type, body.target_node, body.packets, body.name], ["beacon", "jp", 5, "Beacon to xuezhang-jp-nat"]);
+  assert.deepEqual(buildUpdate(saved, { ...draft, packets: 6 }), { id: "mon_b", version: 2, packets: 6 });
+});
+
+test("a beacon draft follows the run length and packets rules, and its budget counts every beacon check to the node", () => {
+  const draft = { ...emptyDraft("beacon"), targetNode: "jp", nodeIds: ["sh"], assignAll: false, packets: 10, intervalSec: 10, timeoutSec: 9 };
+  assert.ok(draftProblems(draft, { m2a: true }).includes("runLength"), "1.8 s of spacing plus a 9 s timeout overruns 10 s");
+  assert.ok(draftProblems({ ...draft, packets: 11, timeoutSec: 2 }, { m2a: true }).includes("packets"));
+  const generated = monitor({ id: "mon_latb_jp", type: "beacon", target: "203.0.113.12:50231", target_node: "jp", packets: 5, interval_sec: 60, assign_all: false, node_ids: ["sh"], enabled: true, managed_by: "latency" });
+  const otherNode = monitor({ id: "mon_latb_us", type: "beacon", target: "198.51.100.7:51388", target_node: "us", packets: 5, interval_sec: 10, assign_all: false, node_ids: ["sh"], enabled: true });
+  const ping = monitor({ id: "mon_ping", type: "icmp", target: "203.0.113.12", target_node: "jp", packets: 10, interval_sec: 10, assign_all: false, node_ids: ["sh"], enabled: true });
+  const pps = beaconBudget("jp", ["sh"], { packets: 10, intervalSec: 10 }, [generated, otherNode, ping]).pps;
+  // 10/10 for the draft plus 5/60 for the generated check to the same node; another node and an icmp check do not count.
+  assert.equal(Math.round(pps * 1000) / 1000, Math.round((1 + 5 / 60) * 1000) / 1000);
+  assert.ok(draftProblems({ ...draft, packets: 5, intervalSec: 10, timeoutSec: 2 }, { m2a: true, budgetPps: 2.5 }).includes("budget"));
 });

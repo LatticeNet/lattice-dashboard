@@ -63,9 +63,31 @@ export function serverSpeaksM2a(
   return typeof plan.config?.method === "string" || (plan.pairs ?? []).some((p) => typeof p.method === "string" && p.method !== "");
 }
 
+/**
+ * Whether the server speaks design 29 M2b (the beacon), read from its
+ * answers as M2a is: a node whose agent reports beacon facts or runs the
+ * beacon client, a plan node with a beacon endpoint or a generated beacon
+ * check, a pair or a check that probes by beacon, or a reachability check.
+ * An M2b server whose agents all predate M2b answers none of these; it then
+ * has no source that could send a beacon request either, so the console
+ * offers nothing new until one does.
+ */
+export function serverSpeaksM2b(
+  nodes: readonly Pick<Node, "probe_methods" | "beacon">[] | undefined,
+  plan?: Pick<LatencyProbePlan, "pairs" | "nodes" | "config"> | null,
+  monitors?: readonly Pick<MonitorView, "type" | "managed_by">[],
+): boolean {
+  if ((nodes ?? []).some((n) => !!n.beacon || (n.probe_methods ?? []).includes("beacon"))) return true;
+  if ((monitors ?? []).some((m) => m.type === "beacon" || m.managed_by === "beacon")) return true;
+  if (!plan) return false;
+  if ((plan.nodes ?? []).some((n) => !!n.beacon_target || !!n.beacon_monitor_id)) return true;
+  if (plan.config?.method === "beacon" || Object.values(plan.config?.source_methods ?? {}).includes("beacon")) return true;
+  return (plan.pairs ?? []).some((p) => p.method === "beacon");
+}
+
 /** Kinds a node runs as a source: the agent kinds. tls runs on the control plane. */
 export function runsOnAgent(kind: string): boolean {
-  return kind === "tcp" || kind === "http" || kind === "icmp";
+  return kind === "tcp" || kind === "http" || kind === "icmp" || kind === "beacon";
 }
 
 export type SourceSupport = { ok: true } | { ok: false; reason: string };

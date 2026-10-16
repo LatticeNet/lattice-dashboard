@@ -24,6 +24,14 @@
  *                         character name
  *   ?m2a=auto             the path set on Auto: NAT targets answer ICMP and
  *                         read up; hetzner-hel never answers (ICMP filtered)
+ *   ?m2b=1                a design 29 M2b server (dev/beaconShapes.ts). With
+ *                         ?m2a=auto the NAT targets whose beacon admits
+ *                         cd-hs-sh move from TCP (failing) to Beacon (up) two
+ *                         days ago, and hetzner-hel's beacon reads UDP
+ *                         filtered; ?pin=beacon pins cd-hs-sh to Beacon so
+ *                         every beacon reason shows. A Beacon check to
+ *                         xuezhang-jp-nat runs from four sources: up, firewall
+ *                         pending, agent too old, and clock skew
  *
  * Series: a week of buckets on the server's step rule with a control plane
  * outage two thirds of the way back (no data on every path), a loss burst on
@@ -48,6 +56,7 @@ import { seriesStats, seriesFromResponse } from "@/views/fleet/pathSeriesModel";
 
 import { HOUR, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
 import { M2A, SOURCE_ID, SOURCE_NODE, agentPredatesM2a, icmpRefusal } from "./latencyFixture";
+import { M2B, beaconShape, beaconSourceGate, beaconTargetGate, runsBeaconClient } from "./beaconShapes";
 
 export const PATHS_SHAPE = (PARAMS.get("paths") ?? "") as "" | "one" | "three" | "empty" | "old";
 export const FINE_DAYS = PARAMS.get("retention") === "14" ? 14 : 7;
@@ -125,10 +134,18 @@ interface Shape {
   source: string;
   behaviour: Behaviour;
   pausedSince?: number;
-  operator?: "http" | "tls" | "icmp";
-  /** Echoes per run of an icmp path (design 29 M2a); absent for one probe per run. */
+  operator?: "http" | "tls" | "icmp" | "beacon";
+  /** Echoes or requests per run of an icmp or beacon path (design 29 M2a, M2b); absent for one probe per run. */
   packets?: number;
+  /** The method of the path's newest buckets. */
+  method?: "tcp" | "icmp" | "beacon";
+  /** Seconds back to the switch from TCP: older buckets were TCP and behaved as `before`. */
+  switchedAt?: number;
+  before?: Behaviour;
 }
+
+/** Beacon paths to NAT targets were TCP until two days ago, failing on the unmapped port. */
+const BEACON_SWITCH_AGE = 2 * 86400;
 
 function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step: number; from: number; to: number; buckets: PathBucket[] } {
   const step = expectedStepSeconds(window, 60, FINE_DAYS);
@@ -141,12 +158,16 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
   for (let t = from; t < to; t += step) {
     const age = now - t;
     const j = hash(`${shape.source}:${shape.target?.id ?? shape.operator}:${Math.floor(t / step)}`);
+    // Before a switch the path ran the old method with its old behaviour (a NAT target failing over TCP).
+    const switched = shape.switchedAt !== undefined && age > shape.switchedAt;
+    const behaviourNow: Behaviour = switched ? (shape.before ?? "normal") : shape.behaviour;
+    const packets = switched ? undefined : shape.packets;
     const expected = shape.pausedSince !== undefined && age < shape.pausedSince ? 0 : perBucket;
     // The control plane was down for a while, two thirds of the week back: nobody heard anything.
     const outage = age > 7 * 86400 * 0.62 && age < 7 * 86400 * 0.62 + 5 * 3600;
     let heard = !outage;
-    if (shape.behaviour === "gap" && age > 4 * 86400 && age < 4 * 86400 + 10 * 3600) heard = false;
-    if (shape.behaviour === "never") heard = false;
+    if (behaviourNow === "gap" && age > 4 * 86400 && age < 4 * 86400 + 10 * 3600) heard = false;
+    if (behaviourNow === "never") heard = false;
     if (sourceOffline(shape.source) && age < 20 * 3600) heard = false;
     if (!expected) {
       buckets.push({ t, n: 0, expected: 0, fail: 0 });
@@ -158,18 +179,18 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
     }
     // A stray failed run now and then, never in the newest minutes (a check's state reads its newest run).
     let failShare = j > 0.997 && age > 600 ? 1 / perBucket : 0;
-    if (shape.behaviour === "nat") failShare = 1;
-    if (shape.behaviour === "offline") failShare = age < 30 * 3600 ? 1 : j > 0.9 ? 1 / perBucket : 0;
-    if (shape.behaviour === "lossy") failShare = 0.04 + j * 0.08;
-    if (shape.behaviour === "burst" && age > 22 * 3600 && age < 24 * 3600) failShare = 0.3 + j * 0.3;
-    if (shape.behaviour === "filtered") failShare = 1;
+    if (behaviourNow === "nat") failShare = 1;
+    if (behaviourNow === "offline") failShare = age < 30 * 3600 ? 1 : j > 0.9 ? 1 / perBucket : 0;
+    if (behaviourNow === "lossy") failShare = 0.04 + j * 0.08;
+    if (behaviourNow === "burst" && age > 22 * 3600 && age < 24 * 3600) failShare = 0.3 + j * 0.3;
+    if (behaviourNow === "filtered") failShare = 1;
     const fail = Math.min(perBucket, Math.round(perBucket * failShare));
     const bucket: PathBucket = { t, n: perBucket, expected, fail, loss: fail / perBucket };
-    if (shape.packets) {
+    if (packets) {
       // Every echo of a failed run is lost; a run that came back may still lose one now and then.
-      const sent = perBucket * shape.packets;
-      const stray = shape.behaviour === "filtered" ? 0 : j > 0.93 ? 1 + Math.floor((j - 0.93) * 30) : 0;
-      const lost = Math.min(sent, fail * shape.packets + stray);
+      const sent = perBucket * packets;
+      const stray = behaviourNow === "filtered" ? 0 : j > 0.93 ? 1 + Math.floor((j - 0.93) * 30) : 0;
+      const lost = Math.min(sent, fail * packets + stray);
       bucket.sent = sent;
       bucket.lost = lost;
       bucket.loss = lost / sent;
@@ -178,8 +199,8 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
       const local = new Date((t + 8 * 3600) * 1000).getUTCHours();
       const evening = local >= 19 && local <= 23 ? 1.28 + j * 0.12 : 1;
       // ICMP is answered by the kernel: a little faster than a TCP handshake to the same node.
-      const base = shape.operator === "tls" ? 82 : shape.operator === "http" ? 118 : baseMs(shape.target, shape.source) * (shape.packets ? 0.94 : 1);
-      const burst = shape.behaviour === "burst" && age > 22 * 3600 && age < 24 * 3600 ? 1.6 : 1;
+      const base = shape.operator === "tls" ? 82 : shape.operator === "http" ? 118 : baseMs(shape.target, shape.source) * (packets ? 0.94 : 1);
+      const burst = behaviourNow === "burst" && age > 22 * 3600 && age < 24 * 3600 ? 1.6 : 1;
       const p50 = (base + j * 9) * evening * burst;
       bucket.p50_ms = Math.round(p50 * 10) / 10;
       bucket.p95_ms = Math.round(p50 * (1.12 + j * 0.35) * 10) / 10;
@@ -188,6 +209,7 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
       bucket.jitter_ms = Math.round(p50 * (0.02 + j * 0.05) * 10) / 10;
     }
     if (SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini") bucket.method = age < 2 * 86400 ? "icmp" : "tcp";
+    if (shape.switchedAt !== undefined) bucket.method = switched ? "tcp" : shape.method;
     buckets.push(bucket);
   }
   return { step, from, to, buckets };
@@ -197,7 +219,27 @@ function shapeFor(plan: LatencyProbePlan, source: string, targetNode: string): S
   const target = allNodes().find((n) => n.id === targetNode);
   const pair = plan.pairs.find((p) => p.source === source && p.target === targetNode);
   const icmp = pair?.method === "icmp";
+  const beacon = pair?.method === "beacon";
   let b = behaviour(target?.name ?? "");
+  if (beacon) {
+    // The beacon answers on the mapped endpoint, so a NAT target that failed over TCP reads up; hetzner-hel's provider drops UDP.
+    const before = b;
+    const shape = beaconShape(target?.name);
+    if (b === "nat" || b === "offline") b = "normal";
+    if (shape.reach === "filtered") b = "filtered";
+    if (shape.agent !== "listening") b = "never";
+    if (pair?.reason) b = "never";
+    return {
+      target,
+      source,
+      behaviour: b,
+      pausedSince: pair && !pair.enabled ? 2 * 86400 : undefined,
+      packets: 5,
+      method: "beacon",
+      // An Auto path set moved the pair from TCP when the beacon came up, two days ago.
+      ...(M2A === "auto" && before === "nat" && !pair?.reason ? { switchedAt: BEACON_SWITCH_AGE, before: "nat" as const } : {}),
+    };
+  }
   if (icmp) {
     // A NAT node answers ping on its public address, which is the point of ICMP here; hetzner-hel's provider drops it.
     if (b === "nat") b = "normal";
@@ -210,6 +252,7 @@ function shapeFor(plan: LatencyProbePlan, source: string, targetNode: string): S
     behaviour: b,
     pausedSince: pair && !pair.enabled ? 2 * 86400 : undefined,
     packets: icmp ? 5 : undefined,
+    method: icmp ? "icmp" : "tcp",
   };
 }
 
@@ -291,13 +334,42 @@ export function operatorChecks(): MonitorView[] {
     alert: "off",
     alert_after: 2,
   };
-  return [status, cert, ping, admin];
+  if (!M2B || !jp) return [status, cert, ping, admin];
+  // Design 29 M2b: a Beacon check to the NAT node, from a source its plan admits and three that cannot measure.
+  const beacon: MonitorView = {
+    id: "mon_beacon_jp",
+    name: "Beacon to [cd]-xuezhang-jp-nat",
+    type: "beacon",
+    target: `${jp.public_ip ?? "203.0.113.12"}:${beaconShape(jp.name).mappedPort}`,
+    target_node: jp.id,
+    packets: 5,
+    interval_sec: 30,
+    timeout_sec: 2,
+    assign_all: false,
+    node_ids: [SOURCE_ID, id("[cd]-hetzner-fsn"), id("[Metix]-mkcloud-hr-iplc"), id("[cd]-DMIT-pro-malibu")].sort(),
+    enabled: true,
+    created_at: iso(-26 * HOUR),
+    version: 1,
+    alert: "down",
+    alert_after: 3,
+  };
+  return [status, cert, ping, admin, beacon];
 }
 
 /** Why an operator check's source measures nothing (design 29 M2a), or undefined. */
 function operatorReason(check: MonitorView, source: string): string | undefined {
   if (!M2A) return undefined;
   if (check.type === "icmp") return icmpRefusal(allNodes().find((n) => n.id === source));
+  if (check.type === "beacon") {
+    // As the server's gates: the beacon client, then the target's beacon, then whether its plan admits the source.
+    const from = allNodes().find((n) => n.id === source);
+    if (!runsBeaconClient(from?.name)) return "agent_too_old";
+    const shape = beaconShape(allNodes().find((n) => n.id === check.target_node)?.name);
+    const gate = beaconTargetGate(shape) || beaconSourceGate(shape, from?.name === "cd-hs-sh" ? "cd-hs-sh" : (from?.name ?? ""));
+    if (gate) return gate;
+    // DMIT-pro-malibu's clock runs two minutes fast: the target answers stale.
+    return from?.name === "[cd]-DMIT-pro-malibu" ? "beacon_stale" : undefined;
+  }
   if (check.id === "mon_admin_internal") return "destination_refused";
   // As the server's monitorProbeGate: headers or a status set other than the default need an agent that reports its methods.
   const current = check.type === "http" && (!!check.headers?.length || (!!check.expect_status && check.expect_status !== "200-399"));
@@ -307,13 +379,14 @@ function operatorReason(check: MonitorView, source: string): string | undefined 
 
 function operatorShape(check: MonitorView, source: string, paused: boolean): Shape {
   const reason = operatorReason(check, source);
-  const icmp = check.type === "icmp";
+  const multi = check.type === "icmp" || check.type === "beacon";
   return {
     source,
-    target: icmp ? allNodes().find((n) => n.id === check.target_node) : undefined,
+    target: multi ? allNodes().find((n) => n.id === check.target_node) : undefined,
     behaviour: reason ? "never" : "normal",
-    operator: check.type === "tls" ? "tls" : icmp ? "icmp" : "http",
-    packets: icmp ? check.packets || 5 : undefined,
+    operator: check.type === "tls" ? "tls" : check.type === "icmp" ? "icmp" : check.type === "beacon" ? "beacon" : "http",
+    packets: multi ? check.packets || 5 : undefined,
+    method: check.type === "beacon" ? "beacon" : check.type === "icmp" ? "icmp" : undefined,
     pausedSince: paused ? 3 * 86400 : undefined,
   };
 }
@@ -372,15 +445,22 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       const pair = plan.pairs.find((p) => p.source === source && p.target === target.node_id);
       const shape = shapeFor(plan, source, target.node_id);
       const icmp = (SWITCH && node?.name === "[cd]-gomami-hk-turin-mini") || pair?.method === "icmp";
+      const beacon = pair?.method === "beacon";
       const base = {
         source,
         target_node: target.node_id,
-        // ICMP dials an address, not a port.
-        target: node ? (icmp ? (node.public_ip ?? "") : natEndpoint(node)) : (target.endpoint ?? ""),
+        // ICMP dials an address, not a port; a beacon its advertised endpoint.
+        target: beacon ? (target.beacon_target ?? "") : node ? (icmp ? (node.public_ip ?? "") : natEndpoint(node)) : (target.endpoint ?? ""),
         monitor_id: pair?.monitor_id ?? target.monitor_id ?? `mon_lat_${target.node_id}`,
         managed: true,
-        method: icmp ? "icmp" : "tcp",
+        method: beacon ? "beacon" : icmp ? "icmp" : "tcp",
       };
+      // The target reports no socket where its plan put one (the server's beaconTargetListenGate).
+      const agent = beacon ? beaconShape(node?.name).agent : undefined;
+      if (beacon && !pair?.reason && (agent === "bind_failed" || agent === "circuit_open") && pair?.enabled && plan.config.enabled) {
+        paths.push(pathFrom({ ...shape, behaviour: "never" }, window, base, "beacon_not_listening"));
+        continue;
+      }
       // The source cannot run the pair's method (design 29 M2a): unknown with the reason, never down.
       if (pair?.reason && pair.reason !== "not_probeable" && pair.enabled && plan.config.enabled) {
         paths.push(pathFrom(shape, window, base, pair.reason));
@@ -417,7 +497,7 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         continue;
       }
       if (b === "filtered") {
-        paths.push(pathFrom(shape, window, base, "icmp_filtered"));
+        paths.push(pathFrom(shape, window, base, beacon ? "beacon_filtered" : "icmp_filtered"));
         continue;
       }
       paths.push(pathFrom(shape, window, base));
@@ -456,9 +536,22 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
   const switched = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini";
   // The method in force at the first bucket heard, then the switch when it falls inside the window.
   const switchAt = Math.floor((NOW / 1000 - 2 * 86400) / step) * step;
-  const first = switched ? (Number(firstHeard) >= switchAt ? "icmp" : "tcp") : query.monitor && !query.target_node ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : shape.packets ? "icmp" : "tcp";
+  // A beacon that replaced TCP: the first bucket that ran it.
+  const beaconAt = shape.switchedAt !== undefined ? Math.ceil((NOW / 1000 - shape.switchedAt) / step) * step : undefined;
+  const first = switched
+    ? Number(firstHeard) >= switchAt
+      ? "icmp"
+      : "tcp"
+    : beaconAt !== undefined
+      ? Number(firstHeard) >= beaconAt
+        ? "beacon"
+        : "tcp"
+      : query.monitor && !query.target_node
+        ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp")
+        : (shape.method ?? (shape.packets ? "icmp" : "tcp"));
   const method_changes = [{ t: firstHeard, method: first }];
   if (switched && Number(firstHeard) < switchAt) method_changes.push({ t: switchAt, method: "icmp" });
+  if (beaconAt !== undefined && Number(firstHeard) < beaconAt) method_changes.push({ t: beaconAt, method: "beacon" });
   return { window: query.window, step_seconds: step, from, to, method_changes, buckets };
 }
 
@@ -467,12 +560,21 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
   const check = checks.find((c) => c.id === monitorId);
   const out: MonitorResult[] = [];
   const push = (source: string, shape: Shape, endpoint: string, reason?: string) => {
-    // An agent too old for the method is never handed the check, so it reports nothing.
-    if (reason === "agent_too_old") return;
+    // An agent too old for the method, or a source the target's beacon does not admit, is never handed the check.
+    if (reason === "agent_too_old" || reason === "firewall_pending" || reason === "beacon_source_pending") return;
     if (reason) {
       // A run that measured nothing: no latency, and the reason instead of a failure.
       for (let i = 0; i < 12; i++) {
-        out.push({ monitor_id: monitorId, node_id: source, at: new Date(NOW - (i * 60 + 25) * 1000).toISOString(), success: false, reason, ...(reason === "destination_refused" ? { error: `refused to dial 10.0.0.8: private address` } : { sent: 0 }) });
+        const signed = reason.startsWith("beacon_") && reason !== "beacon_no_key";
+        out.push({
+          monitor_id: monitorId,
+          node_id: source,
+          at: new Date(NOW - (i * 60 + 25) * 1000).toISOString(),
+          success: false,
+          reason,
+          // A signed refusal (stale, old key, rate limited) came back for every request: all sent, none answered ok.
+          ...(reason === "destination_refused" ? { error: `refused to dial 10.0.0.8: private address` } : signed ? { sent: shape.packets ?? 5, lost: shape.packets ?? 5 } : { sent: 0 }),
+        });
       }
       return;
     }
@@ -489,7 +591,8 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
         const rtts = Array.from({ length: sent - lost }, (_, k) => Math.round(p50 * (0.96 + hash(`${source}:${b.t}:${k}`) * 0.1) * 10) / 10);
         const sorted = [...rtts].sort((x, y) => x - y);
         const median = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2) : undefined;
-        out.push({ monitor_id: monitorId, node_id: source, at: new Date((Number(b.t) + 30) * 1000).toISOString(), success: rtts.length > 0, latency_ms: median, sent, lost, rtts_ms: rtts.length ? rtts : undefined, error: rtts.length ? undefined : `no echo reply from ${endpoint}` });
+        const silent = shape.method === "beacon" ? `no reply from ${endpoint} within ${2}s` : `no echo reply from ${endpoint}`;
+        out.push({ monitor_id: monitorId, node_id: source, at: new Date((Number(b.t) + 30) * 1000).toISOString(), success: rtts.length > 0, latency_ms: median, sent, lost, rtts_ms: rtts.length ? rtts : undefined, error: rtts.length ? undefined : silent });
         continue;
       }
       out.push({
@@ -511,12 +614,13 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
     }
     return out;
   }
-  const target = plan.nodes.find((n) => n.monitor_id === monitorId || n.icmp_monitor_id === monitorId);
+  const target = plan.nodes.find((n) => n.monitor_id === monitorId || n.icmp_monitor_id === monitorId || n.beacon_monitor_id === monitorId);
   if (!target) return out;
   const node = allNodes().find((n) => n.id === target.node_id);
   for (const pair of plan.pairs.filter((p) => p.target === target.node_id && p.active && (p.monitor_id ?? target.monitor_id) === monitorId)) {
     if (sourceOffline(pair.source)) continue;
-    push(pair.source, shapeFor(plan, pair.source, target.node_id), node ? (pair.method === "icmp" ? (node.public_ip ?? "") : natEndpoint(node)) : "");
+    const endpoint = pair.method === "beacon" ? (target.beacon_target ?? "") : node ? (pair.method === "icmp" ? (node.public_ip ?? "") : natEndpoint(node)) : "";
+    push(pair.source, shapeFor(plan, pair.source, target.node_id), endpoint);
   }
   return out;
 }
