@@ -57,7 +57,13 @@ import type {
   LatencySeries,
   LatencyWindow,
   MonitorResult,
+  MonitorSettings,
+  MonitorUpdateInput,
   MonitorView,
+  MonitorWindow,
+  PathSeriesQuery,
+  PathSeriesResponse,
+  PathsResponse,
   NetPolicyGraph,
   NetPolicyMatrix,
   NetPolicyUpsertRequest,
@@ -537,6 +543,17 @@ export const api = {
         { monitor_id },
         opts,
       ),
+    /** Design 29 D1: edits a check in place; 409 on a stale version or a generated check. */
+    update: (input: MonitorUpdateInput) => http.post<MonitorView>("/api/monitors/update", input),
+    /** Design 29 D5: the source by target matrix for one window. 404 from a server that predates it. */
+    paths: (window: MonitorWindow, opts?: RequestOptions) => http.get<PathsResponse>("/api/monitors/paths", { window }, opts),
+    /** One path's buckets, by (source, target node) or (monitor, source). */
+    series: (query: PathSeriesQuery, opts?: RequestOptions) =>
+      http.get<PathSeriesResponse>("/api/monitors/series", query as unknown as Record<string, unknown>, opts),
+    settings: {
+      get: (opts?: RequestOptions) => http.get<MonitorSettings>("/api/monitors/settings", undefined, opts),
+      update: (input: { version: number; fine_retention_days: number }) => http.post<MonitorSettings>("/api/monitors/settings/update", input),
+    },
     latency: {
       plan: (opts?: RequestOptions) => http.get<LatencyProbePlan>("/api/monitors/latency", undefined, opts),
       /** Answers the new plan; 409 when someone saved since `config.version` was read. */
