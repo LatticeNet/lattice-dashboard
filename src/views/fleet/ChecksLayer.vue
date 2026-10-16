@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, latestCertExpiry } from "./checksModel";
+import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, latestCertExpiry, withPathVerdict } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -84,8 +84,15 @@ function nodeName(id: string): string {
   return props.nodes.find((n) => n.id === id)?.name || shortId(id, 14);
 }
 
+/** Each check's paths in the matrix, for the verdict the control plane gives them. */
+const pathsByMonitor = computed(() => {
+  const out = new Map<string, PathItem[]>();
+  for (const p of props.data.matrix.value?.paths ?? []) out.set(p.monitorId, [...(out.get(p.monitorId) ?? []), p]);
+  return out;
+});
+
 function healthOf(monitor: MonitorView): MonitorHealth {
-  return monitorHealth(monitor, monitor.latest, props.monitorsQuery.lastUpdated.value ?? Date.now());
+  return withPathVerdict(monitorHealth(monitor, monitor.latest, props.monitorsQuery.lastUpdated.value ?? Date.now()), pathsByMonitor.value.get(monitor.id) ?? []);
 }
 
 /* ---- The node filter (?node=, from the node page) ---- */
@@ -330,7 +337,7 @@ interface SourceRow {
   name: string;
   path?: PathItem;
   /** From the check's newest results, when the server has no paths read. */
-  latest?: { success: boolean; latencyMs?: number; at: string; error?: string };
+  latest?: { success: boolean; latencyMs?: number; at: string; error?: string; reason?: string };
   paused: boolean;
 }
 
@@ -346,7 +353,7 @@ const sourceRows = computed<SourceRow[]>(() => {
       .sort((a, b) => stateRank(a.path.state) - stateRank(b.path.state) || a.name.localeCompare(b.name));
   }
   return (m.latest ?? [])
-    .map((l) => ({ source: l.node_id ?? "", name: nodeName(l.node_id ?? ""), latest: { success: l.success, latencyMs: l.latency_ms, at: l.at, error: l.error }, paused: paused.has(l.node_id ?? "") }))
+    .map((l) => ({ source: l.node_id ?? "", name: nodeName(l.node_id ?? ""), latest: { success: l.success, latencyMs: l.latency_ms, at: l.at, error: l.error, reason: l.reason }, paused: paused.has(l.node_id ?? "") }))
     .sort((a, b) => Number(a.latest.success) - Number(b.latest.success) || a.name.localeCompare(b.name));
 });
 
@@ -356,9 +363,10 @@ const sourceRows = computed<SourceRow[]>(() => {
  * source exists, so the chart shows something to read.
  */
 function defaultSource(rows: SourceRow[]): string | undefined {
-  const measured = rows.filter((r) => !r.paused && (r.path ? r.path.state !== "unknown" : !!r.latest));
+  // A newest run with a reason measured nothing (design 29 M2a): it is not the source to open on.
+  const measured = rows.filter((r) => !r.paused && (r.path ? r.path.state !== "unknown" : !!r.latest && !r.latest.reason));
   const pool = measured.length ? measured : rows.filter((r) => !r.paused).length ? rows.filter((r) => !r.paused) : rows;
-  const rank = (r: SourceRow) => (r.path ? stateRank(r.path.state) : r.latest && !r.latest.success ? 0 : 2);
+  const rank = (r: SourceRow) => (r.path ? stateRank(r.path.state) : r.latest && !r.latest.success && !r.latest.reason ? 0 : 2);
   return [...pool].sort((a, b) => rank(a) - rank(b) || (b.path?.loss ?? 0) - (a.path?.loss ?? 0) || a.name.localeCompare(b.name))[0]?.source;
 }
 
@@ -560,6 +568,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                   <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block truncate text-xs', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
                     {{ displayLabel(row.path) }}: {{ whyText(row.path, failureOn(selected, row.source)) }}
                   </span>
+                  <span v-else-if="row.latest?.reason" class="block truncate text-xs text-muted-foreground">{{ reasonText(row.latest.reason) }}</span>
                   <span v-else-if="row.latest && !row.latest.success" class="block truncate text-xs text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
                 </span>
                 <span class="text-end font-mono text-xs tabular">
@@ -568,7 +577,8 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                     <span v-if="(row.path.loss ?? 0) > 0" class="block text-muted-foreground">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(row.path.loss) }) }}</span>
                   </template>
                   <template v-else-if="row.latest">
-                    <span :class="row.latest.success ? '' : 'text-destructive'">{{ row.latest.success ? formatMs(row.latest.latencyMs) || $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
+                    <span v-if="row.latest.reason" class="text-muted-foreground">{{ $t('fleet.monitoring.checks.unmeasured') }}</span>
+                    <span v-else :class="row.latest.success ? '' : 'text-destructive'">{{ row.latest.success ? formatMs(row.latest.latencyMs) || $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
                   </template>
                 </span>
               </button>

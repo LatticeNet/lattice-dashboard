@@ -339,6 +339,9 @@ test("the preview counts each source's targets by the method it will use", () =>
   assert.deepEqual([by(auto, "sh").icmp, by(auto, "sh").tcp, by(auto, "sh").none], [3, 1, 1]);
   // bj does not run icmp: auto falls back to tcp.
   assert.deepEqual([by(auto, "bj").icmp, by(auto, "bj").tcp, by(auto, "bj").none, by(auto, "bj").refusal], [0, 4, 1, undefined]);
+  // A target the plan pings but cannot dial over TCP (a note, no line) is unreachable by TCP, not resolved on save.
+  const noted = plan({ ...p, nodes: p.nodes.map((n) => (n.node_id === "hk" ? { ...n, target: "probed", endpoint_note: "udp_only" } : n)) });
+  assert.equal(by(pathSetPreview(draftFromConfig(noted.config), noted, nodes), "bj").onSave, 0);
   const pinned = pathSetPreview(setSourceMethod({ ...draftFromConfig(p.config), method: "auto" }, "bj", "icmp"), p, nodes);
   // A pin never falls back: bj pinned to icmp reaches nothing and says why.
   assert.deepEqual([by(pinned, "bj").pinned, by(pinned, "bj").icmp, by(pinned, "bj").none, by(pinned, "bj").refusal], [true, 0, 5, "agent_too_old"]);

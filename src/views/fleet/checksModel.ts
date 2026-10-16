@@ -21,6 +21,8 @@ import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorT
 
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
 import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseIPv4, parseStatusSet, sourceSupport } from "@/views/fleet/checkRulesModel";
+import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
+import { isChosenUnknown } from "@/views/fleet/pathsModel";
 
 import {
   AGENT_DEFAULT_INTERVAL_SEC,
@@ -95,6 +97,20 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
  * The signal is the server, not the field: an edit names `version ?? 0`, so
  * a check listed without one (never edited) is editable all the same.
  */
+/**
+ * A check's health with its paths' verdict folded in (design 29 M2a). The
+ * control plane judges some failing runs as unknown: an ICMP target that has
+ * never answered reads icmp_filtered and does not page. So when the newest
+ * results fail but no path of the check is down and one is unknown for a
+ * reason that is not a pause, the check reads unmeasured with that reason,
+ * as its paths do, rather than down.
+ */
+export function withPathVerdict(health: MonitorHealth, paths: readonly { state: string; reason?: string }[]): MonitorHealth {
+  if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
+  const unknown = paths.find((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
+  return unknown ? { kind: "unmeasured", total: health.total, reason: unknown.reason!, lastAt: health.lastAt } : health;
+}
+
 export function canEditCheck(monitor: Pick<MonitorView, "managed_by">, serverEdits: boolean): boolean {
   return serverEdits && !monitor.managed_by;
 }
@@ -432,7 +448,9 @@ export function resolveNodeTarget(kind: string, node: Pick<Node, "public_ip"> | 
   }
   if (kind === "tcp") {
     if (planNode?.endpoint && planNode.target !== "not_probeable") return { state: "resolved", endpoint: planNode.endpoint };
-    if (planNode?.target === "not_probeable") return { state: "refused", reason: planNode.endpoint_note || "no_tcp_line" };
+    // A note without an endpoint is the planner saying why the node has no line to dial (udp_only, no_tcp_line, ...).
+    if (planNode && !planNode.endpoint && planNode.endpoint_note) return { state: "refused", reason: planNode.endpoint_note };
+    if (planNode?.target === "not_probeable") return { state: "refused", reason: "no_tcp_line" };
     return { state: "onSave" };
   }
   return { state: "onSave" };

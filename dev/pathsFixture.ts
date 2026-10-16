@@ -469,13 +469,14 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
       return;
     }
     const { buckets } = bucketsFor(shape, "1h");
-    for (const b of buckets.slice(-20)) {
+    for (const [i, b] of buckets.slice(-20).entries()) {
       if (!b.n) continue;
       const failed = b.fail >= b.n;
       if (shape.packets) {
         // Five echoes: the RTT of each one that came back, in send order, and the median as the run's latency.
         const sent = shape.packets;
-        const lost = failed ? sent : Math.min(sent, Math.round(((b.lost ?? 0) / Math.max(1, b.sent ?? 1)) * sent));
+        // The fourth newest run lost an echo, so the list shows what a partial loss looks like.
+        const lost = failed ? sent : Math.min(sent, Math.round(((b.lost ?? 0) / Math.max(1, b.sent ?? 1)) * sent) + (i === 16 && shape.behaviour !== "filtered" ? 1 : 0));
         const p50 = b.p50_ms ?? 60;
         const rtts = Array.from({ length: sent - lost }, (_, k) => Math.round(p50 * (0.96 + hash(`${source}:${b.t}:${k}`) * 0.1) * 10) / 10);
         const sorted = [...rtts].sort((x, y) => x - y);

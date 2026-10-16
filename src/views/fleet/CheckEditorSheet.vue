@@ -35,7 +35,7 @@ import { Label } from "@/components/ui/label";
 import HeaderRows from "./HeaderRows.vue";
 import NodeTargetPicker from "./NodeTargetPicker.vue";
 import SourcePicker from "./SourcePicker.vue";
-import { EXPECT_STATUS_DEFAULT, destinationProblem, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
+import { EXPECT_STATUS_DEFAULT, destinationProblem, isHttpsUrl, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
 import {
   ALERT_MAX_AFTER,
   CHECK_MAX_INTERVAL_SEC,
@@ -188,7 +188,8 @@ const dirty = computed(() => (props.monitor ? draftChanged(props.monitor, draft.
 
 const statusSet = computed(() => parseStatusSet(draft.value.expectStatus));
 const headerProblemsNow = computed(() => draftHeaderProblems(draft.value, newCheck.value));
-const origin = computed(() => monitorOrigin(draft.value.target));
+// Secrets are bound to an https origin only; an http URL has none to name.
+const origin = computed(() => (isHttpsUrl(draft.value.target) ? monitorOrigin(draft.value.target) : undefined));
 const runSeconds = computed(() => icmpRunSeconds(Number(draft.value.packets) || 1, Number(draft.value.timeoutSec) || 0));
 const showHttpExpect = computed(() => draft.value.type === "http" && m2a.value);
 

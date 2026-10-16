@@ -28,6 +28,7 @@ import {
   resolveNodeTarget,
   unsupportedSources,
   usesNodeTarget,
+  withPathVerdict,
   type CheckDraft,
 } from "../checksModel.ts";
 import { rowsFromHeaders, startReplace } from "../checkHeadersModel.ts";
@@ -230,6 +231,9 @@ test("resolution: ICMP to the public IPv4, TCP to the plan's line port or on sav
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint: "203.0.113.12:443", target: "probed" }), { state: "resolved", endpoint: "203.0.113.12:443" });
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "udp_only", target: "not_probeable" }), { state: "refused", reason: "udp_only" });
   assert.deepEqual(resolveNodeTarget("tcp", {}, { target: "not_probeable" }), { state: "refused", reason: "no_tcp_line" });
+  // A node the path set pings but cannot dial: the plan names it a target with a note and no line.
+  assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "udp_only", target: "probed" }), { state: "refused", reason: "udp_only" });
+  assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint: "203.0.113.12:443", endpoint_note: "last_known", target: "probed" }), { state: "resolved", endpoint: "203.0.113.12:443" });
   assert.deepEqual(resolveNodeTarget("tcp", { public_ip: "203.0.113.12" }), { state: "onSave" });
 });
 
@@ -338,4 +342,14 @@ test("switching to ICMP keeps the node choice; to HTTP the node is set aside, no
   assert.equal(usesNodeTarget(toHttp), false);
   assert.equal(usesNodeTarget(switchDraftKind(toHttp, "icmp").draft), true);
   assert.equal(rowsFromHeaders(undefined).length, 0);
+});
+
+test("a check whose failing source reads unknown on its path reads unmeasured, not down", () => {
+  const failing = { kind: "failing" as const, failing: 1, total: 2, lastAt: 5 };
+  assert.deepEqual(withPathVerdict(failing, [{ state: "unknown", reason: "icmp_filtered" }, { state: "up" }]), { kind: "unmeasured", total: 2, reason: "icmp_filtered", lastAt: 5 });
+  assert.deepEqual(withPathVerdict(failing, [{ state: "down" }, { state: "unknown", reason: "icmp_filtered" }]), failing, "a down path keeps it down");
+  assert.deepEqual(withPathVerdict(failing, [{ state: "unknown", reason: "source_paused" }, { state: "up" }]), failing, "a pause is not the reason");
+  assert.deepEqual(withPathVerdict(failing, []), failing, "no paths read: the results decide");
+  const up = { kind: "up" as const, total: 1, lastAt: 5 };
+  assert.equal(withPathVerdict(up, [{ state: "unknown", reason: "icmp_filtered" }]), up);
 });

@@ -55,6 +55,7 @@ import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealt
 import { DEFAULT_WINDOW, LEGACY_WINDOWS, MONITORING_LAYERS, legacyMonitoringRedirect, legacyWindow, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
 import { serverSpeaksM2a } from "./checkRulesModel";
+import { withPathVerdict } from "./checksModel";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -180,7 +181,8 @@ const criticalOpen = computed(() =>
   (incidentsQuery.data.value?.incidents ?? []).some((i) => i.state === "open" && i.severity === "critical" && !isSnoozed(i, now.value.getTime()) && !i.maintenance),
 );
 const operatorChecks = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
-const healthOf = (m: MonitorView) => monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now());
+const healthOf = (m: MonitorView) =>
+  withPathVerdict(monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now()), (matrix.value?.paths ?? []).filter((p) => p.monitorId === m.id));
 const failingChecks = computed(() => failingMonitors(operatorChecks.value, healthOf));
 
 const pathsProof = useProof(data.pathsQuery);

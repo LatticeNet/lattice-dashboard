@@ -282,6 +282,30 @@ export function runEchoes(run: { sent?: number; lost?: number; rtts_ms?: number[
   return { sent, lost, rtts };
 }
 
+export type RunRow<R> = { kind: "run"; run: R } | { kind: "unmeasured"; reason: string; count: number; newest: R; oldest: R };
+
+/**
+ * The latest runs as the sheet lists them, newest first: a stretch of runs
+ * that measured nothing for the same reason (an agent whose kernel refuses
+ * ICMP reports one every interval) is one row with its count and time span,
+ * not twenty identical lines.
+ */
+export function runRows<R extends { reason?: string }>(runs: readonly R[]): RunRow<R>[] {
+  const out: RunRow<R>[] = [];
+  for (const run of runs) {
+    const last = out[out.length - 1];
+    if (run.reason && last?.kind === "unmeasured" && last.reason === run.reason) {
+      last.count += 1;
+      last.oldest = run;
+    } else if (run.reason) {
+      out.push({ kind: "unmeasured", reason: run.reason, count: 1, newest: run, oldest: run });
+    } else {
+      out.push({ kind: "run", run });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* The matrix                                                           */
 /* ------------------------------------------------------------------ */

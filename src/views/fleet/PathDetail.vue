@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
 import { methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
-import { runEchoes } from "./pathsModel";
+import { runEchoes, runRows } from "./pathsModel";
 import {
   availability,
   formatDeltaLoss,
@@ -170,6 +170,7 @@ const runs = computed(() =>
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
     .slice(0, RUNS_SHOWN),
 );
+const rows = computed(() => runRows(runs.value));
 
 /** Why the path is not up: the newest failed run's error for a down path (the server sends no reason with it), else the reason. */
 const reasonLine = computed(() => {
@@ -312,19 +313,27 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
       <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runs') }}</h3>
       <p v-if="resultsQuery.error.value" class="text-xs text-destructive">{{ resultsQuery.error.value.message }}</p>
       <ul v-else-if="runs.length" class="divide-y divide-border rounded-md border border-border" data-testid="path-runs">
-        <li v-for="run in runs" :key="run.at" class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs" :data-run="run.reason ? 'unmeasured' : run.success ? 'ok' : 'fail'">
-          <span class="min-w-0 text-muted-foreground">{{ formatDateTime(run.at) }}</span>
-          <span class="font-mono tabular">{{ run.latency_ms !== undefined && !run.reason ? formatMs(run.latency_ms) : '' }}</span>
-          <!-- A run with a reason measured nothing: not a failure, and not red. -->
-          <span v-if="run.reason" class="text-end text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runUnmeasured') }}</span>
-          <span v-else :class="cn('text-end font-medium', run.success ? 'text-foreground' : 'text-destructive')">{{ run.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
-          <span v-if="runEchoes(run)" class="col-span-3 break-words font-mono text-muted-foreground tabular" data-testid="run-echoes">
-            <span :class="runEchoes(run)!.lost > 0 ? 'text-destructive' : ''">{{ $t('fleet.monitoring.paths.sheet.echoes', { sent: runEchoes(run)!.sent, lost: runEchoes(run)!.lost }) }}</span>
-            <template v-if="runEchoes(run)!.rtts.length">: {{ runEchoes(run)!.rtts.join(' ') }}</template>
-          </span>
-          <span v-if="run.reason" class="col-span-3 break-words text-muted-foreground">{{ reasonText(run.reason) }}</span>
-          <span v-else-if="run.error" class="col-span-3 break-words text-destructive">{{ run.error }}</span>
-        </li>
+        <template v-for="row in rows" :key="row.kind === 'run' ? row.run.at : `${row.reason}-${row.newest.at}`">
+          <!-- A stretch of runs that measured nothing for one reason: one row, not one per interval. -->
+          <li v-if="row.kind === 'unmeasured'" class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs" data-run="unmeasured">
+            <span class="min-w-0 text-muted-foreground">
+              {{ row.count > 1 ? $t('fleet.monitoring.paths.sheet.runSpan', { from: formatDateTime(row.oldest.at), to: formatDateTime(row.newest.at) }) : formatDateTime(row.newest.at) }}
+            </span>
+            <span class="text-end text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runsUnmeasured', { n: row.count }, row.count) }}</span>
+            <span class="col-span-2 break-words text-muted-foreground">{{ reasonText(row.reason) }}</span>
+            <span v-if="row.newest.error" class="col-span-2 break-words font-mono text-muted-foreground">{{ row.newest.error }}</span>
+          </li>
+          <li v-else class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs" :data-run="row.run.success ? 'ok' : 'fail'">
+            <span class="min-w-0 text-muted-foreground">{{ formatDateTime(row.run.at) }}</span>
+            <span class="font-mono tabular">{{ row.run.latency_ms !== undefined ? formatMs(row.run.latency_ms) : '' }}</span>
+            <span :class="cn('text-end font-medium', row.run.success ? 'text-foreground' : 'text-destructive')">{{ row.run.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
+            <span v-if="runEchoes(row.run)" class="col-span-3 break-words font-mono text-muted-foreground tabular" data-testid="run-echoes">
+              <span :class="runEchoes(row.run)!.lost > 0 ? 'text-destructive' : ''">{{ $t('fleet.monitoring.paths.sheet.echoes', { sent: runEchoes(row.run)!.sent, lost: runEchoes(row.run)!.lost }) }}</span>
+              <template v-if="runEchoes(row.run)!.rtts.length">: {{ runEchoes(row.run)!.rtts.join(' ') }}</template>
+            </span>
+            <span v-if="row.run.error" class="col-span-3 break-words text-destructive">{{ row.run.error }}</span>
+          </li>
+        </template>
       </ul>
       <p v-else-if="resultsQuery.data.value !== undefined" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runsEmpty') }}</p>
     </section>

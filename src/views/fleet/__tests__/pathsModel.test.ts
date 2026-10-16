@@ -36,6 +36,7 @@ import {
   reasonCode,
   visibleMatrix,
   runEchoes,
+  runRows,
   UNKNOWN_REASONS,
 } from "../pathsModel.ts";
 
@@ -369,4 +370,21 @@ test("every unknown reason has a sentence and a cell form in both locales", () =
       assert.equal(typeof paths.reasonShort[code], "string", `reasonShort.${code}`);
     }
   }
+});
+
+test("runs that measured nothing for one reason are one row with a count, newest first", () => {
+  const runs = [
+    { at: "5", reason: "icmp_not_permitted" },
+    { at: "4", reason: "icmp_not_permitted" },
+    { at: "3", reason: "icmp_not_permitted" },
+    { at: "2", success: true },
+    { at: "1", reason: "destination_refused" },
+    { at: "0", reason: "icmp_not_permitted" },
+  ];
+  const rows = runRows(runs);
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "run" ? `run ${r.run.at}` : `${r.reason} x${r.count} ${r.newest.at}..${r.oldest.at}`)),
+    ["icmp_not_permitted x3 5..3", "run 2", "destination_refused x1 1..1", "icmp_not_permitted x1 0..0"],
+  );
+  assert.deepEqual(runRows([]), []);
 });
