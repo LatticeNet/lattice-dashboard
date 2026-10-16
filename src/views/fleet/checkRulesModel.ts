@@ -275,31 +275,53 @@ export function parseIPv6(text: string): number[] | undefined {
 }
 
 function v4Refused(o: number[]): boolean {
-  const [a, b, c, d] = o as [number, number, number, number];
+  const [a, b, c] = o as [number, number, number, number];
   if (a === 0) return true; // 0.0.0.0/8, "this network" and unspecified
   if (a === 127) return true; // loopback
   if (a === 10) return true; // RFC 1918
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 169 && b === 254) return true; // link-local and cloud metadata
-  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT, RFC 6598
+  if (a === 192 && b === 0 && c === 0) return true; // IETF protocol assignments, RFC 6890
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking, RFC 2544
   if (a >= 224 && a <= 239) return true; // multicast
-  if (a === 255 && b === 255 && c === 255 && d === 255) return true; // broadcast
+  if (a >= 240) return true; // reserved, RFC 1112, broadcast included
   return false;
 }
 
+/** The IPv4 address two 16-bit groups carry. */
+function embedded(hi: number, lo: number): number[] {
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff];
+}
+
 function v6Refused(g: number[]): boolean {
-  const zeroUntil = (n: number) => g.slice(0, n).every((x) => x === 0);
-  if (zeroUntil(8)) return true; // ::
-  if (zeroUntil(7) && g[7] === 1) return true; // ::1
-  if (zeroUntil(5) && g[5] === 0xffff) {
-    // An IPv4-mapped address is judged as its IPv4 address.
-    return v4Refused([g[6]! >> 8, g[6]! & 0xff, g[7]! >> 8, g[7]! & 0xff]);
-  }
+  const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  // An IPv4-mapped address is judged as its IPv4 address.
+  if (zero(0, 5) && g[5] === 0xffff) return v4Refused(embedded(g[6]!, g[7]!));
+  if (zero(0, 8)) return true; // ::
+  if (zero(0, 7) && g[7] === 1) return true; // ::1
   if ((g[0]! & 0xffc0) === 0xfe80) return true; // link-local
   if ((g[0]! & 0xff00) === 0xff00) return true; // multicast
   if ((g[0]! & 0xfe00) === 0xfc00) return true; // unique local, the metadata fd00:ec2::254 among them
+  // IPv6 forms that reach IPv4 space: refused outright, or judged by the IPv4 address they embed.
+  if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return true; // local-use NAT64, RFC 8215
+  if (zero(0, 6)) return true; // IPv4-compatible, deprecated
+  if ((g[0]! & 0xffc0) === 0xfec0) return true; // site-local, deprecated
+  if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo
+  if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4Refused(embedded(g[6]!, g[7]!)); // NAT64, RFC 6052
+  if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return v4Refused(embedded(g[6]!, g[7]!)); // IPv4-translated, RFC 2765
+  if (g[0] === 0x2002) return v4Refused(embedded(g[1]!, g[2]!)); // 6to4, RFC 3056
   return false;
+}
+
+/**
+ * A node's public IPv4 as the server takes it for ICMP: a dotted IPv4 that
+ * the destination rule would not refuse; undefined otherwise.
+ */
+export function publicIPv4(raw: string | undefined): string | undefined {
+  const v4 = parseIPv4((raw ?? "").trim());
+  return v4 && !v4Refused(v4) ? (raw ?? "").trim() : undefined;
 }
 
 /**

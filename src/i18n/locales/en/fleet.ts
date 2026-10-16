@@ -1651,6 +1651,7 @@ export default {
             saved: "Saved as {set}.",
             default: "Empty passes {set}.",
             redirects: "Redirects are not followed: a 3xx is the answer.",
+            olderAgents: "Agents older than this release cannot judge statuses or send headers; until they update, their paths read unknown (agent too old) for a check that sets either.",
             tooMany: "At most {max} entries; this list has {n}.",
             notStatus: "{entry} is not a status or a range. A status is three digits from 100 to 599; a range is two of them joined by a hyphen.",
             backwards: "{entry} runs backwards.",
@@ -1903,6 +1904,7 @@ export default {
           config_off: "probes paused",
           pairs_off: "every pair stopped",
           no_source: "no source can probe it",
+          source_method: "its sources cannot run the method",
         },
         sourceNote: {
           unknown_node: "deleted node",

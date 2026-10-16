@@ -27,7 +27,7 @@ import type {
   Node,
 } from "@/lib/api/types";
 import { latencyClass } from "@/lib/latency";
-import { parseIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
@@ -547,7 +547,7 @@ export function pathSetPreview(draft: LatencyDraft, plan: Pick<LatencyProbePlan,
     if (method === "icmp" && !support.ok) row.refusal = support.reason;
     for (const pn of targets) {
       if (pn.node_id === source) continue;
-      const ipv4 = !!parseIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip || "");
+      const ipv4 = !!publicIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip);
       // A line port the plan knows; none when the plan says why there is none; else the server resolves it on save.
       const tcp = pn.endpoint && pn.target !== "not_probeable" ? "yes" : pn.target === "not_probeable" || pn.endpoint_note ? "none" : "onSave";
       const viaTcp = () => {

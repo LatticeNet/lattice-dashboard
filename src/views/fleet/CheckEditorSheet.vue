@@ -192,6 +192,8 @@ const headerProblemsNow = computed(() => draftHeaderProblems(draft.value, newChe
 const origin = computed(() => (isHttpsUrl(draft.value.target) ? monitorOrigin(draft.value.target) : undefined));
 const runSeconds = computed(() => icmpRunSeconds(Number(draft.value.packets) || 1, Number(draft.value.timeoutSec) || 0));
 const showHttpExpect = computed(() => draft.value.type === "http" && m2a.value);
+/** A status set other than the default, or any header: only agents of this release run such a check. */
+const needsCurrentAgent = computed(() => showHttpExpect.value && (draft.value.headers.length > 0 || (statusSet.value.ok && statusSet.value.canonical !== EXPECT_STATUS_DEFAULT)));
 
 function problemOf(p: string): string {
   return t(`fleet.monitoring.checks.editor.problem.${p}`, {
@@ -512,6 +514,8 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           </p>
           <p v-else id="check-status-error" role="alert" class="text-xs text-destructive">{{ statusSetText(statusSet.problem) }}</p>
           <HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="newCheck && editing" />
+          <!-- The server holds such a check from agents that predate M2a (monitorNeedsCurrentAgent); the node list cannot tell which those are. -->
+          <p v-if="needsCurrentAgent" class="text-xs text-muted-foreground" data-testid="check-older-agents">{{ $t('fleet.monitoring.checks.editor.expectStatus.olderAgents') }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
       </fieldset>

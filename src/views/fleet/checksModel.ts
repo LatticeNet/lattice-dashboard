@@ -20,7 +20,7 @@
 import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorType, MonitorUpdateInput, MonitorView, Node } from "@/lib/api/types";
 
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
-import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseIPv4, parseStatusSet, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
 
@@ -443,8 +443,9 @@ export type NodeTargetResolution =
  */
 export function resolveNodeTarget(kind: string, node: Pick<Node, "public_ip"> | undefined, planNode?: Pick<LatencyProbeNode, "icmp_target" | "endpoint" | "endpoint_note" | "target">): NodeTargetResolution {
   if (kind === "icmp") {
-    const ip = planNode?.icmp_target || node?.public_ip || "";
-    return parseIPv4(ip) ? { state: "resolved", endpoint: ip } : { state: "refused", reason: "no_public_ipv4" };
+    // The server pings only a public IPv4 the destination rule accepts (latencyPublicIPv4).
+    const ip = publicIPv4(planNode?.icmp_target || node?.public_ip);
+    return ip ? { state: "resolved", endpoint: ip } : { state: "refused", reason: "no_public_ipv4" };
   }
   if (kind === "tcp") {
     if (planNode?.endpoint && planNode.target !== "not_probeable") return { state: "resolved", endpoint: planNode.endpoint };

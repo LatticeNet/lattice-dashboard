@@ -1635,6 +1635,7 @@ export default {
             saved: "保存为 {set}。",
             default: "留空时 {set} 算通。",
             redirects: "不跟随重定向：3xx 就是结果。",
+            olderAgents: "早于这个版本的 agent 不能判断状态码，也不能发送请求头；检查设置了其中任何一项时，在它们升级之前，这些路径显示为未知（agent 太旧）。",
             tooMany: "最多 {max} 项，这里有 {n} 项。",
             notStatus: "{entry} 不是状态码也不是范围。状态码是 100 到 599 的三位数，范围是用连字符连起来的两个状态码。",
             backwards: "{entry} 的范围反了。",
@@ -1887,6 +1888,7 @@ export default {
           config_off: "探测已暂停",
           pairs_off: "所有探测对都已停止",
           no_source: "没有源节点能探测它",
+          source_method: "它的源节点不能运行这种方式",
         },
         sourceNote: {
           unknown_node: "节点已删除",

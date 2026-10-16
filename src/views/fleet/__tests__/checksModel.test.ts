@@ -228,6 +228,7 @@ test("resolution: ICMP to the public IPv4, TCP to the plan's line port or on sav
   assert.deepEqual(resolveNodeTarget("icmp", { public_ip: "203.0.113.12" }, { icmp_target: "198.51.100.4", target: "probed" }), { state: "resolved", endpoint: "198.51.100.4" });
   assert.deepEqual(resolveNodeTarget("icmp", {}), { state: "refused", reason: "no_public_ipv4" });
   assert.deepEqual(resolveNodeTarget("icmp", { public_ip: "2001:db8::1" }), { state: "refused", reason: "no_public_ipv4" });
+  assert.deepEqual(resolveNodeTarget("icmp", { public_ip: "10.0.0.5" }), { state: "refused", reason: "no_public_ipv4" }, "a private address is not pinged");
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint: "203.0.113.12:443", target: "probed" }), { state: "resolved", endpoint: "203.0.113.12:443" });
   assert.deepEqual(resolveNodeTarget("tcp", {}, { endpoint_note: "udp_only", target: "not_probeable" }), { state: "refused", reason: "udp_only" });
   assert.deepEqual(resolveNodeTarget("tcp", {}, { target: "not_probeable" }), { state: "refused", reason: "no_tcp_line" });

@@ -15,6 +15,7 @@ import {
   parseIPv4,
   parseIPv6,
   parseStatusSet,
+  publicIPv4,
   serverSpeaksM2a,
   sourceSupport,
 } from "../checkRulesModel.ts";
@@ -154,9 +155,16 @@ test("addresses an agent refuses to dial are refused", () => {
     "127.0.0.1", "::1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "169.254.1.1", "fd00:ec2::254",
     "fc00::1", "fe80::1", "224.0.0.1", "ff02::1", "0.0.0.0", "::", "0.1.2.3", "100.64.0.1", "255.255.255.255",
     "::ffff:10.0.0.1", "::ffff:127.0.0.1", "[::1]", "fe80::1%eth0",
+    // lattice-sdk c9739fa: reserved and benchmarking IPv4, and IPv6 forms that reach IPv4 space.
+    "192.0.0.8", "198.18.0.1", "198.19.255.255", "240.0.0.1", "64:ff9b::a00:1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe",
+    "::ffff:0:a00:1", "2002:a00:1::1", "2002:7f00:1::", "64:ff9b:1::808:808", "::808:808", "fec0::1",
+    "2001:0:4136:e378:8000:63bf:3fff:fdd2",
   ];
   for (const raw of refused) assert.equal(destinationRefused(raw), true, raw);
-  for (const raw of ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "::ffff:1.1.1.1", "203.0.113.7", "172.32.0.1", "100.128.0.1"]) assert.equal(destinationRefused(raw), false, raw);
+  for (const raw of [
+    "1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "::ffff:1.1.1.1", "203.0.113.7", "172.32.0.1", "100.128.0.1",
+    "64:ff9b::808:808", "2002:808:808::1", "192.0.1.1", "198.20.0.1", "223.255.255.1",
+  ]) assert.equal(destinationRefused(raw), false, raw);
   // A name is judged by the agent when it resolves it.
   assert.equal(destinationRefused("status.example.com"), undefined);
 });
@@ -186,4 +194,9 @@ test("the destination rule per kind: icmp takes a global IPv4, tcp and http refu
   assert.equal(destinationProblem("http", "https://user:pw@example.com/"), "userinfo");
   assert.equal(destinationProblem("tls", "10.0.0.1:443"), undefined);
   assert.equal(destinationProblem("http", ""), undefined);
+});
+
+test("a node's public IPv4 for ICMP is a dotted IPv4 the destination rule accepts", () => {
+  assert.equal(publicIPv4(" 203.0.113.9 "), "203.0.113.9");
+  for (const raw of ["10.0.0.5", "100.64.1.1", "2001:db8::1", "", undefined, "example.com"]) assert.equal(publicIPv4(raw), undefined, String(raw));
 });
