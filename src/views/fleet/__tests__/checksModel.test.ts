@@ -34,7 +34,6 @@ function monitor(over: Partial<MonitorView> = {}): MonitorView {
     enabled: true,
     version: 4,
     alert: "down",
-    alert_after: 2,
     ...over,
   };
 }
@@ -42,9 +41,11 @@ function monitor(over: Partial<MonitorView> = {}): MonitorView {
 test("groups: operator checks first, the path set's generated checks under it, edits only with a version", () => {
   assert.equal(checkGroup(monitor()), "operator");
   assert.equal(checkGroup(monitor({ managed_by: "latency" })), "pathset");
-  assert.equal(canEditCheck(monitor()), true);
-  assert.equal(canEditCheck(monitor({ version: undefined })), false, "a server without the edit route sends no version");
-  assert.equal(canEditCheck(monitor({ managed_by: "latency" })), false);
+  assert.equal(canEditCheck(monitor(), true), true);
+  assert.equal(canEditCheck(monitor({ version: undefined }), true), true, "a check never edited is version zero, left out of the list");
+  assert.equal(canEditCheck(monitor(), false), false, "a server without the edit route");
+  assert.equal(canEditCheck(monitor({ managed_by: "latency" }), true), false);
+  assert.equal(buildUpdate(monitor({ version: undefined }), { ...draftFromMonitor(monitor()), intervalSec: 60 }).version, 0);
 });
 
 test("names: suggested from the method and the target until the operator types one", () => {
@@ -54,7 +55,7 @@ test("names: suggested from the method and the target until the operator types o
   assert.equal(suggestName("tls", "  "), "");
 });
 
-test("problems: target shape, cadence bounds, timeout under interval, sources, threshold and alert count", () => {
+test("problems: target shape, cadence bounds, timeout under interval, sources and threshold", () => {
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()) }), []);
   assert.deepEqual(draftProblems({ ...emptyDraft("tcp"), target: "https://x" }), ["target"]);
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), intervalSec: 5 }), ["interval"]);
@@ -62,8 +63,6 @@ test("problems: target shape, cadence bounds, timeout under interval, sources, t
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), timeoutSec: 0 }), ["timeout"]);
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), nodeIds: [] }), ["sources"]);
   assert.deepEqual(draftProblems({ ...emptyDraft("tls"), target: "example.com:443", thresholdDays: 0 }), ["threshold"]);
-  assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alertAfter: 0 }), ["alertAfter"]);
-  assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alert: "off", alertAfter: 0 }), []);
 });
 
 test("edit: only changed fields with the version; kind and target never ride an edit", () => {
@@ -93,7 +92,7 @@ test("create: tls carries a threshold and no nodes; agent checks carry their sou
   const tls = buildCreate({ ...emptyDraft("tls"), target: "example.com:443" }, false);
   assert.deepEqual(tls, { name: "TLS example.com:443", type: "tls", target: "example.com:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false });
   const http = buildCreate({ ...draftFromMonitor(monitor()), nodeIds: ["hk", "sh"] }, true);
-  assert.deepEqual(http, { name: "Status page", type: "http", target: "https://status.example.com/health", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: ["hk", "sh"], alert: "down", alert_after: 2 });
+  assert.deepEqual(http, { name: "Status page", type: "http", target: "https://status.example.com/health", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: ["hk", "sh"], alert: "down" });
 });
 
 test("pause one source of a check", () => {

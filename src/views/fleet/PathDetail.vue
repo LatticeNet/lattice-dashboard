@@ -45,7 +45,7 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const { reasonText, stateLabel, windowLong } = usePathsCopy();
+const { whyText, stateLabel, windowLong } = usePathsCopy();
 
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */
@@ -154,6 +154,17 @@ const runs = computed(() =>
     .slice(0, RUNS_SHOWN),
 );
 
+/** Why the path is not up: the newest failed run's error for a down path (the server sends no reason with it), else the reason. */
+const reasonLine = computed(() => {
+  const p = props.path;
+  if (!p) return "";
+  if (p.state === "down" && !p.reason) {
+    const failed = runs.value.find((r) => !r.success && r.error);
+    if (failed?.error) return failed.error;
+  }
+  return whyText(p);
+});
+
 /* ---- Table view ---- */
 
 const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
@@ -170,8 +181,8 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
         <span v-if="path?.lastAt" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.lastRun', { age: formatRelativeTime(path.lastAt) }) }}</span>
         <span v-else-if="path" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.noRun') }}</span>
       </div>
-      <p v-if="path && path.state !== 'up'" :class="cn('text-sm', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
-        {{ reasonText(path.reason) }}
+      <p v-if="path && path.state !== 'up'" :class="cn('text-sm break-words', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
+        {{ reasonLine }}
       </p>
     </div>
 

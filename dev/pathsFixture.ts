@@ -199,7 +199,7 @@ export function operatorChecks(): MonitorView[] {
     node_ids: STATUS_SOURCES(),
     enabled: true,
     created_at: iso(-40 * 24 * HOUR),
-    ...(old ? {} : { version: 3, paused_node_ids: [id("[cd]-racknerd-la")], alert: "down", alert_after: 2 }),
+    ...(old ? {} : { version: 3, paused_node_ids: [id("[cd]-racknerd-la")], alert: "down" }),
   };
   const cert: MonitorView = {
     id: "mon_api_cert",
@@ -212,7 +212,8 @@ export function operatorChecks(): MonitorView[] {
     assign_all: false,
     enabled: true,
     created_at: iso(-90 * 24 * HOUR),
-    ...(old ? {} : { version: 1, alert: "down", alert_after: 2 }),
+    // Never edited: version zero, which the server leaves out of the list.
+    ...(old ? {} : { alert: "off" }),
   };
   return [status, cert];
 }
@@ -252,7 +253,8 @@ function pathFrom(shape: Shape, window: MonitorWindow, base: Omit<PathView, "sta
     last_at: last ? new Date((Number(last.t) + now.step) * 1000 - 20_000).toISOString() : undefined,
   };
   if (unknownReason) return { ...path, state: "unknown", reason: unknownReason };
-  if (downReason) return { ...path, state: "down", reason: downReason };
+  // The server sends a down path without a reason; the error is in the path's runs.
+  if (downReason) return { ...path, state: "down", reason: "" };
   if (!last) return { ...path, state: "unknown", reason: "no_results" };
   return path;
 }
@@ -353,7 +355,7 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
         node_id: source,
         at: new Date((Number(b.t) + 30) * 1000).toISOString(),
         success: !failed,
-        latency_ms: failed ? undefined : b.p50_ms,
+        latency_ms: failed ? undefined : (b.p50_ms ?? undefined),
         error: failed ? (shape.behaviour === "offline" ? `dial tcp ${endpoint}: connect: connection refused` : `dial tcp ${endpoint}: i/o timeout`) : undefined,
       });
     }

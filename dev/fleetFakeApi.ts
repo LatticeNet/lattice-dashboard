@@ -546,7 +546,7 @@ export const api = {
       if (pathsOld()) return missingRoute("/api/monitors/update");
       const held = monitors.find((m) => m.id === input.id);
       if (!held) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "monitor not found"); });
-      if (held.managed_by || input.version !== held.version) {
+      if (held.managed_by || input.version !== (held.version ?? 0)) {
         return delay(undefined).then(() => {
           throw new ApiError(409, "conflict", held.managed_by ? "generated checks are changed through the path set" : "monitor changed since it was read");
         });

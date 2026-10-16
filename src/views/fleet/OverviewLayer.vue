@@ -66,7 +66,8 @@ function itemFor(item: PathAttention): AttentionItem {
       sources.length === 1
         ? t("fleet.monitoring.overview.attention.down", { target: item.targetName, source: sources[0] })
         : t("fleet.monitoring.overview.attention.downMany", { target: item.targetName, n: sources.length, total: totalSources });
-    const proof = [reasonText(lead.reason), lead.samples > 0 && lead.loss !== undefined ? t("fleet.monitoring.overview.attention.loss", { loss: formatLoss(lead.loss), window: windowLong(props.window) }) : ""]
+    // The server sends a down path without a reason; the error is in its runs, one tap away.
+    const proof = [lead.reason ? reasonText(lead.reason) : "", lead.samples > 0 && lead.loss !== undefined ? t("fleet.monitoring.overview.attention.loss", { loss: formatLoss(lead.loss), window: windowLong(props.window) }) : ""]
       .filter(Boolean)
       .join(" · ");
     return {

@@ -195,6 +195,8 @@ export const UNKNOWN_REASONS = [
   "path_set_paused",
   "check_paused",
   "source_unavailable",
+  "not_probeable",
+  "no_data",
   "no_tcp_line",
   "udp_only",
   "no_public_address",
@@ -223,11 +225,9 @@ const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
   monitor_paused: "check_paused",
   check_disabled: "check_paused",
   disabled: "check_paused",
-  not_probeable: "no_tcp_line",
   unknown_node: "source_unavailable",
   node_disabled: "source_unavailable",
   no_source: "source_unavailable",
-  no_data: "no_results",
   never_reported: "no_results",
   stale: "results_stopped",
   quiet: "results_stopped",
@@ -341,8 +341,8 @@ export function cellKey(rowKey: string, source: string): string {
   return `${rowKey}|${source}`;
 }
 
-function epoch(value: string | number | undefined): number | undefined {
-  if (value === undefined || value === "") return undefined;
+function epoch(value: string | number | undefined | null): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value > 1e12 ? value : value * 1000;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;

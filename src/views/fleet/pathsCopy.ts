@@ -20,6 +20,17 @@ export function usePathsCopy() {
     return code ? t(`fleet.monitoring.paths.reason.${code}`) : reason;
   }
 
+  /**
+   * Why a path is not up, in words: its reason when it has one (unknown
+   * paths), and for a down path, which the server sends without one, that
+   * its latest runs failed. The failure itself is in the path's runs.
+   */
+  function whyText(path: { state: PathState; reason?: string }): string {
+    if (path.reason) return reasonText(path.reason);
+    if (path.state === "down") return t("fleet.monitoring.paths.reason.failing");
+    return reasonText(undefined);
+  }
+
   function stateLabel(state: PathState): string {
     return t(`fleet.monitoring.paths.state.${state}`);
   }
@@ -32,5 +43,5 @@ export function usePathsCopy() {
     return t(`fleet.monitoring.window.long.${window}`);
   }
 
-  return { reasonText, stateLabel, groupLabel, windowLong };
+  return { reasonText, whyText, stateLabel, groupLabel, windowLong };
 }

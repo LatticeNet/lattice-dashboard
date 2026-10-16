@@ -57,7 +57,9 @@ export function usePathsData(options: PathsDataOptions): PathsData {
     async (signal) => {
       if (!options.canRead.value || source.value === "legacy") return null;
       try {
-        return await api.monitors.settings.get({ signal });
+        const body = await api.monitors.settings.get({ signal });
+        // Anything but the settings object (an HTML fallback) is a server without them.
+        return body && typeof body === "object" && typeof body.fine_retention_days === "number" ? body : null;
       } catch (error) {
         // An older server has no settings; a reader without the scope sees none. Neither is an error here.
         if (isMissingRoute(error) || (error as { status?: number }).status === 403) return null;

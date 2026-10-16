@@ -30,32 +30,30 @@ export const FINE_STEP_SEC = 300;
 /** Coarse rollups. */
 export const COARSE_STEP_SEC = 3600;
 export const COARSE_RETENTION_DAYS = 35;
-/** Raw rows kept per path. */
-export const RAW_ROWS_PER_PATH = 1440;
+/** Raw rows are folded at one minute. */
+export const RAW_STEP_SEC = 60;
 /** The longest window raw rows answer; longer windows read rollups. */
-export const RAW_MAX_WINDOW_SEC = 6 * 3600;
+export const RAW_MAX_WINDOW_SEC = 3600;
 
 /**
- * The step the server is expected to answer for a window (design 29 D5): the
- * smallest multiple of the finest tier that covers the window giving at most
- * MAX_POINTS points. Raw rows cover up to six hours (fewer at short
- * intervals, since 1440 rows are kept); fine rollups cover the retention
- * setting; coarse rollups the rest.
+ * The step the server answers for a window (design 29 D5, as lattice-server
+ * pathSeriesStep has it): the finest tier that covers the window (raw rows
+ * folded at a minute up to an hour, five-minute rollups up to the fine
+ * retention, hourly rollups beyond), then the smallest multiple of its
+ * resolution that keeps the series within MAX_POINTS (the window starts on a
+ * step boundary, so it holds one partial step more) and is no shorter than
+ * the check's interval, so every whole step expects a run.
  *
- *   1h raw (60 at a 60 s interval), 6h raw (360), 24h 5 min (288),
- *   3d 10 min (432), 7d 15 min (672), 14d 30 min (672)
+ *   1h 1 min (60), 6h 5 min (72), 24h 5 min (288), 3d 10 min (432),
+ *   7d 15 min (672), 14d 30 min with 14 days of fine history, else 1 h
  */
 export function expectedStepSeconds(window: MonitorWindow, intervalSec = 60, fineRetentionDays = 7): number {
   const span = WINDOW_SECONDS[window];
-  const interval = Math.max(1, Math.round(intervalSec));
-  const tiers = [
-    { res: interval, covers: Math.min(RAW_MAX_WINDOW_SEC, RAW_ROWS_PER_PATH * interval) },
-    { res: FINE_STEP_SEC, covers: Math.max(0, fineRetentionDays) * 86400 },
-    { res: COARSE_STEP_SEC, covers: COARSE_RETENTION_DAYS * 86400 },
-  ];
-  const tier = tiers.find((t) => t.covers >= span) ?? tiers[tiers.length - 1]!;
-  const points = span / tier.res;
-  return tier.res * Math.max(1, Math.ceil(points / MAX_POINTS));
+  const base = span <= RAW_MAX_WINDOW_SEC ? RAW_STEP_SEC : span <= Math.max(0, fineRetentionDays) * 86400 ? FINE_STEP_SEC : COARSE_STEP_SEC;
+  const perStep = base * (MAX_POINTS - 1);
+  let k = span > perStep ? Math.ceil(span / perStep) : 1;
+  if (intervalSec > base) k = Math.max(k, Math.ceil(intervalSec / base));
+  return k * base;
 }
 
 /* ------------------------------------------------------------------ */

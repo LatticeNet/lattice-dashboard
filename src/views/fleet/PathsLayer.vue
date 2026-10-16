@@ -65,7 +65,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { reasonText, stateLabel, groupLabel, windowLong } = usePathsCopy();
+const { reasonText, whyText, stateLabel, groupLabel, windowLong } = usePathsCopy();
 const wide = useMediaQuery("(min-width: 768px)");
 
 const matrix = computed(() => props.data.matrix.value);
@@ -130,7 +130,7 @@ function cellLabel(path: PathItem): string {
   const parts = [stateLabel(path.state)];
   if (path.p50Ms !== undefined) parts.push(`p50 ${formatMs(path.p50Ms)}`);
   if (path.loss !== undefined && path.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(path.loss) }));
-  if (path.state !== "up") parts.push(reasonText(path.reason));
+  if (path.state !== "up") parts.push(whyText(path));
   return t("fleet.monitoring.paths.cell.label", { source: path.sourceName, target: path.targetName, state: parts.join(", ") });
 }
 
@@ -197,7 +197,7 @@ const pauseAction = computed<{ kind: "pathset" | "check"; paused: boolean } | un
     return { kind: "pathset", paused: !pairEnabledIn(draft, p.source, p.targetNode) };
   }
   const monitor = openMonitor.value;
-  if (!p.managed && monitor && canEditCheck(monitor) && p.source) return { kind: "check", paused: sourcePaused(monitor, p.source) };
+  if (!p.managed && monitor && canEditCheck(monitor, props.data.source.value === "paths") && p.source) return { kind: "check", paused: sourcePaused(monitor, p.source) };
   return undefined;
 });
 
@@ -364,7 +364,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                           </TooltipTrigger>
                           <TooltipContent class="max-w-72">
                             <p class="font-medium">{{ stateLabel(cell.path.state) }}</p>
-                            <p class="text-xs">{{ reasonText(cell.path.reason) }}</p>
+                            <p class="text-xs">{{ whyText(cell.path) }}</p>
                           </TooltipContent>
                         </Tooltip>
                       </template>
@@ -410,7 +410,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                           <span class="min-w-0 ps-1">
                             <span class="block truncate text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.list.from', { source: cell.source.name }) }}</span>
                             <span v-if="cell.path.state !== 'up'" :class="cn('block text-xs', cell.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
-                              {{ stateLabel(cell.path.state) }}: {{ reasonText(cell.path.reason) }}
+                              {{ stateLabel(cell.path.state) }}: {{ whyText(cell.path) }}
                             </span>
                           </span>
                           <span class="text-end">

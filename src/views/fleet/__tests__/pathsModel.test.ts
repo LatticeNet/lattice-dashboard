@@ -117,7 +117,9 @@ test("reasons: known codes and their aliases read as one code, others stay as se
   assert.equal(reasonCode("pair_off"), "path_paused");
   assert.equal(reasonCode("config_off"), "path_set_paused");
   assert.equal(reasonCode("Agent Offline"), "agent_offline");
-  assert.equal(reasonCode("not_probeable"), "no_tcp_line");
+  // The four reasons the design 29 server sends.
+  for (const code of ["agent_offline", "source_paused", "not_probeable", "no_data"]) assert.equal(reasonCode(code), code);
+  assert.equal(isChosenUnknown("source_paused"), true, "the server's one pause reason covers every pause");
   assert.equal(reasonCode("something new"), undefined);
   assert.equal(reasonCode(""), undefined);
   assert.equal(isChosenUnknown("path_paused"), true);

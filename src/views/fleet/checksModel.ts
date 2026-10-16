@@ -31,8 +31,6 @@ export const CHECK_KINDS: readonly MonitorType[] = ["tcp", "http", "tls"];
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
 export const CHECK_MAX_TIMEOUT_SEC = 300;
-export const ALERT_DEFAULT_AFTER = 2;
-export const ALERT_MAX_AFTER = 20;
 
 export type CheckGroup = "operator" | "pathset";
 export const CHECK_GROUP_ORDER: readonly CheckGroup[] = ["operator", "pathset"];
@@ -41,9 +39,14 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
   return monitor.managed_by ? "pathset" : "operator";
 }
 
-/** Whether the server can edit this check: it sent a version and the check is an operator's. */
-export function canEditCheck(monitor: Pick<MonitorView, "managed_by" | "version">): boolean {
-  return !monitor.managed_by && typeof monitor.version === "number";
+/**
+ * Whether the console may edit this check: the server has the edit route
+ * (it answered the paths read, design 29) and the check is an operator's.
+ * The version is not the signal: a check never edited is version zero, which
+ * the server leaves out of the list.
+ */
+export function canEditCheck(monitor: Pick<MonitorView, "managed_by">, serverEdits: boolean): boolean {
+  return serverEdits && !monitor.managed_by;
 }
 
 export interface CheckDraft {
@@ -56,8 +59,8 @@ export interface CheckDraft {
   assignAll: boolean;
   nodeIds: string[];
   pausedNodeIds: string[];
+  /** down pages when a source fails twice in a row; off never pages. */
   alert: "off" | "down";
-  alertAfter: number;
 }
 
 export function emptyDraft(type: MonitorType = "http"): CheckDraft {
@@ -73,7 +76,6 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     nodeIds: [],
     pausedNodeIds: [],
     alert: "down",
-    alertAfter: ALERT_DEFAULT_AFTER,
   };
 }
 
@@ -94,7 +96,6 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     nodeIds: uniqueSorted(monitor.node_ids),
     pausedNodeIds: uniqueSorted(monitor.paused_node_ids),
     alert: monitor.alert === "off" ? "off" : "down",
-    alertAfter: monitor.alert_after && monitor.alert_after > 0 ? monitor.alert_after : ALERT_DEFAULT_AFTER,
   };
 }
 
@@ -114,7 +115,7 @@ export function suggestName(type: string, target: string): string {
   return `${type.toUpperCase()} ${shown}`.slice(0, 80);
 }
 
-export type DraftProblem = "target" | "interval" | "timeout" | "timeoutVsInterval" | "sources" | "threshold" | "alertAfter";
+export type DraftProblem = "target" | "interval" | "timeout" | "timeoutVsInterval" | "sources" | "threshold";
 
 export function draftProblems(draft: CheckDraft): DraftProblem[] {
   const out: DraftProblem[] = [];
@@ -129,10 +130,6 @@ export function draftProblems(draft: CheckDraft): DraftProblem[] {
     if (!Number.isInteger(days) || days < 1 || days > TLS_MAX_THRESHOLD_DAYS) out.push("threshold");
   } else if (!draft.assignAll && draft.nodeIds.length === 0) {
     out.push("sources");
-  }
-  if (draft.alert === "down") {
-    const after = Number(draft.alertAfter);
-    if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
   }
   return out;
 }
@@ -177,13 +174,12 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft): MonitorUpd
   }
   const alert: MonitorAlertPolicy = draft.alert;
   if (alert !== before.alert) body.alert = alert;
-  if (alert === "down" && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
   return body;
 }
 
 /** The create body for a new check (or the replacement of one whose method or target changed). */
-export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreateInput & { alert?: MonitorAlertPolicy; alert_after?: number } {
-  const base: MonitorCreateInput & { alert?: MonitorAlertPolicy; alert_after?: number } = {
+export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreateInput & { alert?: MonitorAlertPolicy } {
+  const base: MonitorCreateInput & { alert?: MonitorAlertPolicy } = {
     name: draft.name.trim() || suggestName(draft.type, draft.target),
     type: draft.type,
     target: draft.target.trim(),
@@ -197,10 +193,7 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean): MonitorCreat
     base.assign_all = draft.assignAll;
     if (!draft.assignAll) base.node_ids = uniqueSorted(draft.nodeIds);
   }
-  if (withAlert) {
-    base.alert = draft.alert;
-    if (draft.alert === "down") base.alert_after = Number(draft.alertAfter);
-  }
+  if (withAlert) base.alert = draft.alert;
   return base;
 }
 

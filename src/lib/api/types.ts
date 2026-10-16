@@ -1202,12 +1202,11 @@ export interface MonitorView {
   version?: number;
   /** Sources of this check that are paused one by one; they keep their history. */
   paused_node_ids?: string[];
-  /** off, or down after `alert_after` failed runs in a row. */
+  /** `down` pages when a source fails twice in a row (absent reads as down); `off` never pages. */
   alert?: MonitorAlertPolicy | string;
-  alert_after?: number;
 }
 
-export type MonitorAlertPolicy = "off" | "down" | "down_and_degraded";
+export type MonitorAlertPolicy = "off" | "down";
 
 /** The fields POST /api/monitors/update may change (design 29 D1); 409 on a stale version or a generated check. */
 export interface MonitorUpdateInput {
@@ -1223,7 +1222,6 @@ export interface MonitorUpdateInput {
   node_ids?: string[];
   paused_node_ids?: string[];
   alert?: MonitorAlertPolicy;
-  alert_after?: number;
   enabled?: boolean;
 }
 
@@ -1248,7 +1246,7 @@ export interface PathTargetView {
 export interface PathView {
   /** Source node id; empty for a check the control plane runs (tls). */
   source: string;
-  /** The node the target was resolved from, when it is one. */
+  /** The node the target was resolved from, when it is one; empty otherwise. */
   target_node?: string;
   /** The resolved target as the source dials it. */
   target: string;
@@ -1257,18 +1255,19 @@ export interface PathView {
   managed: boolean;
   method: string;
   state: PathState | string;
-  /** Why the path is unknown (a code), or the newest failure when it is down. */
+  /** Why the path is unknown, a code; empty when the path is up or down. */
   reason?: string;
-  p50_ms?: number;
-  p95_ms?: number;
-  jitter_ms?: number;
+  /** Unmeasured figures are null, so a gap reads apart from a zero. */
+  p50_ms?: number | null;
+  p95_ms?: number | null;
+  jitter_ms?: number | null;
   /** Failure share of the runs heard in the window, 0 to 1. */
-  loss?: number;
+  loss?: number | null;
   samples: number;
   expected: number;
-  /** The same window one period earlier. */
-  prev?: { p50_ms?: number; loss?: number } | null;
-  last_at?: string;
+  /** The same window one period earlier; null when that window heard nothing. */
+  prev?: { p50_ms?: number | null; loss?: number | null } | null;
+  last_at?: string | null;
 }
 
 export interface PathsResponse {
@@ -1281,17 +1280,17 @@ export interface PathsResponse {
 
 /** One bucket of a path series. `n` 0 with `expected` above 0 is a bucket with no data. */
 export interface PathBucket {
-  /** Unix seconds (or an ISO time; the console reads both). */
+  /** RFC 3339 (unix seconds are read too). */
   t: number | string;
   n: number;
   expected: number;
   fail: number;
-  min_ms?: number;
-  p50_ms?: number;
-  p95_ms?: number;
-  max_ms?: number;
-  jitter_ms?: number;
-  loss?: number;
+  min_ms?: number | null;
+  p50_ms?: number | null;
+  p95_ms?: number | null;
+  max_ms?: number | null;
+  jitter_ms?: number | null;
+  loss?: number | null;
   method?: string;
 }
 
@@ -1322,6 +1321,8 @@ export interface MonitorSettings {
   paths: number;
   measured_bytes: number;
   projected_bytes: number;
+  updated_at?: string;
+  updated_by?: string;
 }
 
 /* ---- Latency probes (lattice-sdk model/latency.go) ---- */

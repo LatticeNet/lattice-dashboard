@@ -24,9 +24,9 @@ import {
   visibleRange,
 } from "../pathSeriesModel.ts";
 
-test("steps: the D5 table at a 60 s interval and 7 days of fine history", () => {
+test("steps: the server's rule at a 60 s interval and 7 days of fine history", () => {
   assert.equal(expectedStepSeconds("1h"), 60);
-  assert.equal(expectedStepSeconds("6h"), 60);
+  assert.equal(expectedStepSeconds("6h"), 300);
   assert.equal(expectedStepSeconds("24h"), 300);
   assert.equal(expectedStepSeconds("3d"), 600);
   assert.equal(expectedStepSeconds("7d"), 900);
@@ -35,12 +35,12 @@ test("steps: the D5 table at a 60 s interval and 7 days of fine history", () => 
   assert.equal(expectedStepSeconds("14d", 60, 14), 1800);
 });
 
-test("steps: a short interval stays within 720 points, a long one stays on its own resolution", () => {
-  assert.equal(expectedStepSeconds("1h", 5), 5, "720 raw points");
-  assert.equal(expectedStepSeconds("1h", 2), 300, "1440 rows at 2 s cover 48 minutes: fine rollups");
-  assert.equal(expectedStepSeconds("6h", 30), 30, "720 raw points");
-  assert.equal(expectedStepSeconds("6h", 300), 300);
-  assert.equal(expectedStepSeconds("6h", 10), 300, "1440 rows at 10 s cover four hours: fine rollups");
+test("steps: raw rows fold at a minute, and a step is never shorter than the interval", () => {
+  assert.equal(expectedStepSeconds("1h", 5), 60, "raw rows are folded at one minute");
+  assert.equal(expectedStepSeconds("1h", 300), 300, "a five-minute check expects a run in every step");
+  assert.equal(expectedStepSeconds("6h", 30), 300);
+  assert.equal(expectedStepSeconds("6h", 600), 600);
+  assert.equal(expectedStepSeconds("24h", 3600), 3600, "an hourly certificate check");
   for (const w of ["1h", "6h", "24h", "3d", "7d", "14d"] as const) {
     const step = expectedStepSeconds(w, 60, 14);
     const span = { "1h": 3600, "6h": 21600, "24h": 86400, "3d": 259200, "7d": 604800, "14d": 1209600 }[w];

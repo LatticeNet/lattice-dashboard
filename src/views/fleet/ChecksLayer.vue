@@ -66,7 +66,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { stateLabel, reasonText } = usePathsCopy();
+const { stateLabel, whyText } = usePathsCopy();
+/** The server has the edit route: it answered the design 29 paths read. */
+const serverEdits = computed(() => props.data.source.value === "paths");
 const wide = useMediaQuery("(min-width: 768px)");
 
 const all = computed(() => props.monitorsQuery.data.value ?? []);
@@ -240,8 +242,8 @@ function menuFor(monitor: MonitorView): RowMenuItem[] {
       label: t("fleet.monitoring.checks.actions.edit"),
       icon: Pencil,
       hidden: !props.canAdmin,
-      disabled: !canEditCheck(monitor),
-      reason: canEditCheck(monitor) ? undefined : t("fleet.monitoring.checks.editUnavailable"),
+      disabled: !canEditCheck(monitor, serverEdits.value),
+      reason: canEditCheck(monitor, serverEdits.value) ? undefined : t("fleet.monitoring.checks.editUnavailable"),
       run: () => emit("edit", monitor),
     },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !props.canAdmin, run: () => requestDelete(monitor) },
@@ -474,7 +476,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                   <span class="block truncate font-medium">{{ row.name }}</span>
                   <span v-if="row.paused" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.paused') }}</span>
                   <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block truncate text-xs', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
-                    {{ stateLabel(row.path.state) }}: {{ reasonText(row.path.reason) }}
+                    {{ stateLabel(row.path.state) }}: {{ whyText(row.path) }}
                   </span>
                   <span v-else-if="row.latest && !row.latest.success" class="block truncate text-xs text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
                 </span>
@@ -511,12 +513,12 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           </Button>
         </template>
         <template v-else>
-          <Badge v-if="!canEditCheck(selected)" variant="outline" class="me-auto">{{ $t('fleet.monitoring.checks.editUnavailable') }}</Badge>
+          <Badge v-if="!canEditCheck(selected, serverEdits)" variant="outline" class="me-auto">{{ $t('fleet.monitoring.checks.editUnavailable') }}</Badge>
           <Button variant="outline" size="sm" type="button" class="text-destructive" :disabled="deletePending" @click="requestDelete(selected)">
             <Trash2 class="size-4" aria-hidden="true" />
             {{ $t('common.actions.delete') }}
           </Button>
-          <Button v-if="canEditCheck(selected)" size="sm" type="button" data-testid="check-edit" @click="emit('edit', selected)">
+          <Button v-if="canEditCheck(selected, serverEdits)" size="sm" type="button" data-testid="check-edit" @click="emit('edit', selected)">
             <Pencil class="size-4" aria-hidden="true" />
             {{ $t('fleet.monitoring.checks.actions.edit') }}
           </Button>

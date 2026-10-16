@@ -27,7 +27,6 @@ import { Label } from "@/components/ui/label";
 
 import SourcePicker from "./SourcePicker.vue";
 import {
-  ALERT_MAX_AFTER,
   CHECK_KINDS,
   CHECK_MAX_INTERVAL_SEC,
   CHECK_MAX_TIMEOUT_SEC,
@@ -103,7 +102,6 @@ const problemText = computed(() =>
         max: CHECK_MAX_INTERVAL_SEC,
         timeout: CHECK_MAX_TIMEOUT_SEC,
         days: TLS_MAX_THRESHOLD_DAYS,
-        after: ALERT_MAX_AFTER,
       }),
     ),
 );
@@ -316,19 +314,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <input type="radio" name="check-alert" class="accent-[var(--primary)]" :checked="draft.alert === 'off'" @change="draft = { ...draft, alert: 'off' }" />
           <span>{{ $t('fleet.monitoring.checks.editor.alertOff') }}</span>
         </label>
-        <label class="flex cursor-pointer flex-wrap items-center gap-2.5 pointer-coarse:min-h-11">
+        <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
           <input type="radio" name="check-alert" class="accent-[var(--primary)]" :checked="draft.alert === 'down'" @change="draft = { ...draft, alert: 'down' }" />
           <span>{{ $t('fleet.monitoring.checks.editor.alertDown') }}</span>
-          <Input
-            v-model.number="draft.alertAfter"
-            type="number"
-            min="1"
-            :max="ALERT_MAX_AFTER"
-            class="h-8 w-20"
-            :disabled="draft.alert !== 'down'"
-            :aria-label="$t('fleet.monitoring.checks.editor.alertAfter')"
-          />
-          <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRuns') }}</span>
         </label>
       </fieldset>
 
