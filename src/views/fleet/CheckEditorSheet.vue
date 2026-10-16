@@ -197,7 +197,7 @@ function discard(): void {
 
 const title = computed(() => (props.monitor ? t("fleet.monitoring.checks.editor.editTitle", { name: props.monitor.name || props.monitor.id }) : t("fleet.monitoring.checks.editor.createTitle")));
 // A fieldset's legend breaks a top border, so sections are set apart by space, not rules.
-const SECTION = "m-0 grid min-w-0 gap-2.5 border-0 p-0";
+const SECTION = "grid min-w-0 gap-2.5 border-0 p-0";
 const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 </script>
 

@@ -212,8 +212,8 @@ export function operatorChecks(): MonitorView[] {
     assign_all: false,
     enabled: true,
     created_at: iso(-90 * 24 * HOUR),
-    // Never edited: version zero, which the server leaves out of the list.
-    ...(old ? {} : { alert: "off" }),
+    // Never edited: version zero.
+    ...(old ? {} : { version: 0, alert: "off" }),
   };
   return [status, cert];
 }

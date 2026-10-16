@@ -42,7 +42,7 @@ test("groups: operator checks first, the path set's generated checks under it, e
   assert.equal(checkGroup(monitor()), "operator");
   assert.equal(checkGroup(monitor({ managed_by: "latency" })), "pathset");
   assert.equal(canEditCheck(monitor(), true), true);
-  assert.equal(canEditCheck(monitor({ version: undefined }), true), true, "a check never edited is version zero, left out of the list");
+  assert.equal(canEditCheck(monitor({ version: undefined }), true), true, "a check listed without a version is edited at version zero");
   assert.equal(canEditCheck(monitor(), false), false, "a server without the edit route");
   assert.equal(canEditCheck(monitor({ managed_by: "latency" }), true), false);
   assert.equal(buildUpdate(monitor({ version: undefined }), { ...draftFromMonitor(monitor()), intervalSec: 60 }).version, 0);

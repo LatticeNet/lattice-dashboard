@@ -42,8 +42,8 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
 /**
  * Whether the console may edit this check: the server has the edit route
  * (it answered the paths read, design 29) and the check is an operator's.
- * The version is not the signal: a check never edited is version zero, which
- * the server leaves out of the list.
+ * The signal is the server, not the field: an edit names `version ?? 0`, so
+ * a check listed without one (never edited) is editable all the same.
  */
 export function canEditCheck(monitor: Pick<MonitorView, "managed_by">, serverEdits: boolean): boolean {
   return serverEdits && !monitor.managed_by;

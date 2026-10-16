@@ -147,7 +147,7 @@ function discard(): void {
 }
 
 const problemText = computed(() => problems.value.map((p) => t(`fleet.monitoring.latency.config.problem.${p}`, { min: LATENCY_MIN_INTERVAL_SEC, max: LATENCY_MAX_INTERVAL_SEC, timeout: LATENCY_MAX_TIMEOUT_SEC })));
-const SECTION = "m-0 grid min-w-0 gap-2.5 border-0 p-0";
+const SECTION = "grid min-w-0 gap-2.5 border-0 p-0";
 const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 </script>
 
