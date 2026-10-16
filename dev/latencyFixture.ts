@@ -42,7 +42,7 @@ export const SOURCE_NAME = "cd-hs-sh";
 
 /** cd-hs-sh, added to the node list only on latency renders so other harness counts stay at 34. */
 export const SOURCE_NODE: Node | undefined =
-  LATENCY_SHAPE === "nosource" || !PARAMS.has("latency")
+  LATENCY_SHAPE === "nosource" || (!PARAMS.has("latency") && !PARAMS.has("paths"))
     ? undefined
     : ({
         ...NODES.find((n) => n.name === "[cd]-volcengine-shanghai")!,
@@ -59,6 +59,8 @@ const id = (name: string) => nodeByName(name)?.id ?? name;
 const NOT_PROBEABLE: Record<string, string> = {
   "[cd]-Oracle-KIX-arm": "udp_only",
   "[Metix]-Aaitr-Frontier-NAT": "no_public_address",
+  // A target only on the paths renders (dev/pathsFixture.ts), which include it.
+  "[cd]-homeserver": "no_tcp_line",
 };
 /** Offline nodes keep the address their monitor had. */
 const LAST_KNOWN = new Set(["[Metix]-DMIT-4"]);
@@ -119,8 +121,27 @@ function overseasBeyondTwenty(): string[] {
   return NODES.filter((n) => region(n) === "outside_mainland" && !TARGETS.has(n.name)).map((n) => n.id);
 }
 
+/**
+ * The paths renders (`?paths=one|three`, dev/pathsFixture.ts): every node
+ * outside mainland China plus five included by hand, 33 targets as
+ * production has, with one path paused; three sources in `three`.
+ */
+const PATHS_INCLUDED = ["[cd]-homeserver", "[OpenJobs-Data]-tmp", "[OpenJobs-Data]-gpu-box", "[cd]-volcengine-shanghai", "[Metix]-mkcloud-hr-iplc"];
+
 export function initialConfig(): { config: LatencyProbeConfig; stored: boolean } {
   const base: LatencyProbeConfig = { enabled: true, interval_sec: 60, timeout_sec: 5, sources: [SOURCE_ID], auto_targets: true, version: 4, updated_by: "cdcd", updated_at: iso(-3 * HOUR) };
+  const paths = PARAMS.get("paths");
+  if (paths && paths !== "old") {
+    const sources = paths === "three" ? [SOURCE_ID, id("[cd]-volcengine-shanghai"), id("[Metix]-mkcloud-hr-iplc")].sort() : [SOURCE_ID];
+    const config: LatencyProbeConfig = {
+      ...base,
+      sources: paths === "empty" ? [] : sources,
+      include_targets: PATHS_INCLUDED.map(id).sort(),
+      exclude_targets: [id("[cd]-mac-air")],
+      disabled_pairs: [{ source: SOURCE_ID, target: id("[cd]-vultr-syd") }],
+    };
+    return { config, stored: true };
+  }
   switch (LATENCY_SHAPE) {
     case "defaults":
       return { config: { ...base, version: 0, updated_by: undefined, updated_at: undefined }, stored: false };
@@ -184,7 +205,7 @@ export function planFor(config: LatencyProbeConfig, stored: boolean): LatencyPro
       planNodes.push({ ...pn, target: "not_probeable", endpoint_note: note });
       continue;
     }
-    pn.endpoint = `${node.public_ip ?? "203.0.113.1"}:${node.name.includes("NAT") ? 50100 : 443}`;
+    pn.endpoint = `${node.public_ip ?? "203.0.113.1"}:${node.name.toLowerCase().includes("nat") || node.name.includes("qqpw") ? 50100 : 443}`;
     pn.protocol = node.name.includes("Aaitr") ? "anytls" : "vless";
     pn.line_name = `${pn.protocol}-reality-443`;
     pn.monitor_id = monitorId;

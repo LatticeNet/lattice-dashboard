@@ -50,7 +50,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
+import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
 import { sumTotals } from "@/views/fleet/upcomingModel";
@@ -78,6 +78,7 @@ import {
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
 import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
 import { lineChains } from "./topologyFixture";
+import { PATHS_SHAPE, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
 
@@ -197,7 +198,37 @@ function manyNodes(): typeof NODES {
 }
 let latency = initialConfig();
 let machines = MACHINES.map((machine) => ({ ...machine }));
-let monitors = MONITORS.map((monitor) => ({ ...monitor }));
+let monitors = [...MONITORS, ...operatorChecks()].map((monitor) => ({ ...monitor }));
+
+/**
+ * `?paths=` (dev/pathsFixture.ts) answers the design 29 routes; `?paths=old`
+ * answers them 404, as a server from before design 29 does. `?pathsMs=`
+ * slows the paths read so the loading state can be drawn; `?fail=paths` and
+ * `?fail=series` fail them.
+ */
+function missingRoute<T>(path: string): Promise<T> {
+  return delay(undefined).then(() => {
+    throw new ApiError(404, "not_found", `no route for ${path}`);
+  });
+}
+const pathsOld = () => PATHS_SHAPE === "old";
+
+/** Each source's newest run for a check on the paths renders, as the list carries it. */
+function pathsLatest(monitorId: string) {
+  const byNode = new Map<string, ReturnType<typeof resultsFor>>();
+  for (const r of resultsFor(pathPlan(), monitors, monitorId)) byNode.set(r.node_id, [...(byNode.get(r.node_id) ?? []), r]);
+  return [...byNode.entries()].map(([nodeId, rows]) => {
+    const sorted = [...rows].sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
+    const newest = sorted[0]!;
+    let streak = 0;
+    for (const r of sorted) {
+      if (r.success) break;
+      streak += 1;
+    }
+    return { ...newest, node_id: nodeId, fail_streak: streak, since: sorted[Math.max(0, streak - 1)]!.at };
+  });
+}
+const pathPlan = () => planFor(latency.config, latency.stored);
 
 interface AuditParams {
   action?: string;
@@ -487,14 +518,46 @@ export const api = {
     list: () =>
       answer("monitors", () => ({
         monitors: [
-          ...monitors.map((m) => ({ ...m, latest: monitorLatest(m.id) })),
-          ...(PARAMS.has("latency") ? generatedLatencyMonitors(planFor(latency.config, latency.stored)) : []),
+          ...monitors.map((m) => ({ ...m, latest: PARAMS.has("paths") ? pathsLatest(m.id) : monitorLatest(m.id) })),
+          ...(PARAMS.has("latency") || PARAMS.has("paths")
+            ? generatedLatencyMonitors(planFor(latency.config, latency.stored)).map((m) => (PARAMS.has("paths") ? { ...m, latest: pathsLatest(m.id) } : m))
+            : []),
         ],
       })),
     // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.
-    results: (id: string) => answer("monitors", () => ({ results: monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
+    results: (id: string) =>
+      answer("monitors", () => ({ results: PARAMS.has("paths") ? resultsFor(pathPlan(), monitors, id) : monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
+    paths: (window: MonitorWindow) =>
+      pathsOld() ? missingRoute("/api/monitors/paths") : answer("paths", () => pathsFor(pathPlan(), window, monitors), Number(PARAMS.get("pathsMs")) || LATENCY_MS),
+    series: (query: PathSeriesQuery) => (pathsOld() ? missingRoute("/api/monitors/series") : answer("series", () => pathSeriesFor(pathPlan(), monitors, query))),
+    settings: {
+      get: () => (pathsOld() || !PARAMS.has("paths") ? missingRoute("/api/monitors/settings") : answer("settings", () => settingsFor(pathsFor(pathPlan(), "1h", monitors).paths.length))),
+      update: (input: { version: number; fine_retention_days: number }) => {
+        const saved = saveSettings(input.version, input.fine_retention_days);
+        if (saved === "conflict") {
+          return delay(undefined).then(() => {
+            throw new ApiError(409, "conflict", "monitoring settings changed since they were read");
+          });
+        }
+        return delay(saved);
+      },
+    },
+    update: (input: MonitorUpdateInput) => {
+      if (pathsOld()) return missingRoute("/api/monitors/update");
+      const held = monitors.find((m) => m.id === input.id);
+      if (!held) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "monitor not found"); });
+      if (held.managed_by || input.version !== (held.version ?? 0)) {
+        return delay(undefined).then(() => {
+          throw new ApiError(409, "conflict", held.managed_by ? "generated checks are changed through the path set" : "monitor changed since it was read");
+        });
+      }
+      const { id: _id, version: _version, ...fields } = input;
+      const updated = { ...held, ...fields, version: (held.version ?? 0) + 1, updated_at: new Date().toISOString() } as MonitorView;
+      monitors = monitors.map((m) => (m.id === input.id ? updated : m));
+      return delay(updated);
+    },
     create: (input: MonitorCreateInput) => {
-      const created = { ...input, id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString() } as MonitorView;
+      const created = { ...input, id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString(), ...(PARAMS.has("paths") && !pathsOld() ? { version: 1 } : {}) } as MonitorView;
       monitors = [...monitors, created];
       return delay(created);
     },
