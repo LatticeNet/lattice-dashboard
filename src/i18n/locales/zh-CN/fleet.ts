@@ -1303,6 +1303,7 @@ export default {
         "3d": "3 天",
         "7d": "7 天",
         "14d": "14 天",
+        topologyNote: "拓扑只保留 1 小时、24 小时和 7 天，这里显示{window}。",
         long: {
           "1h": "最近 1 小时",
           "6h": "最近 6 小时",
@@ -1319,12 +1320,14 @@ export default {
           sources: "{n} 个源节点 | {n} 个源节点",
           down: "{n} 条不通",
           unknown: "{n} 条未知",
+          paused: "{n} 条已暂停",
           legacy: "只有延迟路径",
         },
         state: {
           up: "通",
           down: "不通",
           unknown: "未知",
+          paused: "已暂停",
         },
         reason: {
           agent_offline: "源节点的 agent 离线",
@@ -1374,7 +1377,7 @@ export default {
         },
         query: {
           label: "搜索、筛选和排序路径",
-          placeholder: "搜索，或 target:jp state:down source:cd-hs-sh",
+          placeholder: "搜索，或 country:jp state:down source:cd-hs-sh",
           examples: {
             down: "不通的路径",
             unknown: "不是因为暂停而未知的路径",
@@ -1384,7 +1387,7 @@ export default {
           fields: {
             target: "目标名称",
             source: "源节点名称",
-            state: "up、down 或 unknown",
+            state: "up、down、unknown 或 paused",
             reason: "路径未知或不通的原因，代码或文字均可",
             region: "目标所在地区，例如 europe 或 eastAsia",
             country: "目标国家代码",
@@ -1403,6 +1406,9 @@ export default {
           readOnly: "请有 monitor:admin 权限的操作员设置路径集。",
           pathSet: "设置路径集",
           check: "添加检查",
+          noSourceTitle: "路径集没有源节点",
+          noSourceDescription: "选择负责探测的节点。在那之前不会测量任何路径。",
+          noSourceAction: "选择源节点",
           noMatchTitle: "没有匹配的路径",
           noMatchDescription: "修改查询，或清空它以查看全部路径。",
           clear: "清空查询",
@@ -1429,6 +1435,8 @@ export default {
           noSeries: "这个控制面还没有保存这个检查的历史，下面是它最近的运行。",
           seriesFailed: "没有读到历史：{reason}",
           seriesEmpty: "这个时间窗内还没有历史。",
+          cert: "证书 {date} 到期，还剩 {n} 天 | 证书 {date} 到期，还剩 {n} 天",
+          certExpired: "证书已于 {date} 到期",
           chartFailed: "图表没有加载出来。请刷新页面重新获取。",
           table: "以表格查看各时间桶（{n}）",
           tableCaption: "{path}，每行一个时间桶，最新的在前",
@@ -1467,12 +1475,17 @@ export default {
         helpTouch: "轻点图表查看某个时间桶的数值。",
         hintTouch: "轻点图表读取一个时间桶。",
         reset: "复原缩放",
+        min: "最小",
+        max: "最大",
       },
       overview: {
         clear: "唯一的路径在{window}内都通。 | 全部 {n} 条路径在{window}内都通。",
         attention: {
           down: "{target} 从 {source} 不通",
-          downMany: "{target} 从 {total} 个源节点中的 {n} 个不通",
+          downMany: "测量 {target} 的 {total} 个源节点中，有 {n} 个不通",
+          offline: "{source} 的 agent 离线：{n} 条路径未知 | {source} 的 agent 离线：{n} 条路径未知",
+          lastSeen: "最后上报 {age}",
+          paused: "{n} 条路径已暂停 | {n} 条路径已暂停",
           loss: "{window}内丢失 {loss}",
           unknown: "{n} 条路径未知：{reason} | {n} 条路径未知：{reason}",
           andMore: "{names} 等另外 {n} 个",
@@ -1483,6 +1496,7 @@ export default {
           reaches: "{total} 条中 {up} 条通",
           down: "{n} 条不通",
           unknown: "{n} 条未知",
+          paused: "{n} 条已暂停",
         },
       },
       checks: {
@@ -1506,6 +1520,10 @@ export default {
           pathSet: "路径集",
         },
         paused: "已暂停",
+        downOn: "{total} 个中 {n} 个不通",
+        certLeft: "剩 {n} 天",
+        certExpired: "已到期",
+        noneRunning: "没有在运行",
         withPaused: "{base}，{n} 个已暂停",
         editUnavailable: "这个控制面还不能编辑检查",
         empty: {
@@ -1544,6 +1562,8 @@ export default {
           chosen: "已选 {n} 个",
           noNodes: "没有匹配的节点。",
           paused: "已暂停",
+          online: "在线",
+          offline: "离线",
           pauseSource: "在这个检查上暂停 {name}",
           pauseHint: "暂停的源节点保留历史，在恢复之前不再运行这个检查。",
           expect: {
@@ -1626,8 +1646,8 @@ export default {
         },
       },
       query: {
-        label: "搜索、筛选和排序监控",
-        placeholder: "搜索，或 status:failing type:http sort:name",
+        label: "搜索、筛选和排序检查",
+        placeholder: "搜索，或 status:down type:http sort:name",
         examples: {
           failing: "失败或过期的监控，按名称排序",
           http: "检查 443 端口的 HTTP 监控",
@@ -2029,7 +2049,7 @@ export default {
         },
       },
       noAccessTitle: "查看监控需要 monitor:read 权限",
-      noAccessDescription: "当前会话无法读取监控及其结果。",
+      noAccessDescription: "当前会话无法读取检查、路径及其结果。",
       layers: {
         label: "监控分层",
         overview: "概览",

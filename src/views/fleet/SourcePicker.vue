@@ -74,7 +74,7 @@ function togglePause(id: string, on: boolean): void {
           <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1.5 pointer-coarse:min-h-11">
             <Checkbox :model-value="selected.includes(node.id)" @update:model-value="(v) => toggle(node.id, v === true)" />
             <span class="min-w-0 flex-1 truncate text-sm" :title="node.name || node.id">{{ node.name || node.id }}</span>
-            <span :class="cn('shrink-0 text-xs', node.online ? 'text-muted-foreground' : 'text-warning-text')">{{ node.online ? t('fleet.monitoring.result.on') : t('fleet.monitoring.result.off') }}</span>
+            <span :class="cn('shrink-0 text-xs', node.online ? 'text-muted-foreground' : 'text-warning-text')">{{ node.online ? t('fleet.monitoring.checks.editor.online') : t('fleet.monitoring.checks.editor.offline') }}</span>
           </label>
           <label
             v-if="showPause && selected.includes(node.id)"

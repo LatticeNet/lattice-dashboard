@@ -56,6 +56,12 @@ const props = defineProps<{
   monitors: MonitorView[];
   canAdmin: boolean;
   window: MonitorWindow;
+  /** The windows the page offers, for the sheet's own window control. */
+  offered: MonitorWindow[];
+  /** A check's newest failure on a source: why a down path is down. */
+  failureOf: (monitorId: string, source: string) => string | undefined;
+  /** The path set exists with no source. */
+  noSources: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -64,10 +70,13 @@ const emit = defineEmits<{
   openCheck: [id: string];
   /** A check changed (a source paused or resumed): the page rereads the monitors with the paths. */
   changed: [];
+  window: [window: MonitorWindow];
 }>();
 
 const { t } = useI18n();
-const { reasonText, whyText, stateLabel, groupLabel, windowLong } = usePathsCopy();
+const { reasonText, whyText, stateLabel, displayLabel, groupLabel, windowLong } = usePathsCopy();
+/** Why a path is not up: its reason, or for a down path the agent's newest error. */
+const why = (path: PathItem) => whyText(path, path.state === "down" && !path.reason ? props.failureOf(path.monitorId, path.source) : undefined);
 const wide = useMediaQuery("(min-width: 768px)");
 
 const matrix = computed(() => props.data.matrix.value);
@@ -114,9 +123,23 @@ function cellMain(path: PathItem): string {
   return stateLabel("down");
 }
 
+const DAY_MS = 86_400_000;
+/** Days left on the certificate a tls check last read, from the monitors list's newest results. */
+function certLeft(path: PathItem): string | undefined {
+  if (path.method !== "tls") return undefined;
+  const at = props.monitors.find((m) => m.id === path.monitorId)?.latest?.find((l) => l.cert_not_after)?.cert_not_after;
+  const expires = at ? Date.parse(at) : NaN;
+  if (Number.isNaN(expires)) return undefined;
+  const days = Math.floor((expires - Date.now()) / DAY_MS);
+  return days < 0 ? t("fleet.monitoring.checks.certExpired") : t("fleet.monitoring.checks.certLeft", { n: days });
+}
+
 function cellSub(path: PathItem): string {
   if (path.state === "unknown") return reasonText(path.reason);
   const parts: string[] = [];
+  // A certificate check's reason to exist is the expiry: it leads the sub line.
+  const cert = certLeft(path);
+  if (cert) parts.push(cert);
   if (path.state === "down" && path.p50Ms !== undefined) parts.push(stateLabel("down"));
   if (path.loss !== undefined && path.loss > 0 && path.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(path.loss) }));
   return parts.join(" · ");
@@ -129,10 +152,10 @@ function mainClass(path: PathItem): string {
 }
 
 function cellLabel(path: PathItem): string {
-  const parts = [stateLabel(path.state)];
+  const parts = [displayLabel(path)];
   if (path.p50Ms !== undefined) parts.push(`p50 ${formatMs(path.p50Ms)}`);
   if (path.loss !== undefined && path.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(path.loss) }));
-  if (path.state !== "up") parts.push(whyText(path));
+  if (path.state !== "up") parts.push(why(path));
   return t("fleet.monitoring.paths.cell.label", { source: path.sourceName, target: path.targetName, state: parts.join(", ") });
 }
 
@@ -254,13 +277,13 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
         <EmptyState
           v-if="isEmpty"
           :icon="RouteIcon"
-          :title="$t('fleet.monitoring.paths.empty.title')"
-          :description="canAdmin ? $t('fleet.monitoring.paths.empty.description') : $t('fleet.monitoring.paths.empty.readOnly')"
+          :title="noSources ? $t('fleet.monitoring.paths.empty.noSourceTitle') : $t('fleet.monitoring.paths.empty.title')"
+          :description="!canAdmin ? $t('fleet.monitoring.paths.empty.readOnly') : noSources ? $t('fleet.monitoring.paths.empty.noSourceDescription') : $t('fleet.monitoring.paths.empty.description')"
         >
           <div v-if="canAdmin" class="flex flex-wrap justify-center gap-2">
             <Button size="sm" type="button" @click="emit('pathSet')">
               <Settings2 class="size-4" aria-hidden="true" />
-              {{ $t('fleet.monitoring.paths.empty.pathSet') }}
+              {{ noSources ? $t('fleet.monitoring.paths.empty.noSourceAction') : $t('fleet.monitoring.paths.empty.pathSet') }}
             </Button>
             <Button size="sm" variant="outline" type="button" @click="emit('createCheck')">{{ $t('fleet.monitoring.paths.empty.check') }}</Button>
           </div>
@@ -366,8 +389,8 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                             </button>
                           </TooltipTrigger>
                           <TooltipContent class="max-w-72">
-                            <p class="font-medium">{{ stateLabel(cell.path.state) }}</p>
-                            <p class="text-xs">{{ whyText(cell.path) }}</p>
+                            <p class="font-medium">{{ displayLabel(cell.path) }}</p>
+                            <p class="text-xs">{{ why(cell.path) }}</p>
                           </TooltipContent>
                         </Tooltip>
                       </template>
@@ -414,7 +437,7 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
                           <span class="min-w-0 ps-1">
                             <span class="block truncate text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.list.from', { source: cell.source.name }) }}</span>
                             <span v-if="cell.path.state !== 'up'" :class="cn('block text-xs', cell.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
-                              {{ stateLabel(cell.path.state) }}: {{ whyText(cell.path) }}
+                              {{ displayLabel(cell.path) }}: {{ why(cell.path) }}
                             </span>
                           </span>
                           <span class="text-end">
@@ -453,6 +476,9 @@ const isEmpty = computed(() => !!matrix.value && (matrix.value.sources.length ==
         :source="data.source.value"
         :compact="!wide"
         :title="openTitle"
+        :offered="offered"
+        :failure="openPath.state === 'down' && !openPath.reason ? failureOf(openPath.monitorId, openPath.source) : undefined"
+        @window="(w) => emit('window', w)"
       />
       <template v-if="openPath" #actions>
         <Button v-if="pauseAction" variant="outline" size="sm" type="button" :disabled="pending" data-testid="path-pause" @click="togglePause">

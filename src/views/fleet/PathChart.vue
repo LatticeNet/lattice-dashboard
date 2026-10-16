@@ -258,20 +258,29 @@ function drawOverlay(u: uPlot): void {
     }
     ctx.stroke();
   }
-  // Method changes: a rule and the new method's name.
-  ctx.strokeStyle = rgba(colors().ink, 0.55);
-  ctx.setLineDash([3 * px, 3 * px]);
-  for (const m of markers.value) {
+  // Method changes: a rule labelled with the switch it marks ("TCP → ICMP") on a card-coloured pad.
+  ctx.font = `${10 * px}px ${colors().mono}`;
+  ctx.textBaseline = "top";
+  markers.value.forEach((m) => {
     const x = Math.round(u.valToPos(m.t, "x", true)) + 0.5;
-    if (x < left || x > left + width) continue;
+    if (x < left || x > left + width) return;
+    ctx.strokeStyle = rgba(colors().ink, 0.55);
+    ctx.setLineDash([3 * px, 3 * px]);
     ctx.beginPath();
     ctx.moveTo(x, top);
     ctx.lineTo(x, top + height);
     ctx.stroke();
+    ctx.setLineDash([]);
+    const label = `${m.from.toUpperCase()} \u2192 ${m.to.toUpperCase()}`;
+    const w = ctx.measureText(label).width + 8 * px;
+    // Right of the rule, or left of it when the rule sits near the end.
+    const lx = x + w + 4 * px > left + width ? x - w - 4 * px : x + 4 * px;
+    ctx.fillStyle = rgba(colors().card, 0.92);
+    ctx.fillRect(lx, top + 2 * px, w, 14 * px);
     ctx.fillStyle = rgba(colors().ink);
-    ctx.textBaseline = "top";
-    ctx.fillText(m.method.toUpperCase(), x + 4 * px, top + 2 * px);
-  }
+    ctx.textAlign = "left";
+    ctx.fillText(label, lx + 4 * px, top + 4 * px);
+  });
   ctx.restore();
 }
 
@@ -340,11 +349,13 @@ function options(width: number): uPlot.Options {
         ticks: { show: false },
         font,
         splits: () => [lanes.value.lossTicks[0]!.ms, lanes.value.lossTicks[1]!.ms, ...lanes.value.msTicks],
+        // The loss lane's top reads 100%; the latency lane's 0 sits a hair above it and is left
+        // unlabelled (its gridline stays), so the two labels never print over each other.
         values: (_u, splits) =>
           splits.map((v, i) => {
             if (i === 0) return "";
             if (i === 1) return "100%";
-            return msTick(v);
+            return v === 0 ? "" : msTick(v);
           }),
       },
     ],
@@ -468,15 +479,12 @@ onBeforeUnmount(() => {
 function onKeydown(event: KeyboardEvent): void {
   const u = plot.value;
   if (!u) return;
+  // Escape resets a zoom; otherwise it is the sheet's, which closes.
   if (event.key === "Escape") {
     if (zoomed.value) {
       event.preventDefault();
       event.stopPropagation();
       resetZoom();
-    } else if (activeIdx.value >= 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      u.setCursor({ left: -10, top: -10 });
     }
     return;
   }
@@ -520,7 +528,7 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   const time = `${dateTime.value.format(start)} → ${timeOnly.value.format(end)}`;
   const runs = t("fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
   const method = methodAt(props.series, p.t, props.method);
-  const methodEntry: ReadoutEntry[] = method ? [{ key: "method", label: t("fleet.monitoring.chart.method"), value: method.toUpperCase() }] : [];
+  const methodEntry: ReadoutEntry[] = [{ key: "method", label: t("fleet.monitoring.chart.method"), value: method.toUpperCase() }];
   if (p.missing) {
     return { time, note: t("fleet.monitoring.chart.noDataLong"), entries: [{ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs }, ...methodEntry] };
   }
@@ -529,8 +537,10 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   }
   const entries: ReadoutEntry[] = [];
   if (p.p50Ms !== undefined) {
+    if (p.minMs !== undefined) entries.push({ key: "min", label: t("fleet.monitoring.chart.min"), value: formatMs(p.minMs) });
     entries.push({ key: "p50", label: "p50", value: formatMs(p.p50Ms) });
     if (p.p95Ms !== undefined) entries.push({ key: "p95", label: "p95", value: formatMs(p.p95Ms) });
+    if (p.maxMs !== undefined) entries.push({ key: "max", label: t("fleet.monitoring.chart.max"), value: formatMs(p.maxMs) });
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
   entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? "destructive" : undefined });

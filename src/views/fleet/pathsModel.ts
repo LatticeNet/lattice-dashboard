@@ -257,6 +257,17 @@ export function isChosenUnknown(reason: string | undefined): boolean {
   return code !== undefined && CHOSEN.has(code);
 }
 
+/**
+ * The state as the console words it: a path that is unknown because the
+ * operator paused it reads "paused", everywhere (cells, lists, counts,
+ * the query), so a pause is never counted as a problem.
+ */
+export type PathDisplay = PathState | "paused";
+
+export function displayState(path: { state: PathState; reason?: string }): PathDisplay {
+  return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
+}
+
 /* ------------------------------------------------------------------ */
 /* The matrix                                                           */
 /* ------------------------------------------------------------------ */
@@ -312,9 +323,10 @@ export interface PathCounts {
   paths: number;
   up: number;
   down: number;
+  /** Unknown and not a pause. */
   unknown: number;
-  /** Unknown paths that are not a pause the operator chose. */
-  unknownProblems: number;
+  /** Unknown because the operator paused it. */
+  paused: number;
 }
 
 export interface PathsMatrix {
@@ -422,11 +434,8 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     if (!held || stateRank(item.state) < stateRank(held.state)) cells.set(key, item);
     paths.push(item);
   }
-  const counts: PathCounts = { paths: paths.length, up: 0, down: 0, unknown: 0, unknownProblems: 0 };
-  for (const path of paths) {
-    counts[path.state] += 1;
-    if (path.state === "unknown" && !isChosenUnknown(path.reason)) counts.unknownProblems += 1;
-  }
+  const counts: PathCounts = { paths: paths.length, up: 0, down: 0, unknown: 0, paused: 0 };
+  for (const path of paths) counts[displayState(path)] += 1;
   return {
     window: String(response.window ?? ""),
     observedAt: epoch(response.observed_at),
@@ -526,51 +535,54 @@ export function matrixSections(matrix: PathsMatrix, shown: { rows: PathRow[]; so
 /* ------------------------------------------------------------------ */
 
 export type PathAttention =
-  | { kind: "down"; rowKey: string; targetName: string; paths: PathItem[]; worstLoss: number }
-  | { kind: "unknown"; reason: string; chosen: boolean; paths: PathItem[] };
+  /** A target down from some of the sources that measure it (`measuredBy`). */
+  | { kind: "down"; rowKey: string; targetName: string; paths: PathItem[]; worstLoss: number; measuredBy: number }
+  /** A source whose agent is offline: one line for every path it cannot run. */
+  | { kind: "offline"; source: string; sourceName: string; paths: PathItem[] }
+  | { kind: "unknown"; reason: string; paths: PathItem[] }
+  /** Paths the operator paused: listed as information, never as a problem. */
+  | { kind: "paused"; paths: PathItem[] };
 
 /**
  * What needs a look, worst first: each target that is down from a source
- * (one entry per target, its sources inside), then the unknown paths grouped
- * by reason, problems before pauses. A fleet whose five NAT targets all read
- * "no TCP line" gets one line for them, not five.
+ * (one entry per target, its sources inside), then each source whose agent
+ * is offline (one entry for all the paths it cannot run), then the other
+ * unknown paths grouped by reason, and the paused paths last as one entry.
+ * A fleet whose five NAT targets all read "not probeable" gets one line for
+ * them, not five.
  */
 export function pathAttention(matrix: PathsMatrix): PathAttention[] {
   const down = new Map<string, PathItem[]>();
+  const offline = new Map<string, PathItem[]>();
   const unknown = new Map<string, PathItem[]>();
+  const paused: PathItem[] = [];
+  const measuredBy = new Map<string, number>();
+  const push = (map: Map<string, PathItem[]>, key: string, path: PathItem) => map.set(key, [...(map.get(key) ?? []), path]);
   for (const path of matrix.paths) {
-    if (path.state === "down") {
-      const list = down.get(path.rowKey) ?? [];
-      list.push(path);
-      down.set(path.rowKey, list);
-    } else if (path.state === "unknown") {
+    measuredBy.set(path.rowKey, (measuredBy.get(path.rowKey) ?? 0) + 1);
+    const shown = displayState(path);
+    if (shown === "down") push(down, path.rowKey, path);
+    else if (shown === "paused") paused.push(path);
+    else if (shown === "unknown") {
       const reason = reasonCode(path.reason) ?? path.reason ?? "no_results";
-      const list = unknown.get(reason) ?? [];
-      list.push(path);
-      unknown.set(reason, list);
+      if (reason === "agent_offline") push(offline, path.source, path);
+      else push(unknown, reason, path);
     }
   }
-  const downItems: PathAttention[] = [...down.entries()].map(([rowKey, paths]) => {
+  const byTarget = (a: PathItem, b: PathItem) => a.targetName.localeCompare(b.targetName) || a.sourceName.localeCompare(b.sourceName);
+  const downItems = [...down.entries()].map(([rowKey, paths]) => {
     const sorted = [...paths].sort((a, b) => (b.loss ?? 1) - (a.loss ?? 1) || a.sourceName.localeCompare(b.sourceName));
-    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)) };
+    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)), measuredBy: measuredBy.get(rowKey) ?? sorted.length };
   });
-  downItems.sort((a, b) => {
-    const ap = a as Extract<PathAttention, { kind: "down" }>;
-    const bp = b as Extract<PathAttention, { kind: "down" }>;
-    return bp.paths.length - ap.paths.length || bp.worstLoss - ap.worstLoss || ap.targetName.localeCompare(bp.targetName);
-  });
-  const unknownItems: PathAttention[] = [...unknown.entries()].map(([reason, paths]) => ({
-    kind: "unknown" as const,
-    reason,
-    chosen: isChosenUnknown(reason),
-    paths: [...paths].sort((a, b) => a.targetName.localeCompare(b.targetName) || a.sourceName.localeCompare(b.sourceName)),
-  }));
-  unknownItems.sort((a, b) => {
-    const ac = a as Extract<PathAttention, { kind: "unknown" }>;
-    const bc = b as Extract<PathAttention, { kind: "unknown" }>;
-    return Number(ac.chosen) - Number(bc.chosen) || bc.paths.length - ac.paths.length || ac.reason.localeCompare(bc.reason);
-  });
-  return [...downItems, ...unknownItems];
+  downItems.sort((a, b) => b.paths.length - a.paths.length || b.worstLoss - a.worstLoss || a.targetName.localeCompare(b.targetName));
+  const offlineItems = [...offline.entries()]
+    .map(([source, paths]) => ({ kind: "offline" as const, source, sourceName: paths[0]!.sourceName, paths: [...paths].sort(byTarget) }))
+    .sort((a, b) => b.paths.length - a.paths.length || a.sourceName.localeCompare(b.sourceName));
+  const unknownItems = [...unknown.entries()]
+    .map(([reason, paths]) => ({ kind: "unknown" as const, reason, paths: [...paths].sort(byTarget) }))
+    .sort((a, b) => b.paths.length - a.paths.length || a.reason.localeCompare(b.reason));
+  const pausedItems = paused.length ? [{ kind: "paused" as const, paths: [...paused].sort(byTarget) }] : [];
+  return [...downItems, ...offlineItems, ...unknownItems, ...pausedItems];
 }
 
 export interface SourceReach {
@@ -579,6 +591,7 @@ export interface SourceReach {
   up: number;
   down: number;
   unknown: number;
+  paused: number;
   total: number;
 }
 
@@ -589,10 +602,10 @@ export interface SourceReach {
  */
 export function reachBySource(matrix: PathsMatrix): SourceReach[] {
   return matrix.sources.map((column) => {
-    const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, down: 0, unknown: 0, total: 0 };
+    const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, down: 0, unknown: 0, paused: 0, total: 0 };
     for (const path of matrix.paths) {
       if (path.source !== column.nodeId || path.rowKey.startsWith("@")) continue;
-      reach[path.state] += 1;
+      reach[displayState(path)] += 1;
       reach.total += 1;
     }
     return reach;
@@ -608,11 +621,19 @@ export function quoteQueryValue(value: string): string {
 }
 
 export function attentionQuery(item: PathAttention): string {
-  if (item.kind === "down") return `state:down target:${quoteQueryValue(item.targetName)}`;
-  return `state:unknown reason:${quoteQueryValue(item.reason)}`;
+  switch (item.kind) {
+    case "down":
+      return `state:down target:${quoteQueryValue(item.targetName)}`;
+    case "offline":
+      return `state:unknown source:${quoteQueryValue(item.sourceName)}`;
+    case "unknown":
+      return `state:unknown reason:${quoteQueryValue(item.reason)}`;
+    case "paused":
+      return "state:paused";
+  }
 }
 
-export function reachQuery(reach: SourceReach, state?: PathState): string {
+export function reachQuery(reach: SourceReach, state?: PathDisplay): string {
   const parts = [`source:${quoteQueryValue(reach.name)}`];
   if (state) parts.push(`state:${state}`);
   return parts.join(" ");
@@ -664,13 +685,14 @@ export function availability(path: Pick<PathItem, "samples" | "expected" | "loss
 /* The list query over paths                                            */
 /* ------------------------------------------------------------------ */
 
-export const PATH_STATES: readonly PathState[] = ["down", "unknown", "up"];
+/** The states the query knows, as the console words them: a pause is its own state. */
+export const PATH_STATES: readonly PathDisplay[] = ["down", "unknown", "paused", "up"];
 export const PATH_METHODS = ["tcp", "http", "tls", "icmp", "beacon"] as const;
 
 /** Queries the help offers on Paths; each key names the sentence that says what it finds. */
 export const PATHS_QUERY_EXAMPLES = [
   { key: "down", query: "state:down" },
-  { key: "unknown", query: "state:unknown -reason:paused" },
+  { key: "unknown", query: "state:unknown" },
   { key: "region", query: "region:europe p50>200" },
   { key: "loss", query: "loss>1% sort:-loss" },
 ] as const;
@@ -697,8 +719,8 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
       type: "enum",
       hint: hint("state"),
       values: PATH_STATES,
-      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up" },
-      get: (p) => p.state,
+      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up", stopped: "paused" },
+      get: (p) => displayState(p),
     },
     { key: "reason", aliases: ["why"], type: "list", hint: hint("reason"), get: reasonWords, suggest: (rows) => rows.map((p) => reasonCode(p.reason) ?? p.reason ?? "").filter(Boolean), sort: false },
     { key: "region", type: "string", hint: hint("region"), get: (p) => p.region, suggest: (rows) => rows.map((p) => p.region) },

@@ -30,6 +30,7 @@ import {
   type PathsSource,
 } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import WindowControl from "./WindowControl.vue";
 
 // The chart and uPlot load with the first sheet that draws one, not with the page. A chunk
 // that fails to load (a tab left open across a deploy) says so instead of leaving a blank.
@@ -50,7 +51,13 @@ const props = defineProps<{
   compact: boolean;
   /** "cd-hs-sh to xuezhang-jp-nat", for the chart's accessible name. */
   title: string;
+  /** The windows the page offers; given, the sheet carries its own control (the page's is under the sheet). */
+  offered?: MonitorWindow[];
+  /** The agent's newest error, for a down path the server sends without a reason. */
+  failure?: string;
 }>();
+
+const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
 const { whyText, stateLabel, windowLong } = usePathsCopy();
@@ -169,8 +176,21 @@ const reasonLine = computed(() => {
   if (p.state === "down" && !p.reason) {
     const failed = runs.value.find((r) => !r.success && r.error);
     if (failed?.error) return failed.error;
+    if (props.failure) return props.failure;
   }
   return whyText(p);
+});
+
+/* ---- A certificate check: when the certificate expires ---- */
+
+const DAY_MS = 86_400_000;
+/** The expiry the newest run that completed a handshake read, for a tls check. */
+const cert = computed(() => {
+  const at = runs.value.find((r) => r.cert_not_after)?.cert_not_after;
+  if (!at) return undefined;
+  const expires = Date.parse(at);
+  if (Number.isNaN(expires)) return undefined;
+  return { date: formatDateTime(expires), days: Math.floor((expires - Date.now()) / DAY_MS) };
 });
 
 /* ---- Table view ---- */
@@ -194,8 +214,25 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
       </p>
     </div>
 
+    <p
+      v-if="cert"
+      :class="cn('rounded-md border border-border p-3 text-sm', cert.days < 0 && 'text-destructive')"
+      data-testid="path-cert"
+    >
+      {{ cert.days < 0 ? $t('fleet.monitoring.paths.sheet.certExpired', { date: cert.date }) : $t('fleet.monitoring.paths.sheet.cert', { date: cert.date, n: cert.days }, cert.days) }}
+    </p>
+
     <section v-if="figures.length" class="space-y-1.5" :aria-label="figuresCaption">
-      <p class="text-xs text-muted-foreground">{{ figuresCaption }}</p>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p class="text-xs text-muted-foreground">{{ figuresCaption }}</p>
+        <WindowControl
+          v-if="offered && offered.length"
+          :model-value="window"
+          :offered="offered"
+          :label="$t('fleet.monitoring.window.label')"
+          @update:model-value="(w) => emit('window', w)"
+        />
+      </div>
       <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
         <div v-for="f in figures" :key="f.key" class="min-w-0">
           <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>

@@ -258,35 +258,50 @@ export function gapRuns(series: Pick<PathSeries, "points" | "stepSec">): GapRun[
   return runs;
 }
 
+export interface MethodSwitch {
+  t: number;
+  /** The method before the switch. */
+  from: string;
+  to: string;
+}
+
 /**
- * Where the method changed: the server's list when it sent one, otherwise
- * read from the buckets' own method field.
+ * Where the method begins: the server's list (the method in force from the
+ * first bucket with data, then every bucket where it changed, as lattice-sdk
+ * PathSeries.MethodChanges says), else the same read from the buckets' own
+ * method field.
  */
-export function methodMarkers(series: PathSeries): MethodChange[] {
+export function methodStarts(series: PathSeries): MethodChange[] {
   if (series.methodChanges.length) return series.methodChanges;
   const out: MethodChange[] = [];
-  let current: string | undefined;
   for (const point of series.points) {
     if (!point.method) continue;
-    if (current !== undefined && point.method !== current) out.push({ t: point.t, method: point.method });
-    current = point.method;
+    if (out[out.length - 1]?.method !== point.method) out.push({ t: point.t, method: point.method });
+  }
+  return out;
+}
+
+/** The switches the chart marks: every start after the first whose method differs from the one before. */
+export function methodMarkers(series: PathSeries): MethodSwitch[] {
+  const starts = methodStarts(series);
+  const out: MethodSwitch[] = [];
+  for (let i = 1; i < starts.length; i++) {
+    if (starts[i]!.method !== starts[i - 1]!.method) out.push({ t: starts[i]!.t, from: starts[i - 1]!.method, to: starts[i]!.method });
   }
   return out;
 }
 
 /**
- * The method in force at a time: the bucket's own, else the last change at
- * or before it, else the path's current method when the series never
- * changed. Before the first change of a series that did change, the earlier
- * method is not stated, and this says so with undefined.
+ * The method in force at a time: the bucket's own, else the last start at or
+ * before it, else the first start (before any data, the first method is
+ * the one that ran), else the path's current method.
  */
-export function methodAt(series: PathSeries, t: number, current: string): string | undefined {
+export function methodAt(series: PathSeries, t: number, current: string): string {
   const point = series.points.find((p) => p.t === t);
   if (point?.method) return point.method;
-  const markers = methodMarkers(series);
-  if (!markers.length) return current;
-  const before = markers.filter((m) => m.t <= t);
-  return before.length ? before[before.length - 1]!.method : undefined;
+  const starts = methodStarts(series);
+  const before = starts.filter((m) => m.t <= t);
+  return before[before.length - 1]?.method ?? starts[0]?.method ?? current;
 }
 
 /* ------------------------------------------------------------------ */

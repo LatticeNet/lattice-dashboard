@@ -270,13 +270,15 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       if (source === target.node_id) continue;
       const pair = plan.pairs.find((p) => p.source === source && p.target === target.node_id);
       const shape = shapeFor(plan, source, target.node_id);
+      const icmp = SWITCH && node?.name === "[cd]-gomami-hk-turin-mini";
       const base = {
         source,
         target_node: target.node_id,
-        target: node ? natEndpoint(node) : (target.endpoint ?? ""),
+        // ICMP dials an address, not a port.
+        target: node ? (icmp ? (node.public_ip ?? "") : natEndpoint(node)) : (target.endpoint ?? ""),
         monitor_id: target.monitor_id ?? `mon_lat_${target.node_id}`,
         managed: true,
-        method: SWITCH && node?.name === "[cd]-gomami-hk-turin-mini" ? "icmp" : "tcp",
+        method: icmp ? "icmp" : "tcp",
       };
       if (target.target === "not_probeable") {
         // The server says not_probeable whatever the plan's note (udp_only, no_public_address, no_tcp_line).
@@ -338,7 +340,11 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
     if (!plan.config.enabled) shape = { ...shape, pausedSince: Infinity };
   }
   const { step, from, to, buckets } = bucketsFor(shape, query.window);
-  const method_changes = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini" ? [{ t: Math.floor((NOW / 1000 - 2 * 86400) / step) * step, method: "icmp" }] : [];
+  // As the server: the method in force from the first bucket with data, then each switch.
+  const firstHeard = buckets.find((b) => b.n > 0)?.t ?? from;
+  const switched = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini";
+  const method_changes = [{ t: firstHeard, method: switched ? "tcp" : query.monitor ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : "tcp" }];
+  if (switched) method_changes.push({ t: Math.floor((NOW / 1000 - 2 * 86400) / step) * step, method: "icmp" });
   return { window: query.window, step_seconds: step, from, to, method_changes, buckets };
 }
 
@@ -355,6 +361,8 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
         monitor_id: monitorId,
         node_id: source,
         at: new Date((Number(b.t) + 30) * 1000).toISOString(),
+        // A certificate check reads the leaf's expiry: 41 days out.
+        ...(shape.operator === "tls" ? { cert_not_after: new Date(NOW + 41 * 86_400_000).toISOString() } : {}),
         success: !failed,
         latency_ms: failed ? undefined : (b.p50_ms ?? undefined),
         error: failed ? (shape.behaviour === "offline" ? `dial tcp ${endpoint}: connect: connection refused` : `dial tcp ${endpoint}: i/o timeout`) : undefined,

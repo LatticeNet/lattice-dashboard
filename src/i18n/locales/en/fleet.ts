@@ -1319,6 +1319,7 @@ export default {
         "3d": "3d",
         "7d": "7d",
         "14d": "14d",
+        topologyNote: "Topology keeps 1h, 24h and 7d, so it shows the {window}.",
         long: {
           "1h": "last hour",
           "6h": "last 6 hours",
@@ -1335,12 +1336,14 @@ export default {
           sources: "{n} source | {n} sources",
           down: "{n} down",
           unknown: "{n} unknown",
+          paused: "{n} paused",
           legacy: "latency paths only",
         },
         state: {
           up: "up",
           down: "down",
           unknown: "unknown",
+          paused: "paused",
         },
         reason: {
           agent_offline: "The source's agent is offline",
@@ -1390,7 +1393,7 @@ export default {
         },
         query: {
           label: "Search, filter and sort paths",
-          placeholder: "Search, or target:jp state:down source:cd-hs-sh",
+          placeholder: "Search, or country:jp state:down source:cd-hs-sh",
           examples: {
             down: "Paths that are down",
             unknown: "Unknown paths that are not a pause",
@@ -1400,7 +1403,7 @@ export default {
           fields: {
             target: "Target name",
             source: "Source name",
-            state: "up, down or unknown",
+            state: "up, down, unknown or paused",
             reason: "Why a path is unknown or down, as a code or in words",
             region: "Target region, such as europe or eastAsia",
             country: "Target country code",
@@ -1419,6 +1422,9 @@ export default {
           readOnly: "Ask an operator with monitor:admin to set up the path set.",
           pathSet: "Set up the path set",
           check: "Add a check",
+          noSourceTitle: "The path set has no source",
+          noSourceDescription: "Choose the nodes that probe. Until then no path is measured.",
+          noSourceAction: "Choose sources",
           noMatchTitle: "No paths match",
           noMatchDescription: "Change the query or clear it to see every path.",
           clear: "Clear the query",
@@ -1445,6 +1451,8 @@ export default {
           noSeries: "This control plane keeps no history for this check yet; its latest runs are below.",
           seriesFailed: "History not read: {reason}",
           seriesEmpty: "No history in this window yet.",
+          cert: "Certificate expires {date}, {n} day left | Certificate expires {date}, {n} days left",
+          certExpired: "The certificate expired {date}",
           chartFailed: "The chart did not load. Reload the page to fetch it again.",
           table: "Buckets as a table ({n})",
           tableCaption: "{path}, one row per bucket, newest first",
@@ -1483,12 +1491,17 @@ export default {
         helpTouch: "Tap the chart for a bucket's values.",
         hintTouch: "Tap the chart to read a bucket.",
         reset: "Reset zoom",
+        min: "min",
+        max: "max",
       },
       overview: {
         clear: "The only path is up over the {window}. | All {n} paths are up over the {window}.",
         attention: {
           down: "{target} is down from {source}",
-          downMany: "{target} is down from {n} of {total} sources",
+          downMany: "{target} is down from {n} of the {total} sources that measure it",
+          offline: "{source}'s agent is offline: {n} path unknown | {source}'s agent is offline: {n} paths unknown",
+          lastSeen: "last seen {age}",
+          paused: "{n} path paused | {n} paths paused",
           loss: "{loss} loss over the {window}",
           unknown: "{n} path unknown: {reason} | {n} paths unknown: {reason}",
           andMore: "{names} and {n} more",
@@ -1499,6 +1512,7 @@ export default {
           reaches: "{up} of {total} up",
           down: "{n} down",
           unknown: "{n} unknown",
+          paused: "{n} paused",
         },
       },
       checks: {
@@ -1522,6 +1536,10 @@ export default {
           pathSet: "Path set",
         },
         paused: "paused",
+        downOn: "down on {n} of {total}",
+        certLeft: "{n} d left",
+        certExpired: "expired",
+        noneRunning: "none running",
         withPaused: "{base}, {n} paused",
         editUnavailable: "This control plane cannot edit checks yet",
         empty: {
@@ -1560,6 +1578,8 @@ export default {
           chosen: "{n} chosen",
           noNodes: "No node matches.",
           paused: "paused",
+          online: "online",
+          offline: "offline",
           pauseSource: "Pause {name} on this check",
           pauseHint: "A paused source keeps its history and stops running this check until you resume it.",
           expect: {
@@ -1642,8 +1662,8 @@ export default {
         },
       },
       query: {
-        label: "Search, filter and sort monitors",
-        placeholder: "Search, or status:failing type:http sort:name",
+        label: "Search, filter and sort checks",
+        placeholder: "Search, or status:down type:http sort:name",
         examples: {
           failing: "Failing or stale monitors, by name",
           http: "HTTP monitors on port 443",
@@ -2044,8 +2064,8 @@ export default {
           noNodesDescription: "Enroll a node and its heartbeat shows here.",
         },
       },
-      noAccessTitle: "Monitors need monitor:read",
-      noAccessDescription: "This session cannot read monitors or their results.",
+      noAccessTitle: "Monitoring needs monitor:read",
+      noAccessDescription: "This session cannot read checks, paths or their results.",
       layers: {
         label: "Monitoring layers",
         overview: "Overview",

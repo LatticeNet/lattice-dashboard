@@ -139,14 +139,19 @@ test("legacy series: samples and failures become runs, no min or jitter", () => 
   ]);
 });
 
-test("method changes: the server's list, else read from the buckets", () => {
+test("method changes: the server's list starts with the method in force, and only later entries are switches", () => {
   const t0 = 1_760_000_000;
-  const listed = seriesFromResponse(response({ method_changes: [{ t: t0 + 600, method: "beacon" }] }));
-  assert.deepEqual(methodMarkers(listed), [{ t: t0 + 600, method: "beacon" }]);
+  const plain = seriesFromResponse(response({ method_changes: [{ t: t0, method: "tcp" }] }));
+  assert.deepEqual(methodMarkers(plain), [], "the first entry is the starting method, not a switch");
+  assert.equal(methodAt(plain, t0 + 600, "icmp"), "tcp");
+  const listed = seriesFromResponse(response({ method_changes: [{ t: t0, method: "tcp" }, { t: t0 + 600, method: "beacon" }] }));
+  assert.deepEqual(methodMarkers(listed), [{ t: t0 + 600, from: "tcp", to: "beacon" }]);
   assert.equal(methodAt(listed, t0 + 1200, "beacon"), "beacon");
-  assert.equal(methodAt(listed, t0, "beacon"), undefined, "before the first change the earlier method is not stated");
+  assert.equal(methodAt(listed, t0 + 300, "beacon"), "tcp");
+  assert.equal(methodAt(listed, t0 - 300, "beacon"), "tcp", "before any data the first method ran");
   const fromBuckets = seriesFromResponse(
     response({
+      method_changes: [],
       buckets: [
         { t: t0, n: 1, expected: 1, fail: 0, p50_ms: 10, method: "tcp" },
         { t: t0 + 300, n: 1, expected: 1, fail: 0, p50_ms: 10, method: "tcp" },
@@ -154,10 +159,10 @@ test("method changes: the server's list, else read from the buckets", () => {
       ],
     }),
   );
-  assert.deepEqual(methodMarkers(fromBuckets), [{ t: t0 + 600, method: "icmp" }]);
+  assert.deepEqual(methodMarkers(fromBuckets), [{ t: t0 + 600, from: "tcp", to: "icmp" }]);
   assert.equal(methodAt(fromBuckets, t0, "icmp"), "tcp");
-  const plain = seriesFromResponse(response());
-  assert.equal(methodAt(plain, t0, "tcp"), "tcp");
+  const none = seriesFromResponse(response({ method_changes: [] }));
+  assert.equal(methodAt(none, t0, "tcp"), "tcp", "a series that names no method reads the path's");
 });
 
 test("lanes: 0 ms sits above the loss lane and 100% loss reaches the lane's top", () => {

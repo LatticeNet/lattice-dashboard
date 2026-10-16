@@ -55,6 +55,8 @@ const props = defineProps<{
   nodes: Node[];
   canAdmin: boolean;
   window: MonitorWindow;
+  /** The windows the page offers, for the sheet's own window control. */
+  offered: MonitorWindow[];
 }>();
 
 const emit = defineEmits<{
@@ -63,10 +65,11 @@ const emit = defineEmits<{
   pathSet: [];
   retention: [];
   changed: [];
+  window: [window: MonitorWindow];
 }>();
 
 const { t } = useI18n();
-const { stateLabel, whyText } = usePathsCopy();
+const { stateLabel, displayLabel, whyText } = usePathsCopy();
 /** The server has the edit route: it answered the design 29 paths read. */
 const serverEdits = computed(() => props.data.source.value === "paths");
 const wide = useMediaQuery("(min-width: 768px)");
@@ -159,16 +162,46 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; tone
     case "none":
       return { text: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
     case "failing":
+      // "down", as Paths and Overview say it.
       return {
-        text: state.total > 1 ? t("fleet.monitoring.status.failingOn", { n: state.failing, total: state.total }) : t("fleet.monitoring.status.failing"),
+        text: state.total > 1 ? t("fleet.monitoring.checks.downOn", { n: state.failing, total: state.total }) : t("fleet.monitoring.paths.state.down"),
         tone: "destructive",
         textClass: "text-destructive font-medium",
       };
     case "stale":
       return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
-    case "up":
-      return { text: t("fleet.monitoring.status.up"), detail: state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined, tone: "success", textClass: "text-foreground" };
+    case "up": {
+      // A certificate check leads with the days left, the reason it exists; others with the newest latency.
+      const days = certDaysLeft(monitor);
+      const detail = days !== undefined ? (days < 0 ? t("fleet.monitoring.checks.certExpired") : t("fleet.monitoring.checks.certLeft", { n: days })) : state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined;
+      return { text: t("fleet.monitoring.status.up"), detail, tone: "success", textClass: "text-foreground" };
+    }
   }
+}
+
+const DAY_MS = 86_400_000;
+/** Whole days until the certificate a tls check last read expires; undefined for other checks. */
+function certDaysLeft(monitor: MonitorView): number | undefined {
+  if (monitor.type !== "tls") return undefined;
+  const at = monitor.latest?.find((l) => l.cert_not_after)?.cert_not_after;
+  const expires = at ? Date.parse(at) : NaN;
+  return Number.isNaN(expires) ? undefined : Math.floor((expires - Date.now()) / DAY_MS);
+}
+
+/** A check's newest failure on one source, from the list's newest results. */
+function failureOn(monitor: MonitorView | undefined, source: string): string | undefined {
+  const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
+  return latest && !latest.success ? latest.error || undefined : undefined;
+}
+
+/**
+ * A generated check's name without the "Latency to " every one of them
+ * starts with: under the Path set group it says nothing, and on a phone it
+ * pushed the part that differs out of the cell.
+ */
+function shownName(monitor: MonitorView): string {
+  const name = monitor.name || monitor.id;
+  return monitor.managed_by && name.startsWith("Latency to ") ? name.slice("Latency to ".length) : name;
 }
 
 function cadence(seconds: number): string {
@@ -181,13 +214,16 @@ function assignmentLabel(monitor: MonitorView): string {
   if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
   if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
   const count = monitor.node_ids?.length ?? 0;
+  // A generated check whose every path is paused runs on no source.
+  if (count === 0) return t("fleet.monitoring.checks.noneRunning");
   const paused = (monitor.paused_node_ids ?? []).length;
   const base = count === 1 ? nodeName(monitor.node_ids![0]!) : t("fleet.monitoring.assignment.nodeCount", { count }, count);
   return paused ? t("fleet.monitoring.checks.withPaused", { base, n: paused }) : base;
 }
 
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
-  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, value: (m) => m.name || m.id },
+  // Wraps on a phone: thirty generated names share "Latency to", and a cut name hides the part that differs.
+  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, value: (m) => m.name || m.id },
   { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (m) => healthRank(healthOf(m)) },
   { key: "type", label: t("fleet.monitoring.checks.table.method"), sortable: true, searchable: true },
   { key: "target", label: t("fleet.monitoring.table.target"), searchable: true },
@@ -289,11 +325,23 @@ const sourceRows = computed<SourceRow[]>(() => {
     .sort((a, b) => Number(a.latest.success) - Number(b.latest.success) || a.name.localeCompare(b.name));
 });
 
+/**
+ * The source a check sheet opens on: the worst one that is measured (down
+ * before up, the higher loss first), never a paused one while a measured
+ * source exists, so the chart shows something to read.
+ */
+function defaultSource(rows: SourceRow[]): string | undefined {
+  const measured = rows.filter((r) => !r.paused && (r.path ? r.path.state !== "unknown" : !!r.latest));
+  const pool = measured.length ? measured : rows.filter((r) => !r.paused).length ? rows.filter((r) => !r.paused) : rows;
+  const rank = (r: SourceRow) => (r.path ? stateRank(r.path.state) : r.latest && !r.latest.success ? 0 : 2);
+  return [...pool].sort((a, b) => rank(a) - rank(b) || (b.path?.loss ?? 0) - (a.path?.loss ?? 0) || a.name.localeCompare(b.name))[0]?.source;
+}
+
 const chosenSource = ref<string | undefined>();
 watch(
   () => [sheet.openId.value, sourceRows.value.map((r) => r.source).join(",")] as const,
   () => {
-    if (!sourceRows.value.some((r) => r.source === chosenSource.value)) chosenSource.value = sourceRows.value[0]?.source;
+    if (!sourceRows.value.some((r) => r.source === chosenSource.value)) chosenSource.value = defaultSource(sourceRows.value);
   },
   { immediate: true },
 );
@@ -396,8 +444,8 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       </template>
       <template #cell-name="{ row }">
         <span class="flex min-w-0 items-center gap-2">
-          <Activity class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span class="truncate font-medium">{{ row.name || row.id }}</span>
+          <Activity class="size-4 shrink-0 text-muted-foreground max-md:hidden" aria-hidden="true" />
+          <span class="font-medium md:truncate max-md:break-words" :title="row.name || row.id">{{ shownName(row) }}</span>
         </span>
       </template>
       <template #cell-status="{ row }">
@@ -409,7 +457,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       </template>
       <template #cell-type="{ row }">
         <span class="font-mono text-xs uppercase">{{ row.type }}</span>
-        <span v-if="row.type === 'tls'" class="ms-1.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.threshold_days ?? 14 }) }}</span>
+        <span v-if="row.type === 'tls'" class="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.threshold_days ?? 14 }) }}</span>
       </template>
       <template #cell-target="{ row }">
         <span class="font-mono text-xs">{{ row.target }}</span>
@@ -478,13 +526,13 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                   <span class="block truncate font-medium">{{ row.name }}</span>
                   <span v-if="row.paused" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.paused') }}</span>
                   <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block truncate text-xs', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
-                    {{ stateLabel(row.path.state) }}: {{ whyText(row.path) }}
+                    {{ displayLabel(row.path) }}: {{ whyText(row.path, failureOn(selected, row.source)) }}
                   </span>
                   <span v-else-if="row.latest && !row.latest.success" class="block truncate text-xs text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
                 </span>
                 <span class="text-end font-mono text-xs tabular">
                   <template v-if="row.path">
-                    <span class="block">{{ row.path.p50Ms !== undefined ? formatMs(row.path.p50Ms) : stateLabel(row.path.state) }}</span>
+                    <span class="block">{{ row.path.p50Ms !== undefined && row.path.state !== 'unknown' ? formatMs(row.path.p50Ms) : displayLabel(row.path) }}</span>
                     <span v-if="(row.path.loss ?? 0) > 0" class="block text-muted-foreground">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(row.path.loss) }) }}</span>
                   </template>
                   <template v-else-if="row.latest">
@@ -505,6 +553,9 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           :source="data.source.value"
           :compact="!wide"
           :title="$t('fleet.monitoring.paths.sheet.title', { source: chosenRow.name, target: selected.name || selected.target })"
+          :offered="offered"
+          :failure="failureOn(selected, chosenRow.source)"
+          @window="(w) => emit('window', w)"
         />
       </div>
       <template v-if="canAdmin && selected" #actions>

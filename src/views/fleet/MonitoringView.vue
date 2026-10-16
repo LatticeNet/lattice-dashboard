@@ -143,6 +143,35 @@ const windowsOffered = computed(() => (layer.value === "topology" ? data.offered
 const matrix = computed(() => data.matrix.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
+/**
+ * The newest failure of a check on one source, from the monitors list's
+ * newest results: the server sends a down path without a reason, and the
+ * error the agent wrote is the reason the operator needs.
+ */
+function failureOf(monitorId: string, source: string): string | undefined {
+  const monitor = (monitorsQuery.data.value ?? []).find((m) => m.id === monitorId);
+  const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
+  return latest && !latest.success ? latest.error || undefined : undefined;
+}
+
+/** When a node last reported, for an offline source in the attention list. */
+function nodeSeen(id: string): string | undefined {
+  return nodes.value.find((n) => n.id === id)?.last_seen || undefined;
+}
+
+/** The path set exists and has no source: nothing is measured, and the empty state says why. */
+const noSources = computed(() => {
+  const plan = data.planQuery.data.value;
+  return !!plan && plan.stored && (plan.config.sources ?? []).length === 0;
+});
+
+/** Topology reads the latency rollups; when the page window is one they do not keep, say what it shows. */
+const topologyNote = computed(() =>
+  layer.value === "topology" && !LEGACY_WINDOWS.includes(data.window.value)
+    ? t("fleet.monitoring.window.topologyNote", { window: t(`fleet.monitoring.window.long.${legacyWindow(data.window.value)}`) })
+    : "",
+);
+
 /* ---- Head ---- */
 
 const incidentCounts = computed(() => filterCounts(incidentsQuery.data.value?.incidents ?? [], now.value.getTime()));
@@ -185,7 +214,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const sources = reachBySource(m).filter((r) => r.total > 0).length;
   if (sources > 1) out.push({ key: "sources", text: t("fleet.monitoring.paths.proof.sources", { n: sources }, sources) });
   if (m.counts.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.paths.proof.down", { n: m.counts.down }), to: pathsLink("state:down") });
-  if (m.counts.unknown) out.push({ key: "unknown", tone: m.counts.unknownProblems ? "warning" : "default", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
+  if (m.counts.unknown) out.push({ key: "unknown", tone: "warning", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
+  if (m.counts.paused) out.push({ key: "paused", tone: "muted", text: t("fleet.monitoring.paths.proof.paused", { n: m.counts.paused }), to: pathsLink("state:paused") });
   if (data.source.value === "legacy") out.push({ key: "legacy", tone: "muted", text: t("fleet.monitoring.paths.proof.legacy") });
   return out;
 });
@@ -291,9 +321,9 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
         <ProofLine v-if="canReadMonitors && layer !== 'topology'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <p v-if="topologyNote" class="text-xs text-muted-foreground" data-testid="topology-window-note">{{ topologyNote }}</p>
       </template>
       <template v-if="canReadMonitors" #actions>
-        <WindowControl v-if="layer !== 'incidents'" v-model="windowModel" :offered="windowsOffered" :label="$t('fleet.monitoring.window.label')" />
         <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="pathSetOpen = true">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
@@ -306,6 +336,8 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
           <RefreshCw :class="cn('size-4', refreshing && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
+        <!-- Last, so it holds the header's end whatever the layer's own buttons are. -->
+        <WindowControl v-if="layer !== 'incidents'" v-model="windowModel" :offered="windowsOffered" :label="$t('fleet.monitoring.window.label')" />
       </template>
     </PageHeader>
 
@@ -321,6 +353,9 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :window="data.window.value"
         :can-admin="canAdminMonitors"
         :check-attention="legacyCheckAttention"
+        :failure-of="failureOf"
+        :node-seen="nodeSeen"
+        :no-sources="noSources"
         @path-set="pathSetOpen = true"
         @create-check="openCreate()"
       />
@@ -332,10 +367,14 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :monitors="monitorsQuery.data.value ?? []"
         :can-admin="canAdminMonitors"
         :window="data.window.value"
+        :offered="data.offered.value"
+        :failure-of="failureOf"
+        :no-sources="noSources"
         @path-set="pathSetOpen = true"
         @create-check="openCreate()"
         @open-check="openCheck"
         @changed="refreshAll"
+        @window="(w) => (windowParam = w)"
       />
 
       <ChecksLayer
@@ -346,6 +385,8 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :nodes="nodes"
         :can-admin="canAdminMonitors"
         :window="data.window.value"
+        :offered="data.offered.value"
+        @window="(w) => (windowParam = w)"
         @create="openCreate"
         @edit="openEdit"
         @path-set="pathSetOpen = true"

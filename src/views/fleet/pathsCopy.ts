@@ -8,7 +8,7 @@ import { useI18n } from "vue-i18n";
 import type { MonitorWindow, PathState } from "@/lib/api";
 import type { RegionKey } from "@/lib/regions";
 
-import { reasonCode } from "./pathsModel";
+import { displayState, reasonCode, type PathDisplay } from "./pathsModel";
 
 export function usePathsCopy() {
   const { t } = useI18n();
@@ -25,14 +25,19 @@ export function usePathsCopy() {
    * paths), and for a down path, which the server sends without one, that
    * its latest runs failed. The failure itself is in the path's runs.
    */
-  function whyText(path: { state: PathState; reason?: string }): string {
+  function whyText(path: { state: PathState; reason?: string }, failure?: string): string {
     if (path.reason) return reasonText(path.reason);
-    if (path.state === "down") return t("fleet.monitoring.paths.reason.failing");
+    if (path.state === "down") return failure || t("fleet.monitoring.paths.reason.failing");
     return reasonText(undefined);
   }
 
-  function stateLabel(state: PathState): string {
+  function stateLabel(state: PathDisplay): string {
     return t(`fleet.monitoring.paths.state.${state}`);
+  }
+
+  /** The state as the console words it: a pause reads "paused", not "unknown". */
+  function displayLabel(path: { state: PathState; reason?: string }): string {
+    return stateLabel(displayState(path));
   }
 
   function groupLabel(group: RegionKey | "checks"): string {
@@ -43,5 +48,5 @@ export function usePathsCopy() {
     return t(`fleet.monitoring.window.long.${window}`);
   }
 
-  return { reasonText, whyText, stateLabel, groupLabel, windowLong };
+  return { reasonText, whyText, stateLabel, displayLabel, groupLabel, windowLong };
 }

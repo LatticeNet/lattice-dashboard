@@ -130,7 +130,7 @@ test("matrix: node targets as rows by region, operator checks as rows of their o
   const m = buildPathsMatrix(response(), { checkName: (id) => (id === "mon_http" ? "Status page" : undefined) });
   assert.deepEqual(m.sources, [{ nodeId: "sh", name: "cd-hs-sh" }]);
   assert.equal(m.rows.length, 7);
-  assert.deepEqual(m.counts, { paths: 7, up: 3, down: 1, unknown: 3, unknownProblems: 2 });
+  assert.deepEqual(m.counts, { paths: 7, up: 3, down: 1, unknown: 2, paused: 1 }, "a pause is counted apart from unknown");
   const check = m.rows.find((r) => r.kind === "check")!;
   assert.equal(check.key, "@mon_http");
   assert.equal(check.name, "Status page");
@@ -165,7 +165,7 @@ test("matrix: two checks in one cell show the worse state", () => {
   assert.equal(m.paths.length, 2);
 });
 
-test("attention: downs one per target first, then unknowns grouped by reason, pauses last", () => {
+test("attention: downs one per target first, then unknowns grouped by reason, pauses last as one line", () => {
   const extra = response();
   extra.sources.push({ node_id: "sh2", name: "volc-sh" });
   extra.paths.push(
@@ -175,19 +175,32 @@ test("attention: downs one per target first, then unknowns grouped by reason, pa
   );
   const items = pathAttention(buildPathsMatrix(extra));
   assert.deepEqual(
-    items.map((i) => (i.kind === "down" ? `down:${i.rowKey}:${i.paths.length}` : `unknown:${i.reason}:${i.paths.length}`)),
-    ["down:jp:2", "down:fsn:1", "unknown:udp_only:2", "unknown:no_public_address:1", "unknown:path_paused:1"],
+    items.map((i) => `${i.kind}:${i.kind === "down" ? `${i.rowKey}:${i.paths.length}/${i.measuredBy}` : i.kind === "unknown" ? `${i.reason}:${i.paths.length}` : i.paths.length}`),
+    ["down:jp:2/2", "down:fsn:1/2", "unknown:udp_only:2", "unknown:no_public_address:1", "paused:1"],
   );
   const jp = items[0]!;
   assert.equal(jp.kind === "down" && jp.paths[0]!.sourceName, "cd-hs-sh", "the worse loss leads");
   assert.equal(attentionQuery(items[0]!), 'state:down target:xuezhang-jp-nat');
   assert.equal(attentionQuery(items[2]!), "state:unknown reason:udp_only");
-  assert.equal(attentionQuery({ kind: "down", rowKey: "x", targetName: "[cd] hk mini", paths: [], worstLoss: 1 }), 'state:down target:"[cd] hk mini"');
+  assert.equal(attentionQuery(items[4]!), "state:paused");
+  assert.equal(attentionQuery({ kind: "down", rowKey: "x", targetName: "[cd] hk mini", paths: [], worstLoss: 1, measuredBy: 1 }), 'state:down target:"[cd] hk mini"');
+});
+
+test("attention: an offline agent is one line for its source, not one per path", () => {
+  const r = response();
+  r.sources.push({ node_id: "hr", name: "mkcloud hr" });
+  for (const target of ["hk", "fsn", "la"]) r.paths.push({ source: "hr", target_node: target, target: "", monitor_id: `mon_lat_${target}`, managed: true, method: "tcp", state: "unknown", reason: "agent_offline", samples: 0, expected: 60 });
+  const items = pathAttention(buildPathsMatrix(r));
+  const offline = items.find((i) => i.kind === "offline")!;
+  assert.equal(offline.kind === "offline" && offline.sourceName, "mkcloud hr");
+  assert.equal(offline.paths.length, 3);
+  assert.equal(attentionQuery(offline), 'state:unknown source:"mkcloud hr"');
+  assert.ok(items.findIndex((i) => i.kind === "offline") < items.findIndex((i) => i.kind === "unknown"), "offline sources come before other unknowns");
 });
 
 test("reach: each source's paths by state", () => {
   const reach = reachBySource(buildPathsMatrix(response()));
-  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 2, down: 1, unknown: 3, total: 6 }], "the operator check to a URL is not reach");
+  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 2, down: 1, unknown: 2, paused: 1, total: 6 }], "the operator check to a URL is not reach; a pause is not unknown");
   assert.equal(reachQuery(reach[0]!, "down"), "source:cd-hs-sh state:down");
 });
 
@@ -216,6 +229,8 @@ test("query: state, source, target, reason words, loss in percent and p50 in ms"
   };
   assert.deepEqual(run("state:down"), ["sh~jp"]);
   assert.deepEqual(run("state:failing"), ["sh~jp"]);
+  assert.deepEqual(run("state:paused"), ["sh~la"]);
+  assert.deepEqual(run("state:unknown").sort(), ["sh~kix", "sh~nat"], "a pause is not unknown in the query either");
   assert.deepEqual(run("target:jp source:cd-hs-sh state:down"), ["sh~jp"]);
   assert.deepEqual(run("reason:udp"), ["sh~kix"]);
   assert.deepEqual(run("reason:\"UDP only\""), ["sh~kix"]);

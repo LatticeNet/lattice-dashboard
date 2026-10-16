@@ -94,18 +94,12 @@ const suggested = computed(() => suggestName(draft.value.type, draft.value.targe
 const dirty = computed(() => (props.monitor ? draftChanged(props.monitor, draft.value) : JSON.stringify(draft.value) !== JSON.stringify(base.value)));
 const replaces = computed(() => !!props.monitor && identityChanged(props.monitor, draft.value));
 
-const problemText = computed(() =>
-  problems.value
-    .filter((p) => p !== "target" || draft.value.target.trim())
-    .map((p) =>
-      t(`fleet.monitoring.checks.editor.problem.${p}`, {
-        min: CHECK_MIN_INTERVAL_SEC,
-        max: CHECK_MAX_INTERVAL_SEC,
-        timeout: CHECK_MAX_TIMEOUT_SEC,
-        days: TLS_MAX_THRESHOLD_DAYS,
-      }),
-    ),
-);
+function problemOf(p: string): string {
+  return t(`fleet.monitoring.checks.editor.problem.${p}`, { min: CHECK_MIN_INTERVAL_SEC, max: CHECK_MAX_INTERVAL_SEC, timeout: CHECK_MAX_TIMEOUT_SEC, days: TLS_MAX_THRESHOLD_DAYS });
+}
+/** Problems shown at the form's end: the ones with no field of their own (the numbers' sit under their fields, the target's under it). */
+const FIELD_PROBLEMS = new Set(["interval", "timeout", "timeoutVsInterval", "threshold", "target"]);
+const problemText = computed(() => problems.value.filter((p) => !FIELD_PROBLEMS.has(p)).map(problemOf));
 const missing = computed(() => {
   const out: string[] = [];
   if (!draft.value.target.trim()) out.push(t("fleet.monitoring.checks.editor.missing.target"));
@@ -300,9 +294,18 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         <template v-if="isTls">
           <div class="grid max-w-48 gap-1.5">
             <Label for="check-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
-            <Input id="check-threshold" v-model.number="draft.thresholdDays" type="number" min="1" :max="TLS_MAX_THRESHOLD_DAYS" />
+            <Input
+              id="check-threshold"
+              v-model.number="draft.thresholdDays"
+              type="number"
+              min="1"
+              :max="TLS_MAX_THRESHOLD_DAYS"
+              :aria-invalid="problems.includes('threshold') || undefined"
+              :aria-describedby="problems.includes('threshold') ? 'check-threshold-error' : undefined"
+            />
           </div>
           <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.thresholdHint', { days: draft.thresholdDays }) }}</p>
+          <p v-if="problems.includes('threshold')" id="check-threshold-error" role="alert" class="text-xs text-destructive">{{ problemOf('threshold') }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
       </fieldset>
@@ -313,13 +316,33 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         <div class="grid grid-cols-2 gap-3">
           <div class="grid gap-1.5">
             <Label for="check-interval">{{ $t('fleet.monitoring.checks.editor.interval') }}</Label>
-            <Input id="check-interval" v-model.number="draft.intervalSec" type="number" :min="CHECK_MIN_INTERVAL_SEC" :max="CHECK_MAX_INTERVAL_SEC" />
+            <Input
+              id="check-interval"
+              v-model.number="draft.intervalSec"
+              type="number"
+              :min="CHECK_MIN_INTERVAL_SEC"
+              :max="CHECK_MAX_INTERVAL_SEC"
+              :aria-invalid="problems.includes('interval') || undefined"
+              :aria-describedby="problems.includes('interval') ? 'check-interval-error' : undefined"
+            />
           </div>
           <div class="grid gap-1.5">
             <Label for="check-timeout">{{ $t('fleet.monitoring.checks.editor.timeout') }}</Label>
-            <Input id="check-timeout" v-model.number="draft.timeoutSec" type="number" min="1" :max="CHECK_MAX_TIMEOUT_SEC" />
+            <Input
+              id="check-timeout"
+              v-model.number="draft.timeoutSec"
+              type="number"
+              min="1"
+              :max="CHECK_MAX_TIMEOUT_SEC"
+              :aria-invalid="problems.includes('timeout') || problems.includes('timeoutVsInterval') || undefined"
+              :aria-describedby="problems.includes('timeout') || problems.includes('timeoutVsInterval') ? 'check-timeout-error' : undefined"
+            />
           </div>
         </div>
+        <p v-if="problems.includes('interval')" id="check-interval-error" role="alert" class="text-xs text-destructive">{{ problemOf('interval') }}</p>
+        <p v-if="problems.includes('timeout') || problems.includes('timeoutVsInterval')" id="check-timeout-error" role="alert" class="text-xs text-destructive">
+          {{ problemOf(problems.includes('timeout') ? 'timeout' : 'timeoutVsInterval') }}
+        </p>
       </fieldset>
 
       <!-- 6. When it fails -->
