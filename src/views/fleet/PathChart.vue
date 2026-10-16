@@ -292,11 +292,14 @@ function drawOverlay(u: uPlot): void {
     const label = guide.kind === "trigger" ? t("fleet.monitoring.chart.guideTrigger", { value: formatMs(guide.ms) }) : t("fleet.monitoring.chart.guideMedian", { value: formatMs(guide.ms) });
     const w = ctx.measureText(label).width + 8 * px;
     const lx = left + width - w - 2 * px;
+    // Above its line, or below it when the line runs along the top of the plot.
+    const below = y - 14 * px < top;
+    const padTop = below ? y + 1 * px : y - 14 * px;
     ctx.fillStyle = rgba(colors().card, 0.88);
-    ctx.fillRect(lx, y - 14 * px, w, 13 * px);
+    ctx.fillRect(lx, padTop, w, 13 * px);
     ctx.fillStyle = rgba(colors().ink, guide.kind === "trigger" ? 0.85 : 0.7);
     ctx.textAlign = "left";
-    ctx.fillText(label, lx + 4 * px, y - 2 * px);
+    ctx.fillText(label, lx + 4 * px, padTop + 12 * px);
   }
   // Method changes: a rule labelled with the switch it marks ("TCP → ICMP") on a card-coloured pad.
   ctx.font = `${10 * px}px ${colors().mono}`;
