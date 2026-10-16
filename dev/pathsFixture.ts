@@ -14,6 +14,16 @@
  *                         console falls back to the latency routes
  *   ?retention=14         fourteen days of fine history (the 14d window shows)
  *   ?switch=1             gomami-hk switched from tcp to icmp two days ago
+ *   ?m2a=1                a design 29 M2a server (dev/latencyFixture.ts): an
+ *                         ICMP check to xuezhang-jp-nat from cd-hs-sh (up,
+ *                         five echoes a run), mkcloud (agent too old) and
+ *                         Oracle-KIX-arm (ICMP not permitted); an HTTP check
+ *                         to a private address made before M2a (destination
+ *                         refused); the status page with expected statuses
+ *                         and headers, two of them secret, one with a 64
+ *                         character name
+ *   ?m2a=auto             the path set on Auto: NAT targets answer ICMP and
+ *                         read up; hetzner-hel never answers (ICMP filtered)
  *
  * Series: a week of buckets on the server's step rule with a control plane
  * outage two thirds of the way back (no data on every path), a loss burst on
@@ -37,7 +47,7 @@ import { WINDOW_SECONDS } from "@/views/fleet/pathsModel";
 import { seriesStats, seriesFromResponse } from "@/views/fleet/pathSeriesModel";
 
 import { HOUR, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
-import { SOURCE_ID, SOURCE_NODE } from "./latencyFixture";
+import { M2A, SOURCE_ID, SOURCE_NODE, agentPredatesM2a, icmpRefusal } from "./latencyFixture";
 
 export const PATHS_SHAPE = (PARAMS.get("paths") ?? "") as "" | "one" | "three" | "empty" | "old";
 export const FINE_DAYS = PARAMS.get("retention") === "14" ? 14 : 7;
@@ -53,7 +63,7 @@ const COUNTRY: Record<string, string> = {
   "[OpenJobs-Data]-tmp": "SG",
 };
 
-type Behaviour = "normal" | "nat" | "offline" | "lossy" | "burst" | "gap" | "never";
+type Behaviour = "normal" | "nat" | "offline" | "lossy" | "burst" | "gap" | "never" | "filtered";
 
 function behaviour(name: string): Behaviour {
   if (["[cd]-xuezhang-jp-nat", "[Metix]-Aaitr-jp-softbank-NAT", "[cd]-qqpw-vds-cd1", "[Metix]-qqpw-cd3-VDS"].includes(name)) return "nat";
@@ -115,7 +125,9 @@ interface Shape {
   source: string;
   behaviour: Behaviour;
   pausedSince?: number;
-  operator?: "http" | "tls";
+  operator?: "http" | "tls" | "icmp";
+  /** Echoes per run of an icmp path (design 29 M2a); absent for one probe per run. */
+  packets?: number;
 }
 
 function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step: number; from: number; to: number; buckets: PathBucket[] } {
@@ -150,12 +162,23 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
     if (shape.behaviour === "offline") failShare = age < 30 * 3600 ? 1 : j > 0.9 ? 1 / perBucket : 0;
     if (shape.behaviour === "lossy") failShare = 0.04 + j * 0.08;
     if (shape.behaviour === "burst" && age > 22 * 3600 && age < 24 * 3600) failShare = 0.3 + j * 0.3;
+    if (shape.behaviour === "filtered") failShare = 1;
     const fail = Math.min(perBucket, Math.round(perBucket * failShare));
     const bucket: PathBucket = { t, n: perBucket, expected, fail, loss: fail / perBucket };
+    if (shape.packets) {
+      // Every echo of a failed run is lost; a run that came back may still lose one now and then.
+      const sent = perBucket * shape.packets;
+      const stray = shape.behaviour === "filtered" ? 0 : j > 0.93 ? 1 + Math.floor((j - 0.93) * 30) : 0;
+      const lost = Math.min(sent, fail * shape.packets + stray);
+      bucket.sent = sent;
+      bucket.lost = lost;
+      bucket.loss = lost / sent;
+    }
     if (fail < perBucket) {
       const local = new Date((t + 8 * 3600) * 1000).getUTCHours();
       const evening = local >= 19 && local <= 23 ? 1.28 + j * 0.12 : 1;
-      const base = shape.operator === "tls" ? 82 : shape.operator === "http" ? 118 : baseMs(shape.target, shape.source);
+      // ICMP is answered by the kernel: a little faster than a TCP handshake to the same node.
+      const base = shape.operator === "tls" ? 82 : shape.operator === "http" ? 118 : baseMs(shape.target, shape.source) * (shape.packets ? 0.94 : 1);
       const burst = shape.behaviour === "burst" && age > 22 * 3600 && age < 24 * 3600 ? 1.6 : 1;
       const p50 = (base + j * 9) * evening * burst;
       bucket.p50_ms = Math.round(p50 * 10) / 10;
@@ -173,11 +196,20 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
 function shapeFor(plan: LatencyProbePlan, source: string, targetNode: string): Shape {
   const target = allNodes().find((n) => n.id === targetNode);
   const pair = plan.pairs.find((p) => p.source === source && p.target === targetNode);
+  const icmp = pair?.method === "icmp";
+  let b = behaviour(target?.name ?? "");
+  if (icmp) {
+    // A NAT node answers ping on its public address, which is the point of ICMP here; hetzner-hel's provider drops it.
+    if (b === "nat") b = "normal";
+    if (target?.name === "[cd]-hetzner-hel") b = "filtered";
+  }
+  if (pair?.reason) b = "never";
   return {
     target,
     source,
-    behaviour: behaviour(target?.name ?? ""),
+    behaviour: b,
     pausedSince: pair && !pair.enabled ? 2 * 86400 : undefined,
+    packets: icmp ? 5 : undefined,
   };
 }
 
@@ -215,7 +247,75 @@ export function operatorChecks(): MonitorView[] {
     // Never edited: version zero.
     ...(old ? {} : { version: 0, alert: "off", alert_after: 2 }),
   };
-  return [status, cert];
+  if (!M2A) return [status, cert];
+  // Design 29 M2a: the status page expects statuses and sends headers, two of them secret.
+  status.expect_status = "200-299,301";
+  status.headers = [
+    { name: "X-Api-Key", secret: true, set: true },
+    { name: "X-Lattice-Monitoring-Probe-Authorization-Token-For-Status-Page-V", secret: true, set: true },
+    { name: "Accept", value: "application/json" },
+  ];
+  status.secrets_origin = "https://status.example.com:443";
+  // An agent older than M2a among its sources: its path reads agent_too_old, as the server gates headers.
+  status.node_ids = [...(status.node_ids ?? []), id("[cd]-volcengine-shanghai")];
+  const jp = nodeByName("[cd]-xuezhang-jp-nat");
+  const ping: MonitorView = {
+    id: "mon_ping_jp",
+    name: "Ping xuezhang-jp-nat",
+    type: "icmp",
+    target: jp?.public_ip ?? "203.0.113.12",
+    target_node: jp?.id,
+    packets: 5,
+    interval_sec: 30,
+    timeout_sec: 2,
+    assign_all: false,
+    node_ids: [SOURCE_ID, id("[Metix]-mkcloud-hr-iplc"), id("[cd]-Oracle-KIX-arm")].sort(),
+    enabled: true,
+    created_at: iso(-6 * 24 * HOUR),
+    version: 1,
+    alert: "down",
+    alert_after: 3,
+  };
+  const admin: MonitorView = {
+    id: "mon_admin_internal",
+    name: "Admin panel (internal)",
+    type: "http",
+    target: "http://10.0.0.8/health",
+    interval_sec: 60,
+    timeout_sec: 5,
+    assign_all: false,
+    node_ids: [SOURCE_ID],
+    enabled: true,
+    created_at: iso(-120 * 24 * HOUR),
+    version: 2,
+    alert: "off",
+    alert_after: 2,
+  };
+  return [status, cert, ping, admin];
+}
+
+/** Why an operator check's source measures nothing (design 29 M2a), or undefined. */
+function operatorReason(check: MonitorView, source: string): string | undefined {
+  if (!M2A) return undefined;
+  if (check.type === "icmp") return icmpRefusal(allNodes().find((n) => n.id === source));
+  if (check.id === "mon_admin_internal") return "destination_refused";
+  // As the server's monitorProbeGate: headers or a status set other than the default need an agent that reports its methods.
+  const current = check.type === "http" && (!!check.headers?.length || (!!check.expect_status && check.expect_status !== "200-399"));
+  if (current && agentPredatesM2a(allNodes().find((n) => n.id === source))) return "agent_too_old";
+  return undefined;
+}
+
+function operatorShape(check: MonitorView, source: string, paused: boolean): Shape {
+  const reason = operatorReason(check, source);
+  const icmp = check.type === "icmp";
+  return {
+    source,
+    target: icmp ? allNodes().find((n) => n.id === check.target_node) : undefined,
+    behaviour: reason ? "never" : "normal",
+    operator: check.type === "tls" ? "tls" : icmp ? "icmp" : "http",
+    packets: icmp ? check.packets || 5 : undefined,
+    pausedSince: paused ? 3 * 86400 : undefined,
+  };
 }
 
 function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[] {
@@ -225,8 +325,9 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
     const sources = check.type === "tls" ? [""] : (check.node_ids ?? []);
     for (const source of sources) {
       const paused = (check.paused_node_ids ?? []).includes(source);
-      const shape: Shape = { source, behaviour: "normal", operator: check.type === "tls" ? "tls" : "http", pausedSince: paused ? 3 * 86400 : undefined };
-      out.push(pathFrom(shape, window, { source, target: check.target, monitor_id: check.id, managed: false, method: check.type }, paused ? "source_paused" : undefined));
+      const shape = operatorShape(check, source, paused);
+      const reason = paused ? "source_paused" : operatorReason(check, source);
+      out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type }, reason));
     }
   }
   return out;
@@ -270,17 +371,22 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       if (source === target.node_id) continue;
       const pair = plan.pairs.find((p) => p.source === source && p.target === target.node_id);
       const shape = shapeFor(plan, source, target.node_id);
-      const icmp = SWITCH && node?.name === "[cd]-gomami-hk-turin-mini";
+      const icmp = (SWITCH && node?.name === "[cd]-gomami-hk-turin-mini") || pair?.method === "icmp";
       const base = {
         source,
         target_node: target.node_id,
         // ICMP dials an address, not a port.
         target: node ? (icmp ? (node.public_ip ?? "") : natEndpoint(node)) : (target.endpoint ?? ""),
-        monitor_id: target.monitor_id ?? `mon_lat_${target.node_id}`,
+        monitor_id: pair?.monitor_id ?? target.monitor_id ?? `mon_lat_${target.node_id}`,
         managed: true,
         method: icmp ? "icmp" : "tcp",
       };
-      if (target.target === "not_probeable") {
+      // The source cannot run the pair's method (design 29 M2a): unknown with the reason, never down.
+      if (pair?.reason && pair.reason !== "not_probeable" && pair.enabled && plan.config.enabled) {
+        paths.push(pathFrom(shape, window, base, pair.reason));
+        continue;
+      }
+      if (target.target === "not_probeable" || (pair?.reason === "not_probeable" && !icmp)) {
         // The server says not_probeable whatever the plan's note (udp_only, no_public_address, no_tcp_line).
         paths.push({ ...base, target: "", monitor_id: "", state: "unknown", reason: "not_probeable", samples: 0, expected: 0, prev: null });
         continue;
@@ -310,6 +416,10 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         paths.push(pathFrom(shape, window, base, "no_results"));
         continue;
       }
+      if (b === "filtered") {
+        paths.push(pathFrom(shape, window, base, "icmp_filtered"));
+        continue;
+      }
       paths.push(pathFrom(shape, window, base));
     }
   }
@@ -332,19 +442,23 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
   if (query.monitor && !query.target_node) {
     const check = checks.find((c) => c.id === query.monitor);
     const paused = (check?.paused_node_ids ?? []).includes(query.source);
-    shape = { source: query.source, behaviour: "normal", operator: check?.type === "tls" ? "tls" : "http", pausedSince: paused ? 3 * 86400 : undefined };
+    shape = check ? operatorShape(check, query.source, paused) : { source: query.source, behaviour: "normal", operator: "http" };
   } else {
     shape = shapeFor(plan, query.source, query.target_node ?? "");
     const target = plan.nodes.find((n) => n.node_id === query.target_node);
-    if (target?.target === "not_probeable") shape = { ...shape, pausedSince: Infinity };
+    const pair = plan.pairs.find((p) => p.source === query.source && p.target === query.target_node);
+    if (target?.target === "not_probeable" && pair?.method !== "icmp") shape = { ...shape, pausedSince: Infinity };
     if (!plan.config.enabled) shape = { ...shape, pausedSince: Infinity };
   }
   const { step, from, to, buckets } = bucketsFor(shape, query.window);
   // As the server: the method in force from the first bucket with data, then each switch.
   const firstHeard = buckets.find((b) => b.n > 0)?.t ?? from;
   const switched = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini";
-  const method_changes = [{ t: firstHeard, method: switched ? "tcp" : query.monitor ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : "tcp" }];
-  if (switched) method_changes.push({ t: Math.floor((NOW / 1000 - 2 * 86400) / step) * step, method: "icmp" });
+  // The method in force at the first bucket heard, then the switch when it falls inside the window.
+  const switchAt = Math.floor((NOW / 1000 - 2 * 86400) / step) * step;
+  const first = switched ? (Number(firstHeard) >= switchAt ? "icmp" : "tcp") : query.monitor && !query.target_node ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp") : shape.packets ? "icmp" : "tcp";
+  const method_changes = [{ t: firstHeard, method: first }];
+  if (switched && Number(firstHeard) < switchAt) method_changes.push({ t: switchAt, method: "icmp" });
   return { window: query.window, step_seconds: step, from, to, method_changes, buckets };
 }
 
@@ -352,11 +466,32 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
 export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monitorId: string): MonitorResult[] {
   const check = checks.find((c) => c.id === monitorId);
   const out: MonitorResult[] = [];
-  const push = (source: string, shape: Shape, endpoint: string) => {
+  const push = (source: string, shape: Shape, endpoint: string, reason?: string) => {
+    // An agent too old for the method is never handed the check, so it reports nothing.
+    if (reason === "agent_too_old") return;
+    if (reason) {
+      // A run that measured nothing: no latency, and the reason instead of a failure.
+      for (let i = 0; i < 12; i++) {
+        out.push({ monitor_id: monitorId, node_id: source, at: new Date(NOW - (i * 60 + 25) * 1000).toISOString(), success: false, reason, ...(reason === "destination_refused" ? { error: `refused to dial 10.0.0.8: private address` } : { sent: 0 }) });
+      }
+      return;
+    }
     const { buckets } = bucketsFor(shape, "1h");
-    for (const b of buckets.slice(-20)) {
+    for (const [i, b] of buckets.slice(-20).entries()) {
       if (!b.n) continue;
       const failed = b.fail >= b.n;
+      if (shape.packets) {
+        // Five echoes: the RTT of each one that came back, in send order, and the median as the run's latency.
+        const sent = shape.packets;
+        // The fourth newest run lost an echo, so the list shows what a partial loss looks like.
+        const lost = failed ? sent : Math.min(sent, Math.round(((b.lost ?? 0) / Math.max(1, b.sent ?? 1)) * sent) + (i === 16 && shape.behaviour !== "filtered" ? 1 : 0));
+        const p50 = b.p50_ms ?? 60;
+        const rtts = Array.from({ length: sent - lost }, (_, k) => Math.round(p50 * (0.96 + hash(`${source}:${b.t}:${k}`) * 0.1) * 10) / 10);
+        const sorted = [...rtts].sort((x, y) => x - y);
+        const median = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2) : undefined;
+        out.push({ monitor_id: monitorId, node_id: source, at: new Date((Number(b.t) + 30) * 1000).toISOString(), success: rtts.length > 0, latency_ms: median, sent, lost, rtts_ms: rtts.length ? rtts : undefined, error: rtts.length ? undefined : `no echo reply from ${endpoint}` });
+        continue;
+      }
       out.push({
         monitor_id: monitorId,
         node_id: source,
@@ -372,16 +507,16 @@ export function resultsFor(plan: LatencyProbePlan, checks: MonitorView[], monito
   if (check) {
     for (const source of check.type === "tls" ? [""] : (check.node_ids ?? [])) {
       if ((check.paused_node_ids ?? []).includes(source)) continue;
-      push(source, { source, behaviour: "normal", operator: check.type === "tls" ? "tls" : "http" }, check.target);
+      push(source, operatorShape(check, source, false), check.target, operatorReason(check, source));
     }
     return out;
   }
-  const target = plan.nodes.find((n) => n.monitor_id === monitorId);
+  const target = plan.nodes.find((n) => n.monitor_id === monitorId || n.icmp_monitor_id === monitorId);
   if (!target) return out;
   const node = allNodes().find((n) => n.id === target.node_id);
-  for (const pair of plan.pairs.filter((p) => p.target === target.node_id && p.active)) {
+  for (const pair of plan.pairs.filter((p) => p.target === target.node_id && p.active && (p.monitor_id ?? target.monitor_id) === monitorId)) {
     if (sourceOffline(pair.source)) continue;
-    push(pair.source, shapeFor(plan, pair.source, target.node_id), node ? natEndpoint(node) : "");
+    push(pair.source, shapeFor(plan, pair.source, target.node_id), node ? (pair.method === "icmp" ? (node.public_ip ?? "") : natEndpoint(node)) : "");
   }
   return out;
 }

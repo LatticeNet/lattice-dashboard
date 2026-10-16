@@ -13,8 +13,8 @@ import type { QueryField, QuerySchema } from "@/lib/query/engine";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 
 /** Failing first, as the status column sorts. */
-export const MONITOR_HEALTH_KINDS = ["failing", "stale", "none", "unread", "up", "disabled"] as const;
-export const MONITOR_TYPES = ["tcp", "http", "tls"] as const;
+export const MONITOR_HEALTH_KINDS = ["failing", "stale", "unmeasured", "none", "unread", "up", "disabled"] as const;
+export const MONITOR_TYPES = ["tcp", "http", "icmp", "tls"] as const;
 
 /** Queries the help offers on this page; each key names the sentence that says what it finds. */
 export const MONITORING_QUERY_EXAMPLES = [

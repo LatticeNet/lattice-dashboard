@@ -24,8 +24,10 @@ import type {
   LatencySeries,
   LatencyStats,
   LatencyWindow,
+  Node,
 } from "@/lib/api/types";
 import { latencyClass } from "@/lib/latency";
+import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
@@ -420,8 +422,26 @@ export interface LatencyDraft {
   include: string[];
   exclude: string[];
   disabledPairs: LatencyPair[];
+  /**
+   * The kind every source probes with (design 29 M2a): "" (tcp), "icmp" or
+   * "auto". A stored "tcp" reads as "", its meaning, so a save never turns
+   * one into the other by accident.
+   */
+  method: string;
+  /** Per-source pins over `method` ("tcp", "icmp", "auto"), by source id. */
+  sourceMethods: Record<string, string>;
   /** The version the draft was read at; a save names it. */
   version: number;
+}
+
+/** The path set's methods, in the order the editor offers them; "" is TCP. */
+export const PATH_SET_METHODS = ["", "icmp", "auto"] as const;
+/** The values a source pin may hold. */
+export const SOURCE_PINS = ["tcp", "icmp", "auto"] as const;
+
+function normalizeSetMethod(raw: string | undefined): string {
+  const value = (raw ?? "").trim();
+  return value === "tcp" ? "" : value;
 }
 
 export type TargetMode = "auto" | "always" | "never";
@@ -452,12 +472,14 @@ export function draftFromConfig(config: LatencyProbeConfig): LatencyDraft {
     include: sortedUnique(config.include_targets),
     exclude: sortedUnique(config.exclude_targets),
     disabledPairs: sortPairs(config.disabled_pairs),
+    method: normalizeSetMethod(config.method),
+    sourceMethods: Object.fromEntries(Object.entries(config.source_methods ?? {}).filter(([, m]) => !!m)),
     version: config.version ?? 0,
   };
 }
 
 export function draftToConfig(draft: LatencyDraft): LatencyProbeConfig {
-  return {
+  const config: LatencyProbeConfig = {
     enabled: draft.enabled,
     interval_sec: Number(draft.intervalSec),
     timeout_sec: Number(draft.timeoutSec),
@@ -468,6 +490,88 @@ export function draftToConfig(draft: LatencyDraft): LatencyProbeConfig {
     disabled_pairs: sortPairs(draft.disabledPairs),
     version: draft.version,
   };
+  // Sent only when set: a server before M2a decodes the body strictly and refuses a field it does not know.
+  if (draft.method) config.method = draft.method;
+  const sources = new Set(config.sources);
+  const pins = Object.entries(draft.sourceMethods)
+    .filter(([source, method]) => sources.has(source) && !!method)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (pins.length) config.source_methods = Object.fromEntries(pins);
+  return config;
+}
+
+/** Pin one source's method, or follow the path set's again with undefined. */
+export function setSourceMethod(draft: LatencyDraft, source: string, method: string | undefined): LatencyDraft {
+  const next = { ...draft.sourceMethods };
+  if (method) next[source] = method;
+  else delete next[source];
+  return { ...draft, sourceMethods: next };
+}
+
+/** The method a source uses: its pin, else the path set's ("" reads as tcp). */
+export function sourceMethod(draft: Pick<LatencyDraft, "method" | "sourceMethods">, source: string): string {
+  return draft.sourceMethods[source] || draft.method || "tcp";
+}
+
+export interface SourceMethodPreview {
+  source: string;
+  /** tcp, icmp or auto. */
+  method: string;
+  pinned: boolean;
+  /** Set when the method needs icmp and the source's agent cannot run it: every path of the source reads unknown with it. */
+  refusal?: string;
+  /** Targets each method reaches; `none` reach nothing (no public IPv4, no TCP line), `onSave` are resolved by the server on save. */
+  icmp: number;
+  tcp: number;
+  none: number;
+  onSave: number;
+  /** The targets counted in `none`, by node id, in the plan's order. */
+  noneTargets: string[];
+}
+
+/**
+ * Which method each source will use and how many of the draft's targets it
+ * reaches with each, by the planner's rule (design 29 D11): a pinned or set
+ * icmp never falls back, and its paths read unknown when the source cannot
+ * run icmp; auto picks icmp where the source runs it and the target has a
+ * public IPv4, else tcp where the target has a TCP line. A target's TCP line
+ * is known only for nodes the plan already targets; for the others the
+ * server resolves it on save.
+ */
+export function pathSetPreview(draft: LatencyDraft, plan: Pick<LatencyProbePlan, "nodes" | "source_notes">, nodes: readonly Node[]): SourceMethodPreview[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const disabled = (pn: LatencyProbeNode) => pn.target_reason === "node_disabled" || plan.source_notes?.[pn.node_id] === "node_disabled";
+  const targets = plan.nodes.filter((pn) => draftTargetReason(draft, pn, disabled(pn)).target);
+  return draft.sources.map((source) => {
+    const method = sourceMethod(draft, source);
+    const support = sourceSupport(byId.get(source), "icmp", true);
+    const row: SourceMethodPreview = { source, method, pinned: !!draft.sourceMethods[source], icmp: 0, tcp: 0, none: 0, onSave: 0, noneTargets: [] };
+    if (method === "icmp" && !support.ok) row.refusal = support.reason;
+    for (const pn of targets) {
+      if (pn.node_id === source) continue;
+      const ipv4 = !!publicIPv4(pn.icmp_target || byId.get(pn.node_id)?.public_ip);
+      // A line port the plan knows; none when the plan says why there is none; else the server resolves it on save.
+      const tcp = pn.endpoint && pn.target !== "not_probeable" ? "yes" : pn.target === "not_probeable" || pn.endpoint_note ? "none" : "onSave";
+      const unreached = () => {
+        row.none += 1;
+        row.noneTargets.push(pn.node_id);
+      };
+      const viaTcp = () => {
+        if (tcp === "yes") row.tcp += 1;
+        else if (tcp === "onSave") row.onSave += 1;
+        else unreached();
+      };
+      if (method === "icmp") {
+        if (support.ok && ipv4) row.icmp += 1;
+        else unreached();
+      } else if (method === "auto" && support.ok && ipv4) {
+        row.icmp += 1;
+      } else {
+        viaTcp();
+      }
+    }
+    return row;
+  });
 }
 
 export function draftsDiffer(a: LatencyDraft, b: LatencyDraft): boolean {

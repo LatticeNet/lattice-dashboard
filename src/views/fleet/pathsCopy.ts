@@ -31,6 +31,26 @@ export function usePathsCopy() {
     return reasonText(undefined);
   }
 
+  /** The reason in a few words, for a matrix cell; the sentence stays in the tooltip and the sheet. */
+  function reasonShort(reason: string | undefined): string {
+    const code = reasonCode(reason);
+    return code ? t(`fleet.monitoring.paths.reasonShort.${code}`) : reasonText(reason);
+  }
+
+  /**
+   * Why a node cannot run a method, short, for a source row (design 29 D9):
+   * "agent too old for ICMP", "ICMP not permitted on this node", or the
+   * path's reason for any other code.
+   */
+  function refusalText(reason: string, method: string): string {
+    const code = reasonCode(reason);
+    // Every agent runs http; one too old for an http check is too old for its headers or status set.
+    if (code === "agent_too_old" && method === "http") return t("fleet.monitoring.paths.refusal.agent_too_old_http");
+    if (code === "agent_too_old") return t("fleet.monitoring.paths.refusal.agent_too_old", { method: method.toUpperCase() });
+    if (code === "icmp_not_permitted") return t("fleet.monitoring.paths.refusal.icmp_not_permitted");
+    return reasonText(reason);
+  }
+
   function stateLabel(state: PathDisplay): string {
     return t(`fleet.monitoring.paths.state.${state}`);
   }
@@ -48,5 +68,5 @@ export function usePathsCopy() {
     return t(`fleet.monitoring.window.long.${window}`);
   }
 
-  return { reasonText, whyText, stateLabel, displayLabel, groupLabel, windowLong };
+  return { reasonText, reasonShort, refusalText, whyText, stateLabel, displayLabel, groupLabel, windowLong };
 }

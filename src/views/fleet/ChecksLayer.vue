@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, canEditCheck, checkGroup, latestCertExpiry } from "./checksModel";
+import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, withPathVerdict } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -46,6 +46,7 @@ import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQu
 import { isServerEvaluated } from "./monitorTypeModel";
 import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
 import type { PathsData } from "./usePathsData";
 
 const props = defineProps<{
@@ -69,7 +70,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { stateLabel, displayLabel, whyText } = usePathsCopy();
+const { stateLabel, displayLabel, whyText, reasonText, reasonShort } = usePathsCopy();
 /** The server has the edit route: it answered the design 29 paths read. */
 const serverEdits = computed(() => props.data.source.value === "paths");
 const wide = useMediaQuery("(min-width: 768px)");
@@ -83,8 +84,15 @@ function nodeName(id: string): string {
   return props.nodes.find((n) => n.id === id)?.name || shortId(id, 14);
 }
 
+/** Each check's paths in the matrix, for the verdict the control plane gives them. */
+const pathsByMonitor = computed(() => {
+  const out = new Map<string, PathItem[]>();
+  for (const p of props.data.matrix.value?.paths ?? []) out.set(p.monitorId, [...(out.get(p.monitorId) ?? []), p]);
+  return out;
+});
+
 function healthOf(monitor: MonitorView): MonitorHealth {
-  return monitorHealth(monitor, monitor.latest, props.monitorsQuery.lastUpdated.value ?? Date.now());
+  return withPathVerdict(monitorHealth(monitor, monitor.latest, props.monitorsQuery.lastUpdated.value ?? Date.now()), pathsByMonitor.value.get(monitor.id) ?? [], monitor.latest);
 }
 
 /* ---- The node filter (?node=, from the node page) ---- */
@@ -152,7 +160,7 @@ const attention = computed<AttentionItem[]>(() => {
 
 /* ---- The table ---- */
 
-function statusView(monitor: MonitorView): { text: string; detail?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
+function statusView(monitor: MonitorView): { text: string; detail?: string; title?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
   const state = healthOf(monitor);
   switch (state.kind) {
     case "disabled":
@@ -170,6 +178,11 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; tone
       };
     case "stale":
       return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
+    case "unmeasured":
+      // Every source's newest run measured nothing (design 29 M2a): unknown with the reason, never down.
+      return state.reasons
+        ? { text: t("fleet.monitoring.checks.unmeasured"), detail: t("fleet.monitoring.checks.reasons", { n: state.reasons }), textClass: "text-muted-foreground" }
+        : { text: t("fleet.monitoring.checks.unmeasured"), detail: reasonShort(state.reason), title: reasonText(state.reason), textClass: "text-muted-foreground" };
     case "up": {
       // A certificate check leads with the days left, the reason it exists; others with the newest latency.
       const days = certDaysLeft(monitor);
@@ -190,7 +203,8 @@ function certDaysLeft(monitor: MonitorView): number | undefined {
 /** A check's newest failure on one source, from the list's newest results. */
 function failureOn(monitor: MonitorView | undefined, source: string): string | undefined {
   const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
-  return latest && !latest.success ? latest.error || undefined : undefined;
+  // A run with a reason measured nothing; it is not the failure.
+  return latest && !latest.success && !latest.reason ? latest.error || undefined : undefined;
 }
 
 /**
@@ -211,13 +225,16 @@ function cadence(seconds: number): string {
 
 function assignmentLabel(monitor: MonitorView): string {
   if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
-  if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
-  const count = monitor.node_ids?.length ?? 0;
+  // The same sources the check's sheet lists: its own and any its paths name, and how many measure nothing.
+  const summary = checkSourceSummary(monitor, pathsByMonitor.value.get(monitor.id) ?? []);
+  const withUnmeasured = (base: string) => (summary.unmeasured ? t("fleet.monitoring.checks.withUnmeasured", { base, n: summary.unmeasured }) : base);
+  if (monitor.assign_all) return withUnmeasured(t("fleet.monitoring.assignment.allNodes"));
+  const count = summary.ids.length;
   // A generated check whose every path is paused runs on no source.
   if (count === 0) return t("fleet.monitoring.checks.noneRunning");
   const paused = (monitor.paused_node_ids ?? []).length;
-  const base = count === 1 ? nodeName(monitor.node_ids![0]!) : t("fleet.monitoring.assignment.nodeCount", { count }, count);
-  return paused ? t("fleet.monitoring.checks.withPaused", { base, n: paused }) : base;
+  const base = count === 1 ? nodeName(summary.ids[0]!) : t("fleet.monitoring.assignment.nodeCount", { count }, count);
+  return withUnmeasured(paused ? t("fleet.monitoring.checks.withPaused", { base, n: paused }) : base);
 }
 
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
@@ -290,6 +307,28 @@ function menuFor(monitor: MonitorView): RowMenuItem[] {
 
 const sheet = bindRouteOpen(props.owned);
 const selected = computed(() => (sheet.openId.value ? all.value.find((m) => m.id === sheet.openId.value) : undefined));
+
+/**
+ * The open check's M2a settings (design 29): its target node, packets,
+ * expected statuses and headers. A secret header reads "set", never a value,
+ * because the server never sends one.
+ */
+const settingsRows = computed(() => {
+  const m = selected.value;
+  if (!m) return [];
+  const rows: { key: string; label: string; value: string; mono?: boolean; heading?: boolean }[] = [];
+  if (m.target_node) rows.push({ key: "node", label: t("fleet.monitoring.checks.sheet.targetNode"), value: t("fleet.monitoring.checks.sheet.targetNodeValue", { name: nodeName(m.target_node), endpoint: m.target || t("common.misc.none") }) });
+  if (m.type === "icmp") rows.push({ key: "packets", label: t("fleet.monitoring.checks.editor.packets"), value: String(m.packets && m.packets > 0 ? m.packets : PACKETS_DEFAULT), mono: true });
+  if (m.type === "http" && (m.expect_status !== undefined || m.headers?.length || m.secrets_origin)) {
+    rows.push({ key: "status", label: t("fleet.monitoring.checks.editor.expectStatus.label"), value: m.expect_status || EXPECT_STATUS_DEFAULT, mono: true });
+  }
+  if (m.headers?.length) rows.push({ key: "headers", label: t("fleet.monitoring.checks.editor.headers.title"), value: "", heading: true });
+  for (const [i, h] of (m.headers ?? []).entries()) {
+    rows.push({ key: `header-${i}`, label: h.name, value: h.secret ? t("fleet.monitoring.checks.sheet.secretSet") : (h.value ?? ""), mono: true });
+  }
+  if (m.secrets_origin) rows.push({ key: "origin", label: t("fleet.monitoring.checks.sheet.secretsOrigin"), value: m.secrets_origin, mono: true });
+  return rows;
+});
 const sheetState = computed(() => {
   if (!sheet.openId.value) return "loading" as const;
   if (props.monitorsQuery.data.value === undefined) {
@@ -304,7 +343,7 @@ interface SourceRow {
   name: string;
   path?: PathItem;
   /** From the check's newest results, when the server has no paths read. */
-  latest?: { success: boolean; latencyMs?: number; at: string; error?: string };
+  latest?: { success: boolean; latencyMs?: number; at: string; error?: string; reason?: string };
   paused: boolean;
 }
 
@@ -319,9 +358,18 @@ const sourceRows = computed<SourceRow[]>(() => {
       .map((p) => ({ source: p.source, name: p.sourceName, path: p, paused: paused.has(p.source) }))
       .sort((a, b) => stateRank(a.path.state) - stateRank(b.path.state) || a.name.localeCompare(b.name));
   }
-  return (m.latest ?? [])
-    .map((l) => ({ source: l.node_id ?? "", name: nodeName(l.node_id ?? ""), latest: { success: l.success, latencyMs: l.latency_ms, at: l.at, error: l.error }, paused: paused.has(l.node_id ?? "") }))
-    .sort((a, b) => Number(a.latest.success) - Number(b.latest.success) || a.name.localeCompare(b.name));
+  const fromLatest: SourceRow[] = (m.latest ?? []).map((l) => ({
+    source: l.node_id ?? "",
+    name: nodeName(l.node_id ?? ""),
+    latest: { success: l.success, latencyMs: l.latency_ms, at: l.at, error: l.error, reason: l.reason },
+    paused: paused.has(l.node_id ?? ""),
+  }));
+  // Every source the check names is listed, with no result yet when it never reported (an agent too old for the method among them).
+  const reported = new Set(fromLatest.map((r) => r.source));
+  const configured = isServerEvaluated(m.type) ? [] : m.assign_all ? props.nodes.map((n) => n.id) : (m.node_ids ?? []);
+  const silent: SourceRow[] = configured.filter((id) => !reported.has(id)).map((id) => ({ source: id, name: nodeName(id), paused: paused.has(id) }));
+  const rank = (r: SourceRow) => (r.latest ? Number(r.latest.success) : 2);
+  return [...fromLatest, ...silent].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 });
 
 /**
@@ -330,9 +378,10 @@ const sourceRows = computed<SourceRow[]>(() => {
  * source exists, so the chart shows something to read.
  */
 function defaultSource(rows: SourceRow[]): string | undefined {
-  const measured = rows.filter((r) => !r.paused && (r.path ? r.path.state !== "unknown" : !!r.latest));
+  // A newest run with a reason measured nothing (design 29 M2a): it is not the source to open on.
+  const measured = rows.filter((r) => !r.paused && (r.path ? r.path.state !== "unknown" : !!r.latest && !r.latest.reason));
   const pool = measured.length ? measured : rows.filter((r) => !r.paused).length ? rows.filter((r) => !r.paused) : rows;
-  const rank = (r: SourceRow) => (r.path ? stateRank(r.path.state) : r.latest && !r.latest.success ? 0 : 2);
+  const rank = (r: SourceRow) => (r.path ? stateRank(r.path.state) : r.latest && !r.latest.success && !r.latest.reason ? 0 : 2);
   return [...pool].sort((a, b) => rank(a) - rank(b) || (b.path?.loss ?? 0) - (a.path?.loss ?? 0) || a.name.localeCompare(b.name))[0]?.source;
 }
 
@@ -451,7 +500,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs" data-testid="monitor-status">
           <StatusDot v-if="statusView(row).tone" :tone="statusView(row).tone" :pulse="false" />
           <span :class="statusView(row).textClass">{{ statusView(row).text }}</span>
-          <span v-if="statusView(row).detail" class="font-mono tabular text-muted-foreground">{{ statusView(row).detail }}</span>
+          <span v-if="statusView(row).detail" :class="cn('text-muted-foreground', statusView(row).title ? '' : 'font-mono tabular')" :title="statusView(row).title">{{ statusView(row).detail }}</span>
         </span>
       </template>
       <template #cell-type="{ row }">
@@ -511,6 +560,17 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         <p v-if="selected.managed_by" class="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.generatedNote') }}</p>
         <p v-else-if="!selected.enabled" class="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.pausedNote') }}</p>
 
+        <dl v-if="settingsRows.length" class="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-md border border-border p-3 text-xs" data-testid="check-settings">
+          <template v-for="row in settingsRows" :key="row.key">
+            <!-- Headers sit under their own heading; a long name breaks at its hyphens before anywhere else. -->
+            <dt v-if="row.heading" class="col-span-2 pt-1 text-xs font-medium text-muted-foreground">{{ row.label }}</dt>
+            <template v-else>
+              <dt :class="cn('min-w-0 text-muted-foreground', row.key.startsWith('header-') ? 'ps-2 font-mono [overflow-wrap:anywhere]' : 'break-all')">{{ row.label }}</dt>
+              <dd :class="cn('min-w-0 break-all', row.mono && 'font-mono')">{{ row.value }}</dd>
+            </template>
+          </template>
+        </dl>
+
         <section v-if="sourceRows.length" class="space-y-1.5" :aria-label="$t('fleet.monitoring.checks.sheet.sources')">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.sources') }}</h3>
           <ul class="divide-y divide-border rounded-md border border-border" data-testid="check-sources">
@@ -524,10 +584,12 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                 <span class="min-w-0">
                   <span class="block truncate font-medium">{{ row.name }}</span>
                   <span v-if="row.paused" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.paused') }}</span>
-                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block truncate text-xs', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
+                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block text-xs break-words', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
                     {{ displayLabel(row.path) }}: {{ whyText(row.path, failureOn(selected, row.source)) }}
                   </span>
-                  <span v-else-if="row.latest && !row.latest.success" class="block truncate text-xs text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
+                  <span v-else-if="row.latest?.reason" class="block text-xs break-words text-muted-foreground">{{ reasonText(row.latest.reason) }}</span>
+                  <span v-else-if="row.latest && !row.latest.success" class="block text-xs break-words text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
+                  <span v-else-if="!row.path && !row.latest" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.noResults') }}</span>
                 </span>
                 <span class="text-end font-mono text-xs tabular">
                   <template v-if="row.path">
@@ -535,7 +597,8 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                     <span v-if="(row.path.loss ?? 0) > 0" class="block text-muted-foreground">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(row.path.loss) }) }}</span>
                   </template>
                   <template v-else-if="row.latest">
-                    <span :class="row.latest.success ? '' : 'text-destructive'">{{ row.latest.success ? formatMs(row.latest.latencyMs) || $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
+                    <span v-if="row.latest.reason" class="text-muted-foreground">{{ $t('fleet.monitoring.checks.unmeasured') }}</span>
+                    <span v-else :class="row.latest.success ? '' : 'text-destructive'">{{ row.latest.success ? formatMs(row.latest.latencyMs) || $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
                   </template>
                 </span>
               </button>
@@ -554,6 +617,8 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           :title="$t('fleet.monitoring.paths.sheet.title', { source: chosenRow.name, target: selected.name || selected.target })"
           :offered="offered"
           :failure="failureOn(selected, chosenRow.source)"
+          :agent-version="nodes.find((n) => n.id === chosenRow!.source)?.agent_version"
+          :paths-failed="!!data.pathsQuery.error.value && data.source.value === 'unknown'"
           @window="(w) => emit('window', w)"
         />
       </div>

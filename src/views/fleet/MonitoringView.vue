@@ -54,6 +54,8 @@ import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
 import { DEFAULT_WINDOW, LEGACY_WINDOWS, MONITORING_LAYERS, legacyMonitoringRedirect, legacyWindow, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
+import { serverSpeaksM2a } from "./checkRulesModel";
+import { withPathVerdict } from "./checksModel";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -151,7 +153,7 @@ const nodes = computed(() => nodesQuery.data.value ?? []);
 function failureOf(monitorId: string, source: string): string | undefined {
   const monitor = (monitorsQuery.data.value ?? []).find((m) => m.id === monitorId);
   const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
-  return latest && !latest.success ? latest.error || undefined : undefined;
+  return latest && !latest.success && !latest.reason ? latest.error || undefined : undefined;
 }
 
 /** When a node last reported, for an offline source in the attention list. */
@@ -179,7 +181,8 @@ const criticalOpen = computed(() =>
   (incidentsQuery.data.value?.incidents ?? []).some((i) => i.state === "open" && i.severity === "critical" && !isSnoozed(i, now.value.getTime()) && !i.maintenance),
 );
 const operatorChecks = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
-const healthOf = (m: MonitorView) => monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now());
+const healthOf = (m: MonitorView) =>
+  withPathVerdict(monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now()), (matrix.value?.paths ?? []).filter((p) => p.monitorId === m.id), m.latest);
 const failingChecks = computed(() => failingMonitors(operatorChecks.value, healthOf));
 
 const pathsProof = useProof(data.pathsQuery);
@@ -341,6 +344,14 @@ async function onCheckSaved(id: string): Promise<void> {
 }
 
 const plan = computed(() => data.planQuery.data.value);
+/**
+ * Whether the server speaks design 29 M2a, read from its answers (the
+ * node list's probe_methods, else the plan's pair methods), as M1 reads the
+ * paths route: a server without it is offered nothing it cannot take.
+ */
+const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
+/** A source's agent version, said on a path whose agent is too old. */
+const agentOf = (id: string) => (nodesQuery.data.value ?? []).find((n) => n.id === id)?.agent_version;
 const shortestIntervalSec = computed(() => {
   const list = (monitorsQuery.data.value ?? []).filter((m) => m.enabled).map((m) => m.interval_sec);
   return list.length ? Math.min(...list) : undefined;
@@ -413,6 +424,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :offered="data.offered.value"
         :failure-of="failureOf"
         :no-sources="noSources"
+        :agent-of="agentOf"
         @path-set="openPathSet"
         @create-check="openCreate()"
         @open-check="openCheck"
@@ -469,6 +481,9 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :nodes="nodes"
       :can-read-nodes="canReadNodes"
       :with-alert="data.source.value === 'paths'"
+      :m2a="m2a && data.source.value === 'paths'"
+      :monitors="monitorsQuery.data.value ?? []"
+      :plan="plan"
       @close="editorOpen = false; backToSheet()"
       @saved="onCheckSaved"
       @reload="refreshAll"
@@ -478,6 +493,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :open="pathSetOpen"
       :plan="plan"
       :nodes="nodes"
+      :m2a="m2a && data.source.value === 'paths'"
       @close="pathSetOpen = false; backToSheet()"
       @saved="(next) => { data.planQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"

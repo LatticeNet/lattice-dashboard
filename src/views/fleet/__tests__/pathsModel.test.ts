@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import enFleet from "../../../i18n/locales/en/fleet.ts";
+import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
+
 import type { LatencyProbePlan, LatencyRollups, PathsResponse } from "@/lib/api/types";
 import { applyQuery, compileQuery } from "@/lib/query/engine";
 
@@ -22,6 +25,7 @@ import {
   legacyWindow,
   looksLikePaths,
   matrixSections,
+  methodsBySource,
   normalizeState,
   parseWindow,
   pathAttention,
@@ -32,6 +36,9 @@ import {
   reachQuery,
   reasonCode,
   visibleMatrix,
+  runEchoes,
+  runRows,
+  UNKNOWN_REASONS,
 } from "../pathsModel.ts";
 
 function response(over: Partial<PathsResponse> = {}): PathsResponse {
@@ -342,4 +349,72 @@ test("legacy detection: 404 and 405 mean the route is missing; a non-matrix body
   assert.equal(looksLikePaths({ paths: [] }), true);
   assert.equal(looksLikePaths("<!doctype html>"), false);
   assert.equal(looksLikePaths(undefined), false);
+});
+
+test("the M2a reasons have their own sentences", () => {
+  for (const code of ["agent_too_old", "icmp_not_permitted", "icmp_filtered", "destination_refused"]) assert.equal(reasonCode(code), code);
+  assert.equal(reasonCode("unsupported_method"), "agent_too_old");
+});
+
+test("a multi-packet run lists its echoes; a single-probe run has none", () => {
+  assert.deepEqual(runEchoes({ sent: 5, lost: 1, rtts_ms: [68.24, 70.06, 69.8, 71] }), { sent: 5, lost: 1, rtts: ["68.2", "70.1", "69.8", "71.0"] });
+  assert.equal(runEchoes({}), undefined);
+  assert.equal(runEchoes({ sent: 0 }), undefined);
+  assert.deepEqual(runEchoes({ sent: 3, lost: 7 }), { sent: 3, lost: 3, rtts: [] }, "lost never exceeds sent");
+});
+
+test("every unknown reason has a sentence and a cell form in both locales", () => {
+  for (const messages of [enFleet, zhFleet] as unknown as { fleet: { monitoring: { paths: { reason: Record<string, string>; reasonShort: Record<string, string> } } } }[]) {
+    const paths = messages.fleet.monitoring.paths;
+    for (const code of UNKNOWN_REASONS) {
+      assert.equal(typeof paths.reason[code], "string", `reason.${code}`);
+      assert.equal(typeof paths.reasonShort[code], "string", `reasonShort.${code}`);
+    }
+  }
+});
+
+test("runs that measured nothing for one reason are one row with a count, newest first", () => {
+  const runs = [
+    { at: "5", reason: "icmp_not_permitted" },
+    { at: "4", reason: "icmp_not_permitted" },
+    { at: "3", reason: "icmp_not_permitted" },
+    { at: "2", success: true },
+    { at: "1", reason: "destination_refused" },
+    { at: "0", reason: "icmp_not_permitted" },
+  ];
+  const rows = runRows(runs);
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "run" ? `run ${r.run.at}` : `${r.reason} x${r.count} ${r.newest.at}..${r.oldest.at}`)),
+    ["icmp_not_permitted x3 5..3", "run 2", "destination_refused x1 1..1", "icmp_not_permitted x1 0..0"],
+  );
+  assert.deepEqual(runRows([]), []);
+});
+
+test("on a path that reads unknown, failed runs fold into one row with the path's reason", () => {
+  const runs = [
+    { at: "3", success: false, error: "no echo" },
+    { at: "2", success: false, error: "no echo" },
+    { at: "1", success: true },
+    { at: "0", success: false, reason: "agent_too_old" },
+  ];
+  const rows = runRows(runs, "icmp_filtered");
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "run" ? `run ${r.run.at}` : `${r.reason} x${r.count}`)),
+    ["icmp_filtered x2", "run 1", "agent_too_old x1"],
+    "a run's own reason wins; a success stays a run",
+  );
+  assert.deepEqual(runRows(runs).map((r) => r.kind), ["run", "run", "run", "unmeasured"], "without a path reason a failure is a failure");
+});
+
+test("each source's methods: one names the column, several put the method on each cell", () => {
+  const by = methodsBySource([
+    { source: "sh", method: "icmp" },
+    { source: "sh", method: "icmp" },
+    { source: "mk", method: "tcp" },
+    { source: "mk", method: "icmp" },
+    { source: "old", method: "" },
+  ]);
+  assert.deepEqual(by.get("sh"), ["icmp"]);
+  assert.deepEqual(by.get("mk"), ["icmp", "tcp"]);
+  assert.equal(by.has("old"), false, "a path from before M2a names no method");
 });

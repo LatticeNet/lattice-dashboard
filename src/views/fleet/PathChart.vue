@@ -55,6 +55,8 @@ const props = withDefaults(
     height?: number;
     /** Accessible name, such as "cd-hs-sh to xuezhang-jp-nat, last 7 days". */
     label: string;
+    /** Set when the path reads unknown with a reason: what the readout says of a bucket with no answer, which is then not drawn as an outage. */
+    unmeasuredNote?: string;
   }>(),
   { compact: false, height: 240 },
 );
@@ -96,7 +98,7 @@ function readPalette(): Palette {
     border: resolveColor("--border"),
     card: resolveColor("--card"),
     tone: resolveColor(toneToken),
-    loss: resolveColor("--destructive"),
+    loss: resolveColor(props.unmeasuredNote ? "--muted-foreground" : "--destructive"),
     dark: document.documentElement.classList.contains("dark"),
     mono: resolveFontFamily("--font-mono"),
     sans: getComputedStyle(document.body).fontFamily || "system-ui, sans-serif",
@@ -436,7 +438,7 @@ watch(
 );
 
 watch(
-  () => props.tone,
+  () => [props.tone, props.unmeasuredNote],
   () => {
     palette = readPalette();
     hatch = null;
@@ -543,10 +545,13 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
     if (p.maxMs !== undefined) entries.push({ key: "max", label: t("fleet.monitoring.chart.max"), value: formatMs(p.maxMs) });
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
-  entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? "destructive" : undefined });
+  const alarm = props.unmeasuredNote ? undefined : ("destructive" as const);
+  entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? alarm : undefined });
+  // A multi-packet bucket (icmp) counts its loss in echoes; say how many.
+  if (p.sent > p.n) entries.push({ key: "echoes", label: t("fleet.monitoring.chart.echoes"), value: t("fleet.monitoring.chart.echoesValue", { lost: p.lost, sent: p.sent }), tone: p.lost > 0 ? alarm : undefined });
   entries.push({ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs });
   entries.push(...methodEntry);
-  return { time, entries, note: p.p50Ms === undefined ? t("fleet.monitoring.chart.allFailed") : undefined };
+  return { time, entries, note: p.p50Ms === undefined ? (props.unmeasuredNote ?? t("fleet.monitoring.chart.allFailed")) : undefined };
 });
 
 const readoutText = computed(() => {

@@ -11,7 +11,10 @@
 import { computed, defineAsyncComponent, defineComponent, h, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { RouterLink } from "vue-router";
+
 import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -19,7 +22,8 @@ import { Badge } from "@/components/ui/badge";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
-import { seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { isChosenUnknown, runEchoes, runRows } from "./pathsModel";
 import {
   availability,
   formatDeltaLoss,
@@ -56,12 +60,24 @@ const props = defineProps<{
   offered?: MonitorWindow[];
   /** The agent's newest error, for a down path the server sends without a reason. */
   failure?: string;
+  /** The source's agent version, said when the path reads agent_too_old. */
+  agentVersion?: string;
+  /** The paths read failed before it said which server this is, so no series can be asked for yet. */
+  pathsFailed?: boolean;
 }>();
 
 const emit = defineEmits<{ window: [window: MonitorWindow] }>();
 
 const { t } = useI18n();
-const { whyText, stateLabel, windowLong } = usePathsCopy();
+const { whyText, stateLabel, windowLong, reasonText, reasonShort } = usePathsCopy();
+/** Agent updates needs node:admin; without it the sheet names the version and links nowhere. */
+const canUpdateAgents = computed(() => useAuthStore().can("node:admin"));
+
+/** The reason a path reads unknown when it measured nothing (not a pause or a choice): its figures and runs are then not an outage. */
+const unmeasured = computed(() => {
+  const p = props.path;
+  return p?.state === "unknown" && p.reason && !isChosenUnknown(p.reason) ? p.reason : undefined;
+});
 
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */
@@ -129,6 +145,8 @@ const figures = computed<Figure[]>(() => {
   if (!stats) return [];
   const delta = !zoomed && props.path ? pathDelta(props.path) : {};
   const none = t("common.misc.none");
+  // Nothing measured: no run counted, or the path reads unknown with a reason. Availability is then none, never 0%.
+  const measured = stats.samples > 0 && !unmeasured.value;
   return [
     { key: "p50", label: "p50", value: stats.p50Ms !== undefined ? formatMs(stats.p50Ms) : none, sub: delta.p50Ms !== undefined ? formatDeltaMs(delta.p50Ms) : undefined },
     { key: "p95", label: "p95", value: stats.p95Ms !== undefined ? formatMs(stats.p95Ms) : none },
@@ -136,12 +154,12 @@ const figures = computed<Figure[]>(() => {
     {
       key: "loss",
       label: t("fleet.monitoring.paths.stats.loss"),
-      value: stats.loss !== undefined ? formatLoss(stats.loss) : none,
-      // A stray lost run in a week is not an alarm; a loss of one percent or more is.
-      tone: (stats.loss ?? 0) >= 0.01 ? "destructive" : undefined,
+      value: stats.samples > 0 && stats.loss !== undefined ? formatLoss(stats.loss) : none,
+      // A stray lost run in a week is not an alarm; a loss of one percent or more is, on a path that measures.
+      tone: measured && (stats.loss ?? 0) >= 0.01 ? "destructive" : undefined,
       sub: delta.loss !== undefined ? formatDeltaLoss(delta.loss) : undefined,
     },
-    { key: "availability", label: t("fleet.monitoring.paths.stats.availability"), value: stats.availability !== undefined ? formatAvailability(stats.availability) : none },
+    { key: "availability", label: t("fleet.monitoring.paths.stats.availability"), value: measured && stats.availability !== undefined ? formatAvailability(stats.availability) : none },
     { key: "samples", label: t("fleet.monitoring.paths.stats.samples"), value: t("fleet.monitoring.paths.stats.samplesValue", { n: stats.samples, expected: stats.expected }) },
   ];
 });
@@ -169,13 +187,32 @@ const runs = computed(() =>
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
     .slice(0, RUNS_SHOWN),
 );
+const rows = computed(() => runRows(runs.value, unmeasured.value));
+
+/** The newest run, from the path or else from the runs: a run that measured nothing is still a run. */
+const lastRun = computed(() => {
+  if (props.path?.lastAt) return { at: props.path.lastAt, nothing: false };
+  const newest = runs.value[0];
+  return newest ? { at: newest.at, nothing: !!newest.reason || !!unmeasured.value } : undefined;
+});
+
+/** What the readout says of a bucket with no answer on a path that measured nothing. */
+const unmeasuredNote = computed(() => (unmeasured.value ? t("fleet.monitoring.chart.nothingMeasured", { reason: reasonShort(unmeasured.value) }) : undefined));
+
+/** The cause the agent named for the reason, such as "refused to dial 10.0.0.8: private address": said first, before the general sentence. */
+const reasonDetail = computed(() => {
+  const reason = unmeasured.value;
+  if (!reason) return "";
+  return runs.value.find((r) => r.reason === reason && r.error)?.error ?? "";
+});
 
 /** Why the path is not up: the newest failed run's error for a down path (the server sends no reason with it), else the reason. */
 const reasonLine = computed(() => {
   const p = props.path;
   if (!p) return "";
   if (p.state === "down" && !p.reason) {
-    const failed = runs.value.find((r) => !r.success && r.error);
+    // A run with a reason measured nothing; the failure is the newest run that did.
+    const failed = runs.value.find((r) => !r.success && !r.reason && r.error);
     if (failed?.error) return failed.error;
     if (props.failure) return props.failure;
   }
@@ -195,6 +232,9 @@ const cert = computed(() => {
 /* ---- Table view ---- */
 
 const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
+/** A series that switched method (tcp to icmp) names each bucket's method in the table too. */
+const tableMethods = computed(() => !!series.value && methodMarkers(series.value).length > 0);
+const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, props.path?.method ?? "tcp").toUpperCase() : "");
 </script>
 
 <template>
@@ -205,12 +245,21 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
         <Badge v-if="path" :variant="path.state === 'up' ? 'success' : path.state === 'down' ? 'destructive' : 'secondary'" data-testid="path-state">
           {{ stateLabel(path.state) }}
         </Badge>
-        <span v-if="path?.lastAt" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.lastRun', { age: formatRelativeTime(path.lastAt) }) }}</span>
+        <span v-if="lastRun" class="text-xs text-muted-foreground">
+          {{ lastRun.nothing ? $t('fleet.monitoring.paths.sheet.lastRunNothing', { age: formatRelativeTime(lastRun.at) }) : $t('fleet.monitoring.paths.sheet.lastRun', { age: formatRelativeTime(lastRun.at) }) }}
+        </span>
         <span v-else-if="path" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.noRun') }}</span>
       </div>
+      <p v-if="reasonDetail" class="font-mono text-xs break-words text-foreground" data-testid="path-reason-detail">{{ reasonDetail }}</p>
       <p v-if="path && path.state !== 'up'" :class="cn('text-sm break-words', path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')" data-testid="path-reason">
         {{ reasonLine }}
       </p>
+      <!-- What the operator can do about it, for the reasons that have a next step. -->
+      <p v-if="unmeasured === 'agent_too_old' && (agentVersion || canUpdateAgents)" class="text-xs text-muted-foreground" data-testid="path-next">
+        {{ agentVersion ? $t('fleet.monitoring.paths.sheet.agentNow', { version: agentVersion }) : '' }}
+        <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
+      </p>
+      <p v-else-if="unmeasured === 'icmp_filtered'" class="text-xs text-muted-foreground" data-testid="path-next">{{ $t('fleet.monitoring.paths.sheet.filteredNext') }}</p>
     </div>
 
     <p
@@ -246,6 +295,9 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
         {{ $t('fleet.monitoring.paths.sheet.seriesFailed', { reason: seriesQuery.error.value.message }) }}
         <button type="button" class="ms-1 font-medium text-foreground underline underline-offset-2" @click="seriesQuery.refresh()">{{ $t('common.actions.retry') }}</button>
       </p>
+      <p v-else-if="source === 'unknown' && pathsFailed" class="rounded-md border border-border p-3 text-xs text-muted-foreground" role="status" data-testid="path-no-series">
+        {{ $t('fleet.monitoring.paths.sheet.seriesNeedsPaths') }}
+      </p>
       <p v-else-if="seriesQuery.data.value === null" class="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground" data-testid="path-no-series">
         {{ $t('fleet.monitoring.paths.sheet.noSeries') }}
       </p>
@@ -261,6 +313,7 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
         :compact="compact"
         :height="compact ? 200 : 228"
         :label="$t('fleet.monitoring.paths.sheet.chartLabel', { path: title, window: windowLong(window) })"
+        :unmeasured-note="unmeasuredNote"
         :class="seriesQuery.refreshing.value && 'opacity-70'"
         @zoom="(range) => (zoom = range)"
       />
@@ -279,6 +332,7 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
                 <th scope="col" class="px-2 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.jitter') }}</th>
                 <th scope="col" class="px-2 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.loss') }}</th>
                 <th scope="col" class="px-3 py-1.5 text-end font-medium">{{ $t('fleet.monitoring.paths.stats.samples') }}</th>
+                <th v-if="tableMethods" scope="col" class="px-3 py-1.5 text-start font-medium">{{ $t('fleet.monitoring.chart.method') }}</th>
               </tr>
             </thead>
             <tbody class="font-mono tabular">
@@ -294,6 +348,7 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
                   <td :class="cn('px-2 py-1 text-end', (p.loss ?? 0) > 0 && 'text-destructive')">{{ p.n > 0 ? formatLoss(p.loss ?? 0) : '' }}</td>
                 </template>
                 <td class="px-3 py-1 text-end">{{ p.n }}/{{ p.expected }}</td>
+                <td v-if="tableMethods" class="px-3 py-1">{{ tableMethod(p.t) }}</td>
               </tr>
             </tbody>
           </table>
@@ -305,12 +360,27 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
       <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runs') }}</h3>
       <p v-if="resultsQuery.error.value" class="text-xs text-destructive">{{ resultsQuery.error.value.message }}</p>
       <ul v-else-if="runs.length" class="divide-y divide-border rounded-md border border-border" data-testid="path-runs">
-        <li v-for="run in runs" :key="run.at" class="grid grid-cols-[minmax(0,1fr)_auto_2.5rem] items-baseline gap-x-3 px-3 py-1.5 text-xs">
-          <span class="min-w-0 text-muted-foreground">{{ formatDateTime(run.at) }}</span>
-          <span class="font-mono tabular">{{ run.latency_ms !== undefined ? formatMs(run.latency_ms) : '' }}</span>
-          <span :class="cn('text-end font-medium', run.success ? 'text-foreground' : 'text-destructive')">{{ run.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
-          <span v-if="run.error" class="col-span-3 break-words text-destructive">{{ run.error }}</span>
-        </li>
+        <template v-for="row in rows" :key="row.kind === 'run' ? row.run.at : `${row.reason}-${row.newest.at}`">
+          <!-- A stretch of runs that measured nothing for one reason: one row, not one per interval. -->
+          <li v-if="row.kind === 'unmeasured'" class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs" data-run="unmeasured">
+            <span class="min-w-0 text-muted-foreground">
+              {{ row.count > 1 ? $t('fleet.monitoring.paths.sheet.runSpan', { from: formatDateTime(row.oldest.at), to: formatDateTime(row.newest.at) }) : formatDateTime(row.newest.at) }}
+            </span>
+            <span class="text-end text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runsUnmeasured', { n: row.count }, row.count) }}</span>
+            <span class="col-span-2 break-words text-muted-foreground">{{ reasonText(row.reason) }}</span>
+            <span v-if="row.newest.error" class="col-span-2 break-words font-mono text-muted-foreground">{{ row.newest.error }}</span>
+          </li>
+          <li v-else class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs" :data-run="row.run.success ? 'ok' : 'fail'">
+            <span class="min-w-0 text-muted-foreground">{{ formatDateTime(row.run.at) }}</span>
+            <span class="font-mono tabular">{{ row.run.latency_ms !== undefined ? formatMs(row.run.latency_ms) : '' }}</span>
+            <span :class="cn('text-end font-medium', row.run.success ? 'text-foreground' : 'text-destructive')">{{ row.run.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}</span>
+            <span v-if="runEchoes(row.run)" class="col-span-3 break-words font-mono text-muted-foreground tabular" data-testid="run-echoes">
+              <span :class="runEchoes(row.run)!.lost > 0 ? 'text-destructive' : ''">{{ $t('fleet.monitoring.paths.sheet.echoes', { sent: runEchoes(row.run)!.sent, lost: runEchoes(row.run)!.lost }) }}</span>
+              <template v-if="runEchoes(row.run)!.rtts.length">: {{ runEchoes(row.run)!.rtts.join(' ') }} ms</template>
+            </span>
+            <span v-if="row.run.error" class="col-span-3 break-words text-destructive">{{ row.run.error }}</span>
+          </li>
+        </template>
       </ul>
       <p v-else-if="resultsQuery.data.value !== undefined" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.runsEmpty') }}</p>
     </section>

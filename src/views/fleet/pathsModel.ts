@@ -204,6 +204,8 @@ export const UNKNOWN_REASONS = [
   "no_results",
   "results_stopped",
   "agent_too_old",
+  "icmp_not_permitted",
+  "destination_refused",
   "method_refused",
   "icmp_filtered",
   "beacon_not_enabled",
@@ -235,7 +237,6 @@ const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
   unsupported_method: "agent_too_old",
   refused_by_node: "method_refused",
   beacon_off: "beacon_not_enabled",
-  icmp_not_permitted: "method_refused",
 };
 
 /** The reason as a code the console has a sentence for, or undefined. */
@@ -268,9 +269,64 @@ export function displayState(path: { state: PathState; reason?: string }): PathD
   return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
 }
 
+/**
+ * A multi-packet run's echoes for the runs list (design 29 M2a): how many
+ * were sent and lost and each RTT that came back, rounded to a tenth of a
+ * millisecond. Undefined for a single-probe run (tcp, http), which sends one.
+ */
+export function runEchoes(run: { sent?: number; lost?: number; rtts_ms?: number[] }): { sent: number; lost: number; rtts: string[] } | undefined {
+  const sent = Math.max(0, Math.floor(run.sent ?? 0));
+  if (sent === 0) return undefined;
+  const lost = Math.min(sent, Math.max(0, Math.floor(run.lost ?? 0)));
+  const rtts = (run.rtts_ms ?? []).filter((v) => typeof v === "number" && Number.isFinite(v)).slice(0, 10).map((v) => (Math.round(v * 10) / 10).toFixed(1));
+  return { sent, lost, rtts };
+}
+
+export type RunRow<R> = { kind: "run"; run: R } | { kind: "unmeasured"; reason: string; count: number; newest: R; oldest: R };
+
+/**
+ * The latest runs as the sheet lists them, newest first: a stretch of runs
+ * that measured nothing for the same reason (an agent whose kernel refuses
+ * ICMP reports one every interval) is one row with its count and time span,
+ * not twenty identical lines.
+ */
+export function runRows<R extends { reason?: string; success?: boolean }>(runs: readonly R[], failedAs?: string): RunRow<R>[] {
+  const out: RunRow<R>[] = [];
+  for (const run of runs) {
+    const last = out[out.length - 1];
+    // On a path the server reads unknown (an ICMP target that never answered), a failed run measured nothing either.
+    const reason = run.reason || (failedAs && run.success === false ? failedAs : undefined);
+    if (reason && last?.kind === "unmeasured" && last.reason === reason) {
+      last.count += 1;
+      last.oldest = run;
+    } else if (reason) {
+      out.push({ kind: "unmeasured", reason, count: 1, newest: run, oldest: run });
+    } else {
+      out.push({ kind: "run", run });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* The matrix                                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The methods each source's paths use, sorted: one method names a column
+ * in its header; more than one (Auto falling back to TCP for some targets)
+ * puts the method on each cell instead.
+ */
+export function methodsBySource(paths: readonly { source: string; method: string }[]): Map<string, string[]> {
+  const sets = new Map<string, Set<string>>();
+  for (const p of paths) {
+    if (!p.method) continue;
+    const set = sets.get(p.source) ?? new Set<string>();
+    set.add(p.method);
+    sets.set(p.source, set);
+  }
+  return new Map([...sets].map(([source, set]) => [source, [...set].sort()]));
+}
 
 /** One path, normalized, with the names it is shown by. */
 export interface PathItem {

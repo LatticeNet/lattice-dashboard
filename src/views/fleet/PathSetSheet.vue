@@ -12,6 +12,11 @@
  * other. Each node row previews, by the server's own rule, whether it would
  * be a target after the save; the plan that comes back is what is shown from
  * then on. The save is audited on the server.
+ *
+ * On an M2a server the path set also picks its method (TCP, ICMP or Auto)
+ * and pins single sources to one, and previews per source which method it
+ * will use and how many targets it reaches with it. Against an older server
+ * neither is shown nor sent.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -33,22 +38,37 @@ import {
   LATENCY_MAX_INTERVAL_SEC,
   LATENCY_MAX_TIMEOUT_SEC,
   LATENCY_MIN_INTERVAL_SEC,
+  PATH_SET_METHODS,
+  SOURCE_PINS,
   draftFromConfig,
   draftProblems,
   draftTargetReason,
   draftToConfig,
   draftsDiffer,
+  pathSetPreview,
   setPairEnabled,
+  sourceMethod,
+  setSourceMethod,
   setTargetMode,
   targetMode,
   type LatencyDraft,
+  type SourceMethodPreview,
   type TargetMode,
 } from "./latencyModel";
+import { sourceSupport } from "./checkRulesModel";
+import { usePathsCopy } from "./pathsCopy";
 
-const props = defineProps<{ open: boolean; plan: LatencyProbePlan; nodes: Node[] }>();
+const props = defineProps<{
+  open: boolean;
+  plan: LatencyProbePlan;
+  nodes: Node[];
+  /** The server speaks M2a: the method and the pins are offered. */
+  m2a?: boolean;
+}>();
 const emit = defineEmits<{ close: []; saved: [plan: LatencyProbePlan]; reload: [] }>();
 
 const { t } = useI18n();
+const { refusalText } = usePathsCopy();
 
 const base = ref<LatencyDraft>(draftFromConfig(props.plan.config));
 const draft = ref<LatencyDraft>(draftFromConfig(props.plan.config));
@@ -98,6 +118,58 @@ const pathCount = computed(() => {
   return n;
 });
 const problems = computed(() => draftProblems(draft.value));
+
+/* ---- Method (design 29 M2a) ---- */
+
+const methodLabel = (m: string) => t(`fleet.monitoring.pathSet.methods.${m || "tcp"}`);
+const methodPreview = computed(() => (props.m2a ? pathSetPreview(draft.value, props.plan, sourceNodes.value) : []));
+
+function setMethod(method: string): void {
+  draft.value = { ...draft.value, method };
+}
+function setPin(source: string, value: string): void {
+  draft.value = setSourceMethod(draft.value, source, value || undefined);
+}
+
+/** Paths the save makes that will read unknown: each source's targets it cannot reach. */
+const unknownPaths = computed(() => methodPreview.value.reduce((sum, row) => sum + row.none, 0));
+
+/** The targets a source cannot reach, by name: the first eight, then a count. */
+function unreachedNames(row: SourceMethodPreview): string {
+  const names = row.noneTargets.slice(0, 8).map(nameOf);
+  const more = row.noneTargets.length - names.length;
+  return more > 0 ? `${names.join(", ")} ${t("fleet.monitoring.checks.editor.target.previewMore", { n: more })}` : names.join(", ");
+}
+
+/**
+ * The source list flags, without disabling, a node that would ping (pinned
+ * to ICMP, or following a path set on ICMP) but cannot: a pin to TCP or
+ * Auto would make it measure, so it stays pickable.
+ */
+const sourceNotes = computed<Record<string, string>>(() => {
+  if (!props.m2a) return {};
+  const out: Record<string, string> = {};
+  for (const node of sourceNodes.value) {
+    if (sourceMethod(draft.value, node.id) !== "icmp") continue;
+    const support = sourceSupport(node, "icmp", true);
+    if (!support.ok) out[node.id] = t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(support.reason, "icmp") });
+  }
+  return out;
+});
+
+/** What the To where list's footnote says the targets are dialled on, by the method. */
+const ruleHint = computed(() => (props.m2a && draft.value.method && draft.value.method !== "tcp" ? t(`fleet.monitoring.pathSet.ruleHint.${draft.value.method}`) : t("fleet.monitoring.latency.config.ruleHint")));
+
+/** One line per source: the method it will use and what it reaches with it. */
+function previewLine(row: SourceMethodPreview): string {
+  if (row.refusal) return t("fleet.monitoring.pathSet.preview.cannot", { why: refusalText(row.refusal, "icmp") });
+  const parts: string[] = [];
+  if (row.icmp) parts.push(t("fleet.monitoring.pathSet.preview.icmp", { n: row.icmp }, row.icmp));
+  if (row.tcp) parts.push(t("fleet.monitoring.pathSet.preview.tcp", { n: row.tcp }, row.tcp));
+  if (row.onSave) parts.push(t("fleet.monitoring.pathSet.preview.onSave", { n: row.onSave }, row.onSave));
+  if (row.none) parts.push(t("fleet.monitoring.pathSet.preview.none", { n: row.none }, row.none));
+  return parts.length ? parts.join(t("fleet.monitoring.pathSet.preview.join")) : t("fleet.monitoring.pathSet.preview.nothing");
+}
 const dirty = computed(() => draftsDiffer(base.value, draft.value));
 const pending = ref(false);
 const MODES: TargetMode[] = ["auto", "always", "never"];
@@ -162,8 +234,24 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 1. What it measures -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
-        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
-        <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.latency.config.probes')">
+        <template v-if="m2a">
+          <!-- Native radios: one tab stop, arrow keys move and choose, as a radio group should. -->
+          <div class="grid grid-cols-3 rounded-md border border-input p-1" role="radiogroup" :aria-label="$t('fleet.monitoring.pathSet.methodLabel')" data-testid="path-set-method">
+            <label
+              v-for="m in PATH_SET_METHODS"
+              :key="m || 'tcp'"
+              :class="cn('flex cursor-pointer items-center justify-center rounded px-2 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring pointer-coarse:min-h-11', draft.method === m && 'bg-secondary font-medium text-foreground')"
+            >
+              <input type="radio" name="path-set-method" class="sr-only" :value="m" :checked="draft.method === m" @change="setMethod(m)" />
+              {{ methodLabel(m) }}
+            </label>
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.pathSet.methodHint.${draft.method || 'tcp'}`) }}</p>
+        </template>
+        <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.method') }}</p>
+        <!-- Its own label, so it does not read as a second method choice under the first. -->
+        <p class="mt-1 text-xs font-medium">{{ $t('fleet.monitoring.pathSet.probing') }}</p>
+        <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.pathSet.probing')">
           <button
             type="button"
             :class="cn('rounded px-2 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', draft.enabled && 'bg-secondary font-medium text-foreground')"
@@ -183,7 +271,35 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 2. From where -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.from') }}</legend>
-        <SourcePicker v-model="sources" :nodes="sourceNodes" :label="$t('fleet.monitoring.checks.editor.step.from')" />
+        <SourcePicker v-model="sources" :nodes="sourceNodes" :m2a="m2a" :notes="sourceNotes" :label="$t('fleet.monitoring.checks.editor.step.from')" />
+        <div v-if="m2a && methodPreview.length" class="grid gap-1.5" data-testid="path-set-pins">
+          <p class="text-xs font-medium">{{ $t('fleet.monitoring.pathSet.pins') }}</p>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="row in methodPreview" :key="row.source" class="grid gap-1.5 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_11rem] sm:items-center" :data-pin="row.source">
+              <span class="min-w-0">
+                <span class="block truncate font-medium" :title="nameOf(row.source)">{{ nameOf(row.source) }}</span>
+                <span :class="cn('block text-xs', row.refusal ? 'text-warning-text' : 'text-muted-foreground')">
+                  <span class="font-mono">{{ methodLabel(row.method) }}</span>
+                  <span v-if="!row.pinned"> ({{ $t('fleet.monitoring.pathSet.followsSet') }})</span>
+                  · {{ previewLine(row) }}
+                </span>
+                <span v-if="row.noneTargets.length && !row.refusal" class="block text-xs break-words text-muted-foreground" data-testid="pin-unreached">
+                  {{ $t('fleet.monitoring.pathSet.preview.unreached', { names: unreachedNames(row) }) }}
+                </span>
+              </span>
+              <select
+                :value="draft.sourceMethods[row.source] ?? ''"
+                class="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+                :aria-label="$t('fleet.monitoring.pathSet.pinLabel', { name: nameOf(row.source) })"
+                @change="(e) => setPin(row.source, (e.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ $t('fleet.monitoring.pathSet.pinFollow', { method: methodLabel(draft.method) }) }}</option>
+                <option v-for="pin in SOURCE_PINS" :key="pin" :value="pin">{{ methodLabel(pin) }}</option>
+              </select>
+            </li>
+          </ul>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.pathSet.pinHint') }}</p>
+        </div>
       </fieldset>
 
       <!-- 3. To where -->
@@ -229,7 +345,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           </li>
           <li v-if="filteredNodes.length === 0" class="px-3 py-5 text-center text-xs text-muted-foreground">{{ $t('fleet.monitoring.latency.config.noMatch') }}</li>
         </ul>
-        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.latency.config.ruleHint') }}</p>
+        <p class="text-xs text-muted-foreground" data-testid="path-set-rule">{{ ruleHint }}</p>
       </fieldset>
 
       <!-- 4. How often -->
@@ -261,7 +377,9 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
     </form>
     <template #actions>
       <p class="me-auto text-xs text-muted-foreground tabular" data-testid="latency-config-counts">
-        {{ dirty ? $t('fleet.monitoring.pathSet.counts', { sources: draft.sources.length, targets: targetCount, paths: pathCount }) : $t('fleet.monitoring.latency.config.unchanged') }}
+        <template v-if="!dirty">{{ $t('fleet.monitoring.latency.config.unchanged') }}</template>
+        <template v-else-if="unknownPaths">{{ $t('fleet.monitoring.pathSet.countsUnknown', { sources: draft.sources.length, targets: targetCount, paths: pathCount, unknown: unknownPaths }) }}</template>
+        <template v-else>{{ $t('fleet.monitoring.pathSet.counts', { sources: draft.sources.length, targets: targetCount, paths: pathCount }) }}</template>
       </p>
       <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
       <Button type="submit" form="path-set" size="sm" :disabled="pending || !dirty || problems.length > 0" data-testid="latency-config-save">
