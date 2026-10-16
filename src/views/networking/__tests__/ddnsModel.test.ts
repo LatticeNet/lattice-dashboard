@@ -11,6 +11,7 @@ import {
   ddnsMatchesShow,
   ddnsNormalizeHost,
   ddnsRecordType,
+  ddnsRunFailureText,
   ddnsRunPreview,
   ddnsTargetProblem,
   ddnsTemplateProblem,
@@ -287,4 +288,15 @@ test("a CNAME comment fills #target# and leaves #ip# empty, as the server does",
   assert.equal(ddnsTemplateProblem("Lattice #node# via #target#"), null);
   const out = renderDdnsComment("#node# #type# to #target# ip=[#ip#]", { ...VARS, type: "CNAME", ip: "", old_ip: "", target: TARGET });
   assert.equal(out.text, `tokyo-1 CNAME to ${TARGET} ip=[]`);
+});
+
+test("a failed Run now shows the server's reason unless it was masked", () => {
+  assert.equal(ddnsRunFailureText("upstream service error"), undefined);
+  assert.equal(ddnsRunFailureText(""), undefined);
+  assert.equal(ddnsRunFailureText(undefined), undefined);
+  assert.equal(
+    ddnsRunFailureText('A home.example.com: cloudflare: api error (status 403): [{"code":9109,"message":"Invalid access token"}]'),
+    "A home.example.com: Cloudflare refused it, HTTP 403: Invalid access token (code 9109)",
+  );
+  assert.equal(ddnsRunFailureText("cloudflare: status 522, undecodable body"), "cloudflare: status 522, undecodable body");
 });
