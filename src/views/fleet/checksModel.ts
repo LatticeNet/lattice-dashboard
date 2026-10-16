@@ -35,6 +35,29 @@ export const CHECK_MAX_TIMEOUT_SEC = 300;
 export const ALERT_DEFAULT_AFTER = 2;
 export const ALERT_MAX_AFTER = 20;
 
+/**
+ * The certificate expiry a result read, in epoch milliseconds, or undefined
+ * when the run read none. The server writes Go's zero time
+ * ("0001-01-01T00:00:00Z") for every result that did not complete a TLS
+ * handshake: every tcp and http result, and a tls result whose handshake
+ * failed. That value is not an expiry and must never read as "expired".
+ */
+export function certExpiry(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const at = Date.parse(value);
+  if (Number.isNaN(at) || new Date(at).getUTCFullYear() <= 1) return undefined;
+  return at;
+}
+
+/** The newest certificate expiry among results ordered newest first. */
+export function latestCertExpiry(results: readonly { cert_not_after?: string }[] | undefined): number | undefined {
+  for (const r of results ?? []) {
+    const at = certExpiry(r.cert_not_after);
+    if (at !== undefined) return at;
+  }
+  return undefined;
+}
+
 export type CheckGroup = "operator" | "pathset";
 export const CHECK_GROUP_ORDER: readonly CheckGroup[] = ["operator", "pathset"];
 
