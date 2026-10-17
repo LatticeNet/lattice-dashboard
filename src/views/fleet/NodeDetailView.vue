@@ -70,7 +70,15 @@ import { useProof } from "@/composables/useProof";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { hasNeverReported, statusMeta } from "@/lib/status";
-import { describeNodeStatus, isReporting, metricFreshness, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
+import {
+  describeNodeStatus,
+  hasMetricSample,
+  isReporting,
+  metricFreshness,
+  nodeStatus,
+  nodeStatusReason,
+  nodeStatusSince,
+} from "@/lib/nodeStatus";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -78,6 +86,7 @@ import {
   formatDateTime,
   formatRelativeTime,
   formatDuration,
+  isZeroTime,
   NO_VALUE,
   shortId,
 } from "@/lib/format";
@@ -568,7 +577,7 @@ const statusReason = computed(() => {
  * numbers are still worth showing; the heading and the description now say
  * which of the three cases the card is in.
  */
-const metricSample = computed(() => metricFreshness(node.value ?? {}, !!node.value?.metrics));
+const metricSample = computed(() => metricFreshness(node.value ?? {}, hasMetricSample(node.value?.metrics)));
 const metricsAreLive = computed(() => metricSample.value === "live");
 const noSample = computed(() => metricSample.value === "none");
 const statusCardTitle = computed(() =>
@@ -706,7 +715,9 @@ function touchUpdateDraft() {
  * `@/lib/status`; this used to be a private copy of it in each of three views.
  */
 function lastSeenText(node: Node): string {
-  if (hasNeverReported(node)) return t("fleet.nodes.list.neverSeen");
+  // A disabled node keeps the disabled status, so the zero or absent
+  // last_seen is what says it never checked in.
+  if (hasNeverReported(node) || isZeroTime(node.last_seen)) return t("fleet.nodes.list.neverSeen");
   return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
 }
 

@@ -1,5 +1,6 @@
 import { reactive } from "vue";
 import type { Metrics } from "@/lib/api/types";
+import { hasMetricSample } from "@/lib/nodeStatus";
 
 /**
  * Client-side ring buffer of recent polled node-metric samples. The server has
@@ -103,7 +104,10 @@ export function useMetricBuffer(opts: UseMetricBufferOptions = {}): MetricBuffer
   const capacity = clampCapacity(opts.capacity);
 
   function record(nodeId: string, metrics: Metrics | undefined | null): void {
-    if (!nodeId || !metrics) return;
+    // A node that never reported carries empty metrics with no collected_at.
+    // Recording them stamped each poll with the current time, which drew a
+    // flat 0% sparkline for a machine that has never sent a number.
+    if (!nodeId || !hasMetricSample(metrics)) return;
     const sample = deriveSample(metrics);
 
     let ring = store.get(nodeId);

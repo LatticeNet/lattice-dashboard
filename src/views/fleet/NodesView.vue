@@ -38,6 +38,7 @@ import {
   compareByAttention,
   countNodeStatuses,
   describeNodeStatus,
+  hasMetricSample,
   isReporting,
   nodeStatus,
   nodeStatusSince,
@@ -492,6 +493,8 @@ const rotatedOpen = computed({
 function metricCell(node: Node, value: number | undefined): { text: string; title?: string; stale: boolean } {
   if (value === undefined) return { text: "", stale: false };
   if (isReporting(node)) return { text: `${value}%`, stale: false };
+  // Nothing was ever measured: no "last known 0%" for a node that never sent one.
+  if (!hasMetricSample(node.metrics)) return { text: NO_VALUE, stale: false };
   return {
     text: NO_VALUE,
     title: t("fleet.nodes.metric.lastKnown", { value: `${value}%`, time: formatRelativeTime(node.metrics?.collected_at ?? node.last_seen) }),
