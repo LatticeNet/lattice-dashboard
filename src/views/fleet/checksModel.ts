@@ -70,10 +70,16 @@ export function takesNodeTarget(kind: string): boolean {
   return kind === "icmp" || kind === "tcp" || kind === "beacon";
 }
 
-/** Bounds the server enforces on a check. */
+/**
+ * Bounds every save of a check meets, a create and an edit alike: lattice-sdk
+ * model.MonitorIntervalMinSec, MonitorIntervalMaxSec and MonitorTimeoutMaxSec
+ * (lattice-sdk 5863aec, which lattice-server's validMonitorTiming reads). The
+ * timeout is also shorter than the interval. The path set has its own bounds
+ * (latencyModel).
+ */
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
-export const CHECK_MAX_TIMEOUT_SEC = 300;
+export const CHECK_MAX_TIMEOUT_SEC = 60;
 export { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER };
 
 /**
