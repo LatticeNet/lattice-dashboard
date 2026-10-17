@@ -3,11 +3,14 @@
  * Monitoring's Overview (design 29 D7): what needs a look and how far each
  * source reaches, for the page's window.
  *
- * The attention list is worst first: each target that is down from a source
- * (its sources inside one line), then unknown paths grouped by reason, pauses
- * last and never as a warning. The reach strip is one line per source: how
- * many of its paths are up, down and unknown, each count a link into Paths
- * filtered to it. No degraded state: the server does not compute one yet.
+ * The attention list is worst first (design 29 D13): each target that is
+ * down (its sources inside one line), the down paths triangulation places on
+ * a source's network, the same two for degraded paths, offline sources,
+ * unknown paths grouped by reason, pauses last and never as a warning. Each
+ * down and degraded line carries its verdict and what it rests on. The reach
+ * strip is one line per source: how many of its paths are up, degraded, down
+ * and unknown, each count a link into Paths filtered to it. Degraded shows
+ * only from a server that judges it.
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
@@ -24,7 +27,8 @@ import EmptyState from "@/components/common/EmptyState.vue";
 import { Button } from "@/components/ui/button";
 
 import { formatLoss } from "./latencyModel";
-import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathDisplay, type SourceReach } from "./pathsModel";
+import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathDisplay, type PathItem, type SourceReach } from "./pathsModel";
+import { soleReporter, type Verdict } from "./triangulationModel";
 import { usePathsCopy } from "./pathsCopy";
 import type { PathsData } from "./usePathsData";
 
@@ -46,7 +50,7 @@ const props = defineProps<{
 const emit = defineEmits<{ pathSet: []; createCheck: [] }>();
 
 const { t } = useI18n();
-const { reasonText, windowLong } = usePathsCopy();
+const { reasonText, windowLong, evidenceText, verdictLabel, verdictEvidence } = usePathsCopy();
 
 const matrix = computed(() => props.data.matrix.value);
 const query = props.data.pathsQuery;
@@ -66,20 +70,78 @@ function names(list: string[]): string {
 
 const show = (q: string, path?: string) => ({ label: t("fleet.monitoring.overview.attention.show"), run: () => showInPaths(q, path) });
 
+const items = computed(() => (matrix.value ? pathAttention(matrix.value, props.data.triangulation.value) : []));
+/**
+ * The source every verdict on the list leans on when none can be placed (one
+ * source in the path set, as production runs today): the list says so once
+ * under its heading, and the lines leave out a verdict that would repeat it.
+ */
+const sole = computed(() => soleReporter(items.value.map((i) => ("verdict" in i ? i.verdict : undefined))));
+
+/**
+ * The verdict line. A target verdict counts the sources that report on the
+ * target; when more sources probe it (`measuredBy`), the rest report nothing
+ * and the line says how many, so its count and the claim's agree.
+ */
+function verdictLine(v: Verdict | undefined, measuredBy?: number): AttentionItem["verdict"] {
+  if (!v || (sole.value !== undefined && v.evidence.kind === "alone")) return undefined;
+  let evidence = verdictEvidence(v);
+  const silent = v.evidence.kind === "target" && measuredBy !== undefined ? measuredBy - v.evidence.sources.length : 0;
+  if (silent > 0) evidence = `${evidence}; ${t("fleet.monitoring.paths.verdict.silent", { n: silent }, silent)}`;
+  return { label: verdictLabel(v), evidence };
+}
+
+/** Why a down path is down: its reason, else the agent's newest error, and its loss over the window. */
+function downProof(lead: PathItem): string {
+  // The server sends a down path without a reason; the agent's error is in the newest result.
+  const failure = lead.reason ? reasonText(lead.reason) : props.failureOf(lead.monitorId, lead.source);
+  const loss = lead.samples > 0 && lead.loss !== undefined ? t("fleet.monitoring.overview.attention.loss", { loss: formatLoss(lead.loss), window: windowLong(props.window) }) : "";
+  return [failure, loss].filter(Boolean).join(" · ");
+}
+
+/** "X is down from cd-hs-sh", "from both sources", "from all 3 sources", or "from 2 of the 3 sources that probe it". */
+function targetClaim(state: "down" | "degraded", target: string, sources: string[], measuredBy: number): string {
+  const key = `fleet.monitoring.overview.attention.${state}`;
+  if (sources.length === 1 && measuredBy === 1) return t(key, { target, source: sources[0] });
+  if (sources.length === measuredBy) return sources.length === 2 ? t(`${key}Both`, { target }) : t(`${key}All`, { target, n: sources.length });
+  return t(`${key}Many`, { target, n: sources.length, total: measuredBy });
+}
+
 function itemFor(item: PathAttention): AttentionItem {
   switch (item.kind) {
     case "down": {
       const sources = item.paths.map((p) => p.sourceName);
       const lead = item.paths[0]!;
-      const claim =
-        sources.length === 1 && item.measuredBy === 1
-          ? t("fleet.monitoring.overview.attention.down", { target: item.targetName, source: sources[0] })
-          : t("fleet.monitoring.overview.attention.downMany", { target: item.targetName, n: sources.length, total: item.measuredBy });
-      // The server sends a down path without a reason; the agent's error is in the newest result.
-      const failure = lead.reason ? reasonText(lead.reason) : props.failureOf(lead.monitorId, lead.source);
-      const loss = lead.samples > 0 && lead.loss !== undefined ? t("fleet.monitoring.overview.attention.loss", { loss: formatLoss(lead.loss), window: windowLong(props.window) }) : "";
-      return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: [failure, loss].filter(Boolean).join(" · "), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
+      const claim = targetClaim("down", item.targetName, sources, item.measuredBy);
+      return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: downProof(lead), verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
     }
+    case "downSource":
+      return {
+        key: `downSource:${item.source}`,
+        tone: "danger",
+        claim: t("fleet.monitoring.overview.attention.downSource", { source: item.sourceName, n: item.paths.length }, item.paths.length),
+        proof: names(item.paths.map((p) => p.targetName)),
+        verdict: verdictLine(item.verdict),
+        action: show(attentionQuery(item)),
+      };
+    case "degraded": {
+      const sources = item.paths.map((p) => p.sourceName);
+      const lead = item.paths[0]!;
+      const claim = targetClaim("degraded", item.targetName, sources, item.measuredBy);
+      // A degraded item's proof is its evidence sentence (D13), the lead path's; over several paths it names whose.
+      const evidence = evidenceText(lead.degraded, lead.reason);
+      const proof = item.paths.length > 1 ? t("fleet.monitoring.overview.attention.fromSource", { source: lead.sourceName, evidence }) : evidence;
+      return { key: `degraded:${item.rowKey}`, tone: "warning", claim, proof, verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
+    }
+    case "degradedSource":
+      return {
+        key: `degradedSource:${item.source}`,
+        tone: "warning",
+        claim: t("fleet.monitoring.overview.attention.degradedSource", { source: item.sourceName, n: item.paths.length }, item.paths.length),
+        proof: names(item.paths.map((p) => p.targetName)),
+        verdict: verdictLine(item.verdict),
+        action: show(attentionQuery(item)),
+      };
     case "offline": {
       const seen = props.nodeSeen(item.source);
       return {
@@ -109,12 +171,17 @@ function itemFor(item: PathAttention): AttentionItem {
   }
 }
 
-const attention = computed<AttentionItem[]>(() => [...(matrix.value ? pathAttention(matrix.value).map(itemFor) : []), ...props.checkAttention]);
+const attention = computed<AttentionItem[]>(() => [...items.value.map(itemFor), ...props.checkAttention]);
 const reach = computed(() => (matrix.value ? reachBySource(matrix.value).filter((r) => r.total > 0) : []));
+/** The counts the strip links, worst first; degraded only from a server that judges it. */
+const reachLinks = computed<PathDisplay[]>(() => (matrix.value?.judgesDegraded ? ["degraded", "down", "unknown", "paused"] : ["down", "unknown", "paused"]));
+/** Amber means degraded wherever a path state is shown (D13): unknown keeps its hatch and muted ink. */
+const LINK_TONE: Record<PathDisplay, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground" };
 
 const HATCH = "bg-[repeating-linear-gradient(135deg,var(--border)_0_1.5px,transparent_1.5px_7px)]";
 const SEGMENTS: { state: PathDisplay; bar: string }[] = [
   { state: "up", bar: "bg-success" },
+  { state: "degraded", bar: "bg-warning" },
   { state: "down", bar: "bg-destructive" },
   { state: "unknown", bar: cn(HATCH, "border border-muted-foreground/40") },
   { state: "paused", bar: "bg-muted-foreground/25" },
@@ -144,7 +211,7 @@ function share(r: SourceReach, state: PathDisplay): string {
           </div>
         </EmptyState>
         <template v-else>
-          <AttentionList :items="attention" />
+          <AttentionList :items="attention" :note="sole !== undefined ? $t('fleet.monitoring.paths.verdict.sole', { source: sole }) : undefined" />
           <p v-if="attention.length === 0" class="rounded-lg border border-border bg-card px-3.5 py-3 text-sm text-muted-foreground" data-testid="overview-clear">
             {{ $t('fleet.monitoring.overview.clear', { n: matrix.counts.paths, window: windowLong(window) }, matrix.counts.paths) }}
           </p>
@@ -168,11 +235,12 @@ function share(r: SourceReach, state: PathDisplay): string {
                 <p class="flex flex-wrap items-center gap-x-3 text-xs">
                   <span class="text-muted-foreground">{{ $t('fleet.monitoring.overview.reach.reaches', { up: r.up, total: r.total }) }}</span>
                   <button
-                    v-for="state in (['down', 'unknown', 'paused'] as const)"
+                    v-for="state in reachLinks"
                     v-show="r[state] > 0"
                     :key="state"
                     type="button"
-                    :class="cn('font-medium underline decoration-dotted underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center', state === 'down' ? 'text-destructive' : state === 'unknown' ? 'text-warning-text' : 'text-muted-foreground')"
+                    :class="cn('font-medium underline decoration-dotted underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center', LINK_TONE[state])"
+                    :data-reach="state"
                     @click="showInPaths(reachQuery(r, state))"
                   >{{ $t(`fleet.monitoring.overview.reach.${state}`, { n: r[state] }) }}</button>
                 </p>

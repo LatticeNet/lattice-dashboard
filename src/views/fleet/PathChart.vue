@@ -10,6 +10,14 @@
  * "no data"; it is null in every column, so nothing interpolates across it.
  * A method change is a vertical rule with the new method's name.
  *
+ * From a server that judges degraded (design 29 D13): once the baseline is
+ * ready, two dashed guides cross the latency lane, the 7-day p50 and the
+ * latency trigger, in foreground ink at reduced opacity and labelled once at
+ * the right edge, beneath the series so a label never hides a bucket; the
+ * scale always covers the trigger. With `compare` on, the
+ * previous period's p50 is a thin dotted line in the same ink, its empty steps
+ * unjoined, and the readout adds its value.
+ *
  * The crosshair snaps to buckets and carries the exact values. It follows the
  * pointer and the keyboard (Left and Right step a bucket, Home and End jump);
  * a drag selects a range and zooms into it; a double-click or Escape resets.
@@ -28,13 +36,17 @@ import "uplot/dist/uPlot.min.css";
 import { resolveColor, resolveFontFamily, rgba, watchTheme, type Rgba } from "@/lib/cssColor";
 import { formatLoss, formatMs } from "./latencyModel";
 import {
+  baselineGuides,
   bucketIndexAt,
+  chartCeilingMs,
   chartColumns,
   gapRuns,
   laneLayout,
   methodAt,
+  linePieces,
   methodMarkers,
-  seriesCeilingMs,
+  piecesCrossing,
+  placeGuideLabels,
   stepIndex,
   visibleRange,
   LATENCY_LANE_START,
@@ -47,7 +59,7 @@ const props = withDefaults(
   defineProps<{
     series: PathSeries;
     /** The path's state tone for the band. */
-    tone: "success" | "destructive" | "muted";
+    tone: "success" | "warning" | "destructive" | "muted";
     /** The path's current method, for buckets that do not name theirs. */
     method: string;
     /** Phone layout: the readout is a fixed row above the chart. */
@@ -57,8 +69,12 @@ const props = withDefaults(
     label: string;
     /** Set when the path reads unknown with a reason: what the readout says of a bucket with no answer, which is then not drawn as an outage. */
     unmeasuredNote?: string;
+    /** Draw the previous period's p50 (the series carries it when the comparison is on). */
+    compare?: boolean;
+    /** The loss bars' tone: the M1 red, or the warning tone on a degraded path (D13: amber means degraded). */
+    lossTone?: "destructive" | "warning";
   }>(),
-  { compact: false, height: 240 },
+  { compact: false, height: 240, compare: false, lossTone: "destructive" },
 );
 
 const emit = defineEmits<{ zoom: [range: { from: number; to: number } | null] }>();
@@ -91,14 +107,14 @@ interface Palette {
 let palette: Palette | null = null;
 
 function readPalette(): Palette {
-  const toneToken = props.tone === "success" ? "--success" : props.tone === "destructive" ? "--destructive" : "--muted-foreground";
+  const toneToken = props.tone === "success" ? "--success" : props.tone === "warning" ? "--warning" : props.tone === "destructive" ? "--destructive" : "--muted-foreground";
   return {
     ink: resolveColor("--foreground"),
     muted: resolveColor("--muted-foreground"),
     border: resolveColor("--border"),
     card: resolveColor("--card"),
     tone: resolveColor(toneToken),
-    loss: resolveColor(props.unmeasuredNote ? "--muted-foreground" : "--destructive"),
+    loss: resolveColor(props.unmeasuredNote ? "--muted-foreground" : props.lossTone === "warning" ? "--warning" : "--destructive"),
     dark: document.documentElement.classList.contains("dark"),
     mono: resolveFontFamily("--font-mono"),
     sans: getComputedStyle(document.body).fontFamily || "system-ui, sans-serif",
@@ -119,13 +135,18 @@ const fullRange = computed<[number, number]>(() => {
   if (!first || !last) return [props.series.from, props.series.to || props.series.from + 3600];
   return [first.t, last.t + step.value];
 });
-const lanes = computed(() => laneLayout(seriesCeilingMs(points.value)));
+/** The previous period is drawn only when asked for and carried. */
+const previous = computed(() => (props.compare && props.series.previous ? props.series.previous : undefined));
+const guides = computed(() => baselineGuides(props.series.baseline));
+const lanes = computed(() => laneLayout(chartCeilingMs(props.series, !!previous.value)));
 
 /** Buckets plot at their middle, so bars, gaps and the crosshair line up with the bucket they read. */
 function columns(): uPlot.AlignedData {
   const [xs, floor, p50, p95, loss] = chartColumns(points.value);
   const half = step.value / 2;
-  return [xs.map((x) => x + half), floor, p50, p95, loss] as unknown as uPlot.AlignedData;
+  // The previous p50 is a sixth column, null where the earlier step had no successful run, so nothing joins across it.
+  const prev = points.value.map((_, i) => previous.value?.[i] ?? null);
+  return [xs.map((x) => x + half), floor, p50, p95, loss, prev] as unknown as uPlot.AlignedData;
 }
 
 /** The x values uPlot autoscales to: the first and last bucket middles. */
@@ -217,6 +238,64 @@ function drawGaps(u: uPlot): void {
   ctx.restore();
 }
 
+/**
+ * The guides' labels, once each at the right edge ("7-day median 64 ms",
+ * "degraded above 128 ms"). Drawn after the axes and before the series, so
+ * the band and the p50 paint over a label rather than a label hiding the
+ * newest buckets, which are the evidence for the state; placeGuideLabels
+ * also puts each label on the side of its line that covers fewer of those
+ * points and keeps the two labels apart.
+ */
+function drawGuideLabels(u: uPlot): void {
+  if (!guides.value.length) return;
+  const ctx = u.ctx;
+  const { left, top, width, height } = u.bbox;
+  const px = uPlot.pxRatio;
+  const laneBottom = u.valToPos(lanes.value.divider, "ms", true);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  ctx.font = `${10 * px}px ${colors().mono}`;
+  const labels = guides.value
+    .map((guide) => {
+      const text = guide.kind === "trigger" ? t("fleet.monitoring.chart.guideTrigger", { value: formatMs(guide.ms) }) : t("fleet.monitoring.chart.guideMedian", { value: formatMs(guide.ms) });
+      const w = ctx.measureText(text).width + 8 * px;
+      return { kind: guide.kind, y: Math.round(u.valToPos(guide.ms, "ms", true)) + 0.5, text, w, x: left + width - w - 2 * px };
+    })
+    .filter((l) => l.y >= top && l.y <= laneBottom);
+  const half = step.value / 2;
+  // The lines a label could sit under, as drawn: the p50, and the previous period's when it is shown.
+  const xs = points.value.map((p) => u.valToPos(p.t + half, "x", true));
+  const pieces = [
+    ...linePieces(points.value.map((p, i) => ({ x: xs[i]!, y: p.p50Ms === undefined ? null : u.valToPos(p.p50Ms, "ms", true) }))),
+    ...(previous.value ? linePieces(points.value.map((_, i) => ({ x: xs[i]!, y: previous.value?.[i] == null ? null : u.valToPos(previous.value[i]!, "ms", true) }))) : []),
+  ];
+  const byKind = new Map(labels.map((l) => [l.kind, l]));
+  const slots = placeGuideLabels(labels, {
+    h: 13 * px,
+    gap: 1 * px,
+    laneTop: top,
+    laneBottom,
+    covered: (kind, y0, y1) => {
+      const l = byKind.get(kind)!;
+      return piecesCrossing(pieces, { x0: l.x, x1: l.x + l.w, y0, y1 });
+    },
+  });
+  const trigger = byKind.get("trigger");
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  for (const slot of slots) {
+    const l = byKind.get(slot.kind)!;
+    const x = slot.beside && trigger ? trigger.x - l.w - 6 * px : l.x;
+    ctx.fillStyle = rgba(colors().card, 0.88);
+    ctx.fillRect(x, slot.top, l.w, 13 * px);
+    ctx.fillStyle = rgba(colors().ink, slot.kind === "trigger" ? 0.85 : 0.7);
+    ctx.fillText(l.text, x + 4 * px, slot.top + 12 * px);
+  }
+  ctx.restore();
+}
+
 function drawOverlay(u: uPlot): void {
   const ctx = u.ctx;
   const { left, top, width, height } = u.bbox;
@@ -259,6 +338,19 @@ function drawOverlay(u: uPlot): void {
       }
     }
     ctx.stroke();
+  }
+  // The degraded rule's guides: dashed, in the ink at reduced opacity; their labels are drawn beneath the series.
+  for (const guide of guides.value) {
+    const y = Math.round(u.valToPos(guide.ms, "ms", true)) + 0.5;
+    if (y < top || y > top + height) continue;
+    ctx.strokeStyle = rgba(colors().ink, guide.kind === "trigger" ? 0.55 : 0.35);
+    ctx.lineWidth = px;
+    ctx.setLineDash([5 * px, 4 * px]);
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(left + width, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   // Method changes: a rule labelled with the switch it marks ("TCP → ICMP") on a card-coloured pad.
   ctx.font = `${10 * px}px ${colors().mono}`;
@@ -374,10 +466,13 @@ function options(width: number): uPlot.Options {
         points: { show: false },
         paths: uPlot.paths.bars!({ size: [0.7, 24, 1], gap: 2, radius: 0.2 }),
       },
+      // The previous period's p50: thin, dotted, in the ink at reduced opacity, behind nothing it could hide.
+      { scale: "ms", stroke: () => rgba(colors().ink, colors().dark ? 0.55 : 0.45), width: 1.25, dash: [1.5, 3], points: { show: false }, spanGaps: false },
     ],
     bands: [{ series: [3, 1], fill: () => rgba(colors().tone, colors().dark ? 0.22 : 0.16) }],
     hooks: {
       drawClear: [(u) => drawGaps(u)],
+      drawAxes: [(u) => drawGuideLabels(u)],
       draw: [(u) => drawOverlay(u)],
       setCursor: [
         (u) => {
@@ -438,12 +533,18 @@ watch(
 );
 
 watch(
-  () => [props.tone, props.unmeasuredNote],
+  () => [props.tone, props.unmeasuredNote, props.lossTone],
   () => {
     palette = readPalette();
     hatch = null;
     plot.value?.redraw(false, false);
   },
+);
+
+// The comparison turned off draws without the overlay at once; turned on, the series it brings redraws it.
+watch(
+  () => props.compare,
+  () => plot.value?.setData(columns(), false),
 );
 
 watch(
@@ -519,7 +620,7 @@ interface ReadoutEntry {
   key: string;
   label: string;
   value: string;
-  tone?: "destructive" | "muted";
+  tone?: "destructive" | "warning" | "muted";
 }
 
 const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string } | undefined>(() => {
@@ -531,8 +632,13 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   const runs = t("fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
   const method = methodAt(props.series, p.t, props.method);
   const methodEntry: ReadoutEntry[] = [{ key: "method", label: t("fleet.monitoring.chart.method"), value: method.toUpperCase() }];
+  // The previous period's p50 at this step, when the comparison is drawn; a gap now may have had runs then.
+  const prev = previous.value?.[activeIdx.value];
+  const previousEntry: ReadoutEntry[] = previous.value
+    ? [{ key: "previous", label: t("fleet.monitoring.chart.previous"), value: prev !== null && prev !== undefined ? formatMs(prev) : t("fleet.monitoring.chart.previousNone"), tone: prev === null || prev === undefined ? "muted" : undefined }]
+    : [];
   if (p.missing) {
-    return { time, note: t("fleet.monitoring.chart.noDataLong"), entries: [{ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs }, ...methodEntry] };
+    return { time, note: t("fleet.monitoring.chart.noDataLong"), entries: [{ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs }, ...methodEntry, ...previousEntry] };
   }
   if (p.n === 0) {
     return { time, note: t("fleet.monitoring.chart.notExpected"), entries: methodEntry };
@@ -545,12 +651,13 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
     if (p.maxMs !== undefined) entries.push({ key: "max", label: t("fleet.monitoring.chart.max"), value: formatMs(p.maxMs) });
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
-  const alarm = props.unmeasuredNote ? undefined : ("destructive" as const);
+  const alarm = props.unmeasuredNote ? undefined : props.lossTone;
   entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? alarm : undefined });
   // A multi-packet bucket counts its loss in packets, echoes for icmp and signed requests for a beacon; say how many.
   if (p.sent > p.n) entries.push({ key: "echoes", label: t(method === "beacon" ? "fleet.monitoring.chart.requests" : "fleet.monitoring.chart.echoes"), value: t("fleet.monitoring.chart.echoesValue", { lost: p.lost, sent: p.sent }), tone: p.lost > 0 ? alarm : undefined });
   entries.push({ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs });
   entries.push(...methodEntry);
+  entries.push(...previousEntry);
   return { time, entries, note: p.p50Ms === undefined ? (props.unmeasuredNote ?? t("fleet.monitoring.chart.allFailed")) : undefined };
 });
 
@@ -573,10 +680,10 @@ const floatStyle = computed(() => {
 
 <template>
   <div class="space-y-1.5">
-    <!-- Phone: the values in a fixed row above the chart, never under the finger. -->
+    <!-- Phone: the values in a fixed row above the chart, never under the finger. Its height holds the time and the values (two lines of them with the comparison), so the first tap does not push the chart down under the finger. -->
     <div
       v-if="compact"
-      class="min-h-11 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs"
+      :class="['rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs', previous ? 'min-h-[5.125rem]' : 'min-h-16']"
       data-testid="path-chart-readout-fixed"
       aria-hidden="true"
     >
@@ -586,7 +693,7 @@ const floatStyle = computed(() => {
           <span v-if="readout.note" class="text-muted-foreground">{{ readout.note }}</span>
           <span v-for="entry in readout.entries" :key="entry.key" class="whitespace-nowrap">
             <span class="text-muted-foreground">{{ entry.label }}</span>
-            <span :class="['ms-1 font-mono tabular', entry.tone === 'destructive' ? 'text-destructive' : 'text-foreground']">{{ entry.value }}</span>
+            <span :class="['ms-1 font-mono tabular', entry.tone === 'destructive' ? 'text-destructive' : entry.tone === 'warning' ? 'text-warning-text' : entry.tone === 'muted' ? 'text-muted-foreground' : 'text-foreground']">{{ entry.value }}</span>
           </span>
         </p>
       </template>
@@ -617,7 +724,7 @@ const floatStyle = computed(() => {
         <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
           <template v-for="entry in readout.entries" :key="entry.key">
             <dt class="text-muted-foreground">{{ entry.label }}</dt>
-            <dd :class="['text-end font-mono font-medium tabular', entry.tone === 'destructive' ? 'text-destructive' : 'text-foreground']">{{ entry.value }}</dd>
+            <dd :class="['text-end font-mono font-medium tabular', entry.tone === 'destructive' ? 'text-destructive' : entry.tone === 'warning' ? 'text-warning-text' : entry.tone === 'muted' ? 'text-muted-foreground' : 'text-foreground']">{{ entry.value }}</dd>
           </template>
         </dl>
       </div>

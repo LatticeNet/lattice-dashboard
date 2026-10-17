@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NO_VALUE, formatAge, formatDateTime, formatMoney, isZeroTime, setFormatLocale } from "../format.ts";
+import { NO_VALUE, formatAge, formatDateTime, formatDateTimeRange, formatMoney, isZeroTime, setFormatLocale } from "../format.ts";
 import { canonicalCurrency, currencyInputCode, currencyRewrittenOnSave } from "../currency.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
@@ -89,4 +89,27 @@ test("a stored code is read as stored; only the editor keeps letters and cuts to
   assert.equal(currencyRewrittenOnSave("cny"), false);
   assert.equal(currencyRewrittenOnSave("USDT"), false);
   assert.equal(currencyRewrittenOnSave(""), false);
+});
+
+test("formatDateTimeRange drops the year in the current year and the end's date on the start's day", () => {
+  setFormatLocale("en-US");
+  try {
+    const now = new Date(2026, 9, 17, 12, 0).getTime();
+    const sameDay = formatDateTimeRange(new Date(2026, 9, 17, 2, 27).getTime(), new Date(2026, 9, 17, 2, 52).getTime(), now);
+    assert.equal(sameDay.from, "Oct 17, 02:27 AM");
+    assert.equal(sameDay.to, "02:52 AM");
+    const days = formatDateTimeRange(new Date(2026, 9, 12, 9, 0).getTime(), new Date(2026, 9, 14, 9, 0).getTime(), now);
+    assert.equal(days.from, "Oct 12, 09:00 AM");
+    assert.equal(days.to, "Oct 14, 09:00 AM");
+    const lastYear = formatDateTimeRange(new Date(2025, 11, 31, 23, 0).getTime(), new Date(2026, 0, 1, 1, 0).getTime(), now);
+    assert.equal(lastYear.from, "Dec 31, 2025, 11:00 PM");
+    assert.equal(lastYear.to, "Jan 1, 2026, 01:00 AM");
+    assert.deepEqual(formatDateTimeRange(Number.NaN, now, now), { from: NO_VALUE, to: NO_VALUE });
+    setFormatLocale("zh-CN");
+    const zh = formatDateTimeRange(new Date(2026, 9, 17, 2, 27).getTime(), new Date(2026, 9, 17, 2, 52).getTime(), now);
+    assert.equal(zh.to, "02:52");
+    assert.ok(!zh.from.includes("2026"), zh.from);
+  } finally {
+    setFormatLocale(undefined);
+  }
 });

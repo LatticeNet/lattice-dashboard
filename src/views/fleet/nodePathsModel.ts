@@ -22,9 +22,9 @@ export interface NodePaths {
   reaches: PathItem[];
 }
 
-const DISPLAY_RANK: Record<PathDisplay, number> = { down: 0, unknown: 1, paused: 2, up: 3 };
+const DISPLAY_RANK: Record<PathDisplay, number> = { down: 0, degraded: 1, unknown: 2, paused: 3, up: 4 };
 
-/** Down first, then unknown, then paused, then up; within a state the lossiest, then the slowest. */
+/** Down first, then degraded, unknown, paused and up; within a state the lossiest, then the slowest. */
 export function worstFirst(a: PathItem, b: PathItem): number {
   return (
     DISPLAY_RANK[displayState(a)] - DISPLAY_RANK[displayState(b)] ||
@@ -68,7 +68,7 @@ export function monitoringQuery(side: "reachedBy" | "reaches", nodeName: string)
 
 /** Counts by display state, for the list's heading. */
 export function stateCounts(paths: readonly PathItem[]): Record<PathDisplay, number> {
-  const out: Record<PathDisplay, number> = { up: 0, down: 0, unknown: 0, paused: 0 };
+  const out: Record<PathDisplay, number> = { up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
   for (const p of paths) out[displayState(p)] += 1;
   return out;
 }

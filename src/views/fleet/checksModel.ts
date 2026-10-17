@@ -24,6 +24,7 @@ import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, 
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedForSave, degradedProblems, effectiveAlert, pagesDown, type DegradedDraft, type DegradedField } from "@/views/fleet/degradedRuleModel";
 
 import {
   AGENT_DEFAULT_INTERVAL_SEC,
@@ -73,9 +74,7 @@ export function takesNodeTarget(kind: string): boolean {
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
 export const CHECK_MAX_TIMEOUT_SEC = 300;
-/** lattice-sdk MonitorAlertAfterDefault and MonitorAlertAfterMax. */
-export const ALERT_DEFAULT_AFTER = 2;
-export const ALERT_MAX_AFTER = 20;
+export { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER };
 
 /**
  * The certificate expiry a result read, in epoch milliseconds, or undefined
@@ -120,20 +119,51 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
  * results fail but no path of the check is down and one is unknown for a
  * reason that is not a pause, the check reads unmeasured with that reason,
  * as its paths do, rather than down.
+ *
+ * From M3 (design 29 D13) the newest runs can pass on a path the control
+ * plane judges degraded. A check whose results read up, with no down path
+ * and at least one degraded one, reads degraded on N of its M judged paths,
+ * so the list never shows a degraded path's check as a green "up".
+ *
+ * A path degraded on loss loses runs by definition, so its newest run often
+ * fails while the control plane, under alert_after, still judges it degraded
+ * rather than down. The failing branch therefore reads the failing sources'
+ * own paths first: one degraded makes the check degraded, as the up branch
+ * does; otherwise one unknown for a reason names that reason. Another path's
+ * unknown reason speaks for the check only when a failing source has no path
+ * of its own (or the results name no failing source), so a check two
+ * sources measure never reads "not measured", and the row does not flip
+ * between amber and red or grey as runs arrive.
  */
 export function withPathVerdict(
   health: MonitorHealth,
   paths: readonly { source?: string; state: string; reason?: string }[],
-  latest: readonly { node_id?: string; success: boolean; reason?: string }[] = [],
+  latest: readonly { node_id?: string; success: boolean; reason?: string; latency_ms?: number }[] = [],
 ): MonitorHealth {
-  if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
+  const degradedOf = (latencyMs: number | undefined, lastAt: number): MonitorHealth | undefined => {
+    const degraded = paths.filter((p) => p.state === "degraded").length;
+    if (!degraded) return undefined;
+    const judged = paths.filter((p) => p.state === "up" || p.state === "degraded").length;
+    return { kind: "degraded", degraded, total: Math.max(degraded, judged), latencyMs, lastAt };
+  };
+  if (paths.some((p) => p.state === "down")) return health;
+  if (health.kind === "up") return degradedOf(health.latencyMs, health.lastAt) ?? health;
+  if (health.kind !== "failing" || paths.length === 0) return health;
   const unknown = paths.filter((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
-  if (!unknown.length) return health;
-  // The reason that explains the failing results is the one on the paths of the sources that fail. When none of
-  // those paths carries one (a failing source the matrix reads up), the check's other unknown paths speak for it.
   const failing = new Set(latest.filter((l) => !l.success && !l.reason).map((l) => l.node_id ?? ""));
-  const own = unknown.filter((p) => p.source !== undefined && failing.has(p.source));
-  const reasons = [...new Set((own.length ? own : unknown).map((p) => p.reason!))];
+  const own = paths.filter((p) => p.source !== undefined && failing.has(p.source));
+  // A failing source the control plane judges degraded rather than down: the check reads degraded, with the passing runs' latency.
+  if (own.some((p) => p.state === "degraded")) {
+    const passed = latest.filter((l) => l.success && !l.reason && l.latency_ms !== undefined && Number.isFinite(l.latency_ms)).map((l) => l.latency_ms!);
+    return degradedOf(passed.length ? passed.reduce((sum, v) => sum + v, 0) / passed.length : undefined, health.lastAt) ?? health;
+  }
+  // The reason that explains the failing results is the one on the failing sources' own paths. Another path's reason speaks for
+  // the check only when a failing source has no path in the matrix, or the results name none.
+  const ownUnknown = unknown.filter((p) => own.includes(p));
+  const pathless = failing.size === 0 || [...failing].some((id) => !own.some((p) => p.source === id));
+  const speaking = ownUnknown.length ? ownUnknown : pathless ? unknown : [];
+  if (!speaking.length) return health;
+  const reasons = [...new Set(speaking.map((p) => p.reason!))];
   return reasons.length === 1
     ? { kind: "unmeasured", total: health.total, reason: reasons[0]!, lastAt: health.lastAt }
     : { kind: "unmeasured", total: health.total, reason: "", reasons: reasons.length, lastAt: health.lastAt };
@@ -184,9 +214,15 @@ export interface CheckDraft {
   assignAll: boolean;
   nodeIds: string[];
   pausedNodeIds: string[];
-  /** down pages when a source fails `alertAfter` times in a row; off never pages. */
-  alert: "off" | "down";
+  /**
+   * down pages when a source fails `alertAfter` times in a row; off never
+   * pages; down_and_degraded (design 29 D13) adds path.degraded and
+   * path.recovered, and the run count applies to it as to down.
+   */
+  alert: MonitorAlertPolicy;
   alertAfter: number;
+  /** The degraded rule's thresholds as the form holds them (D13); every kind but tls. */
+  degraded: DegradedDraft;
 }
 
 export function emptyDraft(type: MonitorType = "http"): CheckDraft {
@@ -208,6 +244,7 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     pausedNodeIds: [],
     alert: "down",
     alertAfter: ALERT_DEFAULT_AFTER,
+    degraded: defaultDegradedDraft(),
   };
 }
 
@@ -232,8 +269,9 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     assignAll: !!monitor.assign_all,
     nodeIds: uniqueSorted(monitor.node_ids),
     pausedNodeIds: uniqueSorted(monitor.paused_node_ids),
-    alert: monitor.alert === "off" ? "off" : "down",
+    alert: effectiveAlert(monitor.alert, false),
     alertAfter: monitor.alert_after && monitor.alert_after > 0 ? monitor.alert_after : ALERT_DEFAULT_AFTER,
+    degraded: degradedDraftFrom(monitor.degraded),
   };
 }
 
@@ -274,7 +312,11 @@ export type DraftProblem =
   | "headers"
   | "sources"
   | "threshold"
-  | "alertAfter";
+  | "alertAfter"
+  /** down_and_degraded on a tls check, which measures a certificate and is never judged degraded. */
+  | "alertTls"
+  /** A degraded threshold outside its bounds (D13): the field is in DraftRules' answer from degradedProblems. */
+  | "degraded";
 
 /**
  * What the rules need besides the draft. `m2a` turns on the M2a rules; the
@@ -283,6 +325,8 @@ export type DraftProblem =
  */
 export interface DraftRules {
   m2a: boolean;
+  /** The server judges degraded (design 29 D13): its thresholds are checked. */
+  m3?: boolean;
   /** The node target resolved for the method; "refused" blocks the save. */
   nodeTarget?: NodeTargetResolution;
   /** The packets per second the busiest source would send to this check's address, this check included; set only when the server re-checks it (budgetRechecked). */
@@ -332,11 +376,18 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
   } else if (!draft.assignAll && draft.nodeIds.length === 0) {
     out.push("sources");
   }
-  if (draft.alert === "down") {
+  if (pagesDown(draft.alert)) {
     const after = Number(draft.alertAfter);
     if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
   }
+  if (draft.alert === "down_and_degraded" && isServerEvaluated(draft.type)) out.push("alertTls");
+  if (rules.m3 && !isServerEvaluated(draft.type) && degradedProblems(draft.degraded).length) out.push("degraded");
   return out;
+}
+
+/** The degraded thresholds the server would refuse, by field; none on a tls check, which has no rule. */
+export function draftDegradedProblems(draft: Pick<CheckDraft, "type" | "degraded">): DegradedField[] {
+  return isServerEvaluated(draft.type) ? [] : degradedProblems(draft.degraded);
 }
 
 /** The header problems of an http draft. */
@@ -377,12 +428,14 @@ function sameList(a: readonly string[] | undefined, b: readonly string[] | undef
 /** Whether the draft differs from what the check holds: a new identity, or an edit that would change a field. */
 export function draftChanged(monitor: MonitorView, draft: CheckDraft): boolean {
   if (identityChanged(monitor, draft)) return true;
-  return Object.keys(buildUpdate(monitor, draft, { m2a: true })).some((key) => key !== "id" && key !== "version");
+  return Object.keys(buildUpdate(monitor, draft, { m2a: true, m3: true })).some((key) => key !== "id" && key !== "version");
 }
 
 export interface BodyOptions {
   /** The server speaks M2a: send its fields. */
   m2a?: boolean;
+  /** The server judges degraded (design 29 D13): send the thresholds when they changed. */
+  m3?: boolean;
   /** The target node's name, for the suggested check name. */
   nodeName?: string;
 }
@@ -423,7 +476,12 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft, options: Bo
   }
   const alert: MonitorAlertPolicy = draft.alert;
   if (alert !== before.alert) body.alert = alert;
-  if (alert === "down" && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
+  if (pagesDown(alert) && Number(draft.alertAfter) !== before.alertAfter) body.alert_after = Number(draft.alertAfter);
+  // Absent keeps the stored rule; an object replaces it whole, {} resets it (D13).
+  if (options.m3 && !isServerEvaluated(draft.type)) {
+    const degraded = degradedEdit(monitor.degraded, draft.degraded);
+    if (degraded) body.degraded = degraded;
+  }
   return body;
 }
 
@@ -453,7 +511,11 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean, options: Body
   }
   if (withAlert) {
     base.alert = draft.alert;
-    if (draft.alert === "down") base.alert_after = Number(draft.alertAfter);
+    if (pagesDown(draft.alert)) base.alert_after = Number(draft.alertAfter);
+  }
+  if (options.m3 && !isServerEvaluated(draft.type)) {
+    const degraded = degradedForSave(draft.degraded);
+    if (degraded) base.degraded = degraded;
   }
   return base;
 }
@@ -624,7 +686,8 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
   if (toTls && !fromTls) {
     return {
       stash: { assignAll: draft.assignAll, nodeIds: [...draft.nodeIds], intervalSec: draft.intervalSec, timeoutSec: draft.timeoutSec },
-      draft: { ...draft, type: next, assignAll: false, nodeIds: [], intervalSec: TLS_DEFAULT_INTERVAL_SEC, timeoutSec: TLS_DEFAULT_TIMEOUT_SEC },
+      // A certificate is never judged degraded: down_and_degraded falls back to down (design 29 D13).
+      draft: { ...draft, type: next, assignAll: false, nodeIds: [], intervalSec: TLS_DEFAULT_INTERVAL_SEC, timeoutSec: TLS_DEFAULT_TIMEOUT_SEC, alert: draft.alert === "down_and_degraded" ? "down" : draft.alert },
     };
   }
   if (fromTls && !toTls) {

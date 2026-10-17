@@ -8,8 +8,9 @@
  * layer reads one model whichever server answered.
  *
  * Rules this file keeps above every other:
- *   - a path is up, down or unknown; degraded does not exist until the server
- *     computes it (M3), so nothing here invents it;
+ *   - a path is up, degraded, down or unknown; degraded is shown only from a
+ *     server that sends `degraded_at` (design 29 D13), so nothing here invents
+ *     it and an older server's matrix never shows it;
  *   - unknown always has a reason, and an unknown reason code is shown as it
  *     came rather than dropped;
  *   - unknown is never drawn as a colour that could pass for up.
@@ -21,6 +22,7 @@ import type {
   LatencyRollups,
   LatencyWindow,
   MonitorWindow,
+  PathDegradation,
   PathSourceView,
   PathState,
   PathTargetView,
@@ -32,6 +34,7 @@ import type { QueryField, QuerySchema } from "@/lib/query/engine";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 import { isReachabilityCheck } from "@/views/fleet/beaconModel";
+import { triangulate, verdictFor, type Triangulation, type Verdict } from "@/views/fleet/triangulationModel";
 import { isTarget, latencySources, quietAfterMs } from "@/views/fleet/latencyModel";
 
 /* ------------------------------------------------------------------ */
@@ -181,8 +184,21 @@ export function decodePathKey(raw: string | null | undefined): PathAddress | und
 /* States and reasons                                                   */
 /* ------------------------------------------------------------------ */
 
-export function normalizeState(raw: string | undefined): PathState {
-  return raw === "up" || raw === "down" ? raw : "unknown";
+/**
+ * The state as the console reads it. `degraded` counts only from a server
+ * that judges it (`judgesDegraded`, from `degraded_at` on the matrix); from
+ * any other server, and for any word the console does not know, the state is
+ * unknown, never up.
+ */
+export function normalizeState(raw: string | undefined, judgesDegraded = true): PathState {
+  if (raw === "up" || raw === "down") return raw;
+  if (raw === "degraded" && judgesDegraded) return "degraded";
+  return "unknown";
+}
+
+/** Whether the server judges degraded (design 29 D13): an M3 server always sends the key, null before its first run. */
+export function judgesDegraded(response: Pick<PathsResponse, "degraded_at"> | undefined): boolean {
+  return !!response && Object.prototype.hasOwnProperty.call(response, "degraded_at");
 }
 
 /**
@@ -223,6 +239,14 @@ export const UNKNOWN_REASONS = [
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
 
+/** Why a path reads degraded (design 29 D13): the arms that held at the last evaluation that found the condition. */
+export const DEGRADED_REASONS = ["degraded_loss", "degraded_latency", "degraded_loss_latency"] as const;
+export type DegradedReason = (typeof DEGRADED_REASONS)[number];
+
+/** Every reason the console has a sentence for: unknown's and degraded's, one table (D13 prefixes degraded's so they never collide). */
+export const PATH_REASONS = [...UNKNOWN_REASONS, ...DEGRADED_REASONS] as const;
+export type PathReason = UnknownReason | DegradedReason;
+
 /** Spellings the server or the latency plan may use for the same reason. */
 const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
   offline: "agent_offline",
@@ -249,10 +273,10 @@ const REASON_ALIASES: Readonly<Record<string, UnknownReason>> = {
 };
 
 /** The reason as a code the console has a sentence for, or undefined. */
-export function reasonCode(reason: string | undefined): UnknownReason | undefined {
+export function reasonCode(reason: string | undefined): PathReason | undefined {
   const raw = reason?.trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (!raw) return undefined;
-  if ((UNKNOWN_REASONS as readonly string[]).includes(raw)) return raw as UnknownReason;
+  if ((PATH_REASONS as readonly string[]).includes(raw)) return raw as PathReason;
   return REASON_ALIASES[raw];
 }
 
@@ -260,7 +284,7 @@ export function reasonCode(reason: string | undefined): UnknownReason | undefine
  * Reasons that are the operator's own choice (a pause). They are listed, but
  * never as a warning and never in a count of problems.
  */
-const CHOSEN: ReadonlySet<UnknownReason> = new Set(["source_paused", "path_paused", "path_set_paused", "check_paused"]);
+const CHOSEN: ReadonlySet<PathReason> = new Set(["source_paused", "path_paused", "path_set_paused", "check_paused"]);
 
 export function isChosenUnknown(reason: string | undefined): boolean {
   const code = reasonCode(reason);
@@ -365,6 +389,36 @@ export interface PathItem {
   expected: number;
   prev?: { p50Ms?: number; loss?: number };
   lastAt?: number;
+  /** Why and since when the path reads degraded (design 29 D13); present only while it does. */
+  degraded?: PathDegradationItem;
+}
+
+/** A degraded path's evidence as the console reads it: times in epoch ms, shares 0 to 1. */
+export interface PathDegradationItem {
+  since?: number;
+  evaluatedAt?: number;
+  /** Set while the condition is absent; the path leaves ten minutes after it. */
+  clearingSince?: number;
+  loss?: { value: number; baseline: number; trigger: number; sent: number; lost: number };
+  latency?: { p50Ms: number; runs: number; baselineMs: number; triggerMs: number };
+}
+
+/** How long a clearing path stays degraded once the condition is gone (lattice-sdk PathDegradedLeaveAfter). */
+export const DEGRADED_LEAVE_AFTER_MS = 10 * 60_000;
+
+/** The server's degradation record, read: unreadable figures drop their arm rather than show as zero. */
+export function readDegradation(raw: PathDegradation | null | undefined): PathDegradationItem | undefined {
+  if (!raw) return undefined;
+  const out: PathDegradationItem = { since: epoch(raw.since), evaluatedAt: epoch(raw.evaluated_at), clearingSince: epoch(raw.clearing_since) };
+  const l = raw.loss;
+  if (l && [l.value, l.baseline, l.trigger].every((v) => finite(v) !== undefined)) {
+    out.loss = { value: l.value, baseline: l.baseline, trigger: l.trigger, sent: Math.max(0, Math.floor(l.sent ?? 0)), lost: Math.max(0, Math.floor(l.lost ?? 0)) };
+  }
+  const t = raw.latency;
+  if (t && [t.p50_ms, t.baseline_ms, t.trigger_ms].every((v) => finite(v) !== undefined)) {
+    out.latency = { p50Ms: t.p50_ms, runs: Math.max(0, Math.floor(t.runs ?? 0)), baselineMs: t.baseline_ms, triggerMs: t.trigger_ms };
+  }
+  return out;
 }
 
 export interface PathRow {
@@ -389,6 +443,8 @@ export interface PathColumn {
 export interface PathCounts {
   paths: number;
   up: number;
+  /** Degraded paths; zero from a server that does not judge degraded. */
+  degraded: number;
   down: number;
   /** Unknown and not a pause. */
   unknown: number;
@@ -405,6 +461,10 @@ export interface PathsMatrix {
   /** `rowKey|source` to the path in that cell. */
   cells: Map<string, PathItem>;
   counts: PathCounts;
+  /** The server judges degraded (it sent `degraded_at`, design 29 D13): only then is degraded shown or counted. */
+  judgesDegraded: boolean;
+  /** When the degraded evaluator last ran; undefined before its first run, or on a server that does not judge it. */
+  degradedAt?: number;
 }
 
 export interface MatrixNames {
@@ -435,7 +495,10 @@ function finite(value: number | undefined | null): number | undefined {
 export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {}): PathsMatrix {
   const sourceById = new Map<string, PathSourceView>((response.sources ?? []).map((s) => [s.node_id, s]));
   const targetById = new Map<string, PathTargetView>((response.targets ?? []).map((t) => [t.node_id, t]));
-  const sources: PathColumn[] = (response.sources ?? []).map((s) => ({ nodeId: s.node_id, name: s.name || s.node_id }));
+  // The server lists the control plane as a source too (node id empty, named "Control plane" in English); the
+  // console's own label wins, so it reads in the page's language like every other place that names it.
+  const controlPlane = (sent: string | undefined) => names.controlPlane ?? (sent || "control plane");
+  const sources: PathColumn[] = (response.sources ?? []).map((s) => ({ nodeId: s.node_id, name: s.node_id ? s.name || s.node_id : controlPlane(s.name) }));
   const seenSources = new Set(sources.map((s) => s.nodeId));
   const rows = new Map<string, PathRow>();
   for (const target of response.targets ?? []) {
@@ -450,13 +513,14 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
   }
   const paths: PathItem[] = [];
   const cells = new Map<string, PathItem>();
+  const judges = judgesDegraded(response);
   for (const raw of response.paths ?? []) {
     // A beacon's reachability check is not a path (design 29 D12); the server leaves it out, and so does the console.
     if (isReachabilityCheck({ monitor_id: raw.monitor_id })) continue;
     const source = raw.source ?? "";
     if (!seenSources.has(source)) {
       seenSources.add(source);
-      sources.push({ nodeId: source, name: source ? sourceById.get(source)?.name || names.nodeName?.(source) || source : (names.controlPlane ?? "control plane") });
+      sources.push({ nodeId: source, name: source ? sourceById.get(source)?.name || names.nodeName?.(source) || source : controlPlane(undefined) });
     }
     const operatorRow = !raw.managed || !raw.target_node;
     const rowKey = operatorRow ? `@${raw.monitor_id}` : raw.target_node!;
@@ -486,7 +550,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       checkName,
       managed: !!raw.managed,
       method: raw.method || "tcp",
-      state: normalizeState(raw.state),
+      state: normalizeState(raw.state, judges),
       reason: raw.reason || undefined,
       p50Ms: finite(raw.p50_ms),
       p95Ms: finite(raw.p95_ms),
@@ -497,6 +561,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       prev: raw.prev ? { p50Ms: finite(raw.prev.p50_ms), loss: finite(raw.prev.loss) } : undefined,
       lastAt: epoch(raw.last_at),
     };
+    if (item.state === "degraded") item.degraded = readDegradation(raw.degraded);
     // Two checks in one cell (a method switch the server has not joined yet):
     // the worse state is the one the cell shows.
     const key = cellKey(rowKey, source);
@@ -504,7 +569,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     if (!held || stateRank(item.state) < stateRank(held.state)) cells.set(key, item);
     paths.push(item);
   }
-  const counts: PathCounts = { paths: paths.length, up: 0, down: 0, unknown: 0, paused: 0 };
+  const counts: PathCounts = { paths: paths.length, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
   for (const path of paths) counts[displayState(path)] += 1;
   return {
     window: String(response.window ?? ""),
@@ -514,12 +579,14 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     paths,
     cells,
     counts,
+    judgesDegraded: judges,
+    degradedAt: judges ? epoch(response.degraded_at) : undefined,
   };
 }
 
-/** Down first, then unknown, then up. */
+/** Down first, then degraded, then unknown, then up (design 29 D13). */
 export function stateRank(state: PathState): number {
-  return state === "down" ? 0 : state === "unknown" ? 1 : 2;
+  return state === "down" ? 0 : state === "degraded" ? 1 : state === "unknown" ? 2 : 3;
 }
 
 export interface PathRowGroup {
@@ -605,8 +672,14 @@ export function matrixSections(matrix: PathsMatrix, shown: { rows: PathRow[]; so
 /* ------------------------------------------------------------------ */
 
 export type PathAttention =
-  /** A target down from some of the sources that measure it (`measuredBy`). */
-  | { kind: "down"; rowKey: string; targetName: string; paths: PathItem[]; worstLoss: number; measuredBy: number }
+  /** A target down from some of the sources that measure it (`measuredBy`), with its verdict. */
+  | { kind: "down"; rowKey: string; targetName: string; paths: PathItem[]; worstLoss: number; measuredBy: number; verdict?: Verdict }
+  /** The down paths triangulation places on one source's network (design 29 D13 rule 2). */
+  | { kind: "downSource"; source: string; sourceName: string; paths: PathItem[]; verdict: Verdict }
+  /** A target degraded from some of the sources that measure it. */
+  | { kind: "degraded"; rowKey: string; targetName: string; paths: PathItem[]; measuredBy: number; verdict?: Verdict }
+  /** The degraded paths triangulation places on one source's network. */
+  | { kind: "degradedSource"; source: string; sourceName: string; paths: PathItem[]; verdict: Verdict }
   /** A source whose agent is offline: one line for every path it cannot run. */
   | { kind: "offline"; source: string; sourceName: string; paths: PathItem[] }
   | { kind: "unknown"; reason: string; paths: PathItem[] }
@@ -614,15 +687,20 @@ export type PathAttention =
   | { kind: "paused"; paths: PathItem[] };
 
 /**
- * What needs a look, worst first: each target that is down from a source
- * (one entry per target, its sources inside), then each source whose agent
- * is offline (one entry for all the paths it cannot run), then the other
- * unknown paths grouped by reason, and the paused paths last as one entry.
- * A fleet whose five NAT targets all read "not probeable" gets one line for
- * them, not five.
+ * What needs a look, worst first (design 29 D13): each target that is down
+ * (one entry per target, its sources inside), the down paths triangulation
+ * places on a source's network (one entry per source), then the same two for
+ * degraded paths, then each source whose agent is offline (one entry for all
+ * the paths it cannot run), then the other unknown paths grouped by reason,
+ * and the paused paths last as one entry. A fleet whose five NAT targets all
+ * read "not probeable" gets one line for them, not five. Each down and
+ * degraded entry carries its verdict, the lead path's.
  */
-export function pathAttention(matrix: PathsMatrix): PathAttention[] {
+export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation = triangulate(matrix)): PathAttention[] {
   const down = new Map<string, PathItem[]>();
+  const downBySource = new Map<string, PathItem[]>();
+  const degraded = new Map<string, PathItem[]>();
+  const degradedBySource = new Map<string, PathItem[]>();
   const offline = new Map<string, PathItem[]>();
   const unknown = new Map<string, PathItem[]>();
   const paused: PathItem[] = [];
@@ -631,7 +709,9 @@ export function pathAttention(matrix: PathsMatrix): PathAttention[] {
   for (const path of matrix.paths) {
     measuredBy.set(path.rowKey, (measuredBy.get(path.rowKey) ?? 0) + 1);
     const shown = displayState(path);
-    if (shown === "down") push(down, path.rowKey, path);
+    const verdict = verdictFor(triangulation, path);
+    if (shown === "down") push(verdict?.kind === "source" ? downBySource : down, verdict?.kind === "source" ? path.source : path.rowKey, path);
+    else if (shown === "degraded") push(verdict?.kind === "source" ? degradedBySource : degraded, verdict?.kind === "source" ? path.source : path.rowKey, path);
     else if (shown === "paused") paused.push(path);
     else if (shown === "unknown") {
       const reason = reasonCode(path.reason) ?? path.reason ?? "no_results";
@@ -640,11 +720,32 @@ export function pathAttention(matrix: PathsMatrix): PathAttention[] {
     }
   }
   const byTarget = (a: PathItem, b: PathItem) => a.targetName.localeCompare(b.targetName) || a.sourceName.localeCompare(b.sourceName);
+  const lead = (paths: PathItem[]) => verdictFor(triangulation, paths[0]!);
   const downItems = [...down.entries()].map(([rowKey, paths]) => {
     const sorted = [...paths].sort((a, b) => (b.loss ?? 1) - (a.loss ?? 1) || a.sourceName.localeCompare(b.sourceName));
-    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)), measuredBy: measuredBy.get(rowKey) ?? sorted.length };
+    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)), measuredBy: measuredBy.get(rowKey) ?? sorted.length, verdict: lead(sorted) };
   });
   downItems.sort((a, b) => b.paths.length - a.paths.length || b.worstLoss - a.worstLoss || a.targetName.localeCompare(b.targetName));
+  const sourceItems = <K extends "downSource" | "degradedSource">(kind: K, map: Map<string, PathItem[]>) =>
+    [...map.entries()]
+      .map(([source, paths]) => {
+        const sorted = [...paths].sort(byTarget);
+        return { kind, source, sourceName: sorted[0]!.sourceName, paths: sorted, verdict: lead(sorted)! };
+      })
+      .sort((a, b) => b.paths.length - a.paths.length || a.sourceName.localeCompare(b.sourceName));
+  // A degraded target's worst is the one furthest over its trigger: loss first, then latency.
+  const overTrigger = (p: PathItem) => {
+    const d = p.degraded;
+    if (!d) return 0;
+    const loss = d.loss && d.loss.trigger > 0 ? d.loss.value / d.loss.trigger : 0;
+    const latency = d.latency && d.latency.triggerMs > 0 ? d.latency.p50Ms / d.latency.triggerMs : 0;
+    return Math.max(loss, latency);
+  };
+  const degradedItems = [...degraded.entries()].map(([rowKey, paths]) => {
+    const sorted = [...paths].sort((a, b) => overTrigger(b) - overTrigger(a) || a.sourceName.localeCompare(b.sourceName));
+    return { kind: "degraded" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, measuredBy: measuredBy.get(rowKey) ?? sorted.length, verdict: lead(sorted) };
+  });
+  degradedItems.sort((a, b) => b.paths.length - a.paths.length || overTrigger(b.paths[0]!) - overTrigger(a.paths[0]!) || a.targetName.localeCompare(b.targetName));
   const offlineItems = [...offline.entries()]
     .map(([source, paths]) => ({ kind: "offline" as const, source, sourceName: paths[0]!.sourceName, paths: [...paths].sort(byTarget) }))
     .sort((a, b) => b.paths.length - a.paths.length || a.sourceName.localeCompare(b.sourceName));
@@ -652,13 +753,22 @@ export function pathAttention(matrix: PathsMatrix): PathAttention[] {
     .map(([reason, paths]) => ({ kind: "unknown" as const, reason, paths: [...paths].sort(byTarget) }))
     .sort((a, b) => b.paths.length - a.paths.length || a.reason.localeCompare(b.reason));
   const pausedItems = paused.length ? [{ kind: "paused" as const, paths: [...paused].sort(byTarget) }] : [];
-  return [...downItems, ...offlineItems, ...unknownItems, ...pausedItems];
+  return [
+    ...downItems,
+    ...sourceItems("downSource", downBySource),
+    ...degradedItems,
+    ...sourceItems("degradedSource", degradedBySource),
+    ...offlineItems,
+    ...unknownItems,
+    ...pausedItems,
+  ];
 }
 
 export interface SourceReach {
   source: string;
   name: string;
   up: number;
+  degraded: number;
   down: number;
   unknown: number;
   paused: number;
@@ -666,13 +776,14 @@ export interface SourceReach {
 }
 
 /**
- * For each source, how many of its paths to nodes are up, down and unknown.
- * Operator checks to a URL or an address are not reach into the fleet, so
- * they are left out, and a source that runs only such checks has no line.
+ * For each source, how many of its paths to nodes are up, degraded, down and
+ * unknown. Operator checks to a URL or an address are not reach into the
+ * fleet, so they are left out, and a source that runs only such checks has no
+ * line.
  */
-export function reachBySource(matrix: PathsMatrix): SourceReach[] {
+export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): SourceReach[] {
   return matrix.sources.map((column) => {
-    const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, down: 0, unknown: 0, paused: 0, total: 0 };
+    const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
     for (const path of matrix.paths) {
       if (path.source !== column.nodeId || path.rowKey.startsWith("@")) continue;
       reach[displayState(path)] += 1;
@@ -687,24 +798,43 @@ export function reachBySource(matrix: PathsMatrix): SourceReach[] {
  * they hold a space or a colon, so the query parser reads them whole.
  */
 export function quoteQueryValue(value: string): string {
-  return /[\s:"()]/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
+  return /[\s:"(),]/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
 }
 
+function targetList(paths: readonly PathItem[]): string {
+  return [...new Set(paths.map((p) => p.targetName))].map(quoteQueryValue).join(",");
+}
+
+/**
+ * Show's query lists exactly the paths the item counts, so every name and
+ * reason in it matches whole (`:=`): `target:tyo-3` would also find the
+ * check "tyo-3 web" from the same source, and `source:hk-edge` a source
+ * named "hk-edge-2".
+ */
 export function attentionQuery(item: PathAttention): string {
   switch (item.kind) {
     case "down":
-      return `state:down target:${quoteQueryValue(item.targetName)}`;
+      return `state:down target:=${quoteQueryValue(item.targetName)}`;
+    // A source item lists its own targets: the source's other bad paths carry a different verdict
+    // (the target) and sit in another item, so the source alone would list more than the item counts.
+    case "downSource":
+      return `state:down source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
+    case "degraded":
+      return `state:degraded target:=${quoteQueryValue(item.targetName)}`;
+    case "degradedSource":
+      return `state:degraded source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "offline":
-      return `state:unknown source:${quoteQueryValue(item.sourceName)}`;
+      return `state:unknown source:=${quoteQueryValue(item.sourceName)}`;
     case "unknown":
-      return `state:unknown reason:${quoteQueryValue(item.reason)}`;
+      return `state:unknown reason:=${quoteQueryValue(item.reason)}`;
     case "paused":
       return "state:paused";
   }
 }
 
+/** A reach line's query: the source's paths, matched by its whole name, in one state or all. */
 export function reachQuery(reach: SourceReach, state?: PathDisplay): string {
-  const parts = [`source:${quoteQueryValue(reach.name)}`];
+  const parts = [`source:=${quoteQueryValue(reach.name)}`];
   if (state) parts.push(`state:${state}`);
   return parts.join(" ");
 }
@@ -744,6 +874,15 @@ export function formatDeltaLoss(share: number): string {
   return `${points > 0 ? "+" : "-"}${body} pt`;
 }
 
+/** A share as the degraded evidence states it: one decimal under ten percent ("4.2%", "0.4%"), whole above. */
+export function formatShare(share: number | undefined): string {
+  if (share === undefined || !Number.isFinite(share)) return "";
+  const pct = Math.max(0, share * 100);
+  if (pct === 0) return "0%";
+  if (pct < 10) return `${pct.toFixed(1).replace(/\.0$/, "")}%`;
+  return `${Math.round(pct)}%`;
+}
+
 /** Successful runs of the runs expected, 0 to 1; undefined when nothing was expected. */
 export function availability(path: Pick<PathItem, "samples" | "expected" | "loss">): number | undefined {
   if (!path.expected || path.expected <= 0) return undefined;
@@ -756,12 +895,13 @@ export function availability(path: Pick<PathItem, "samples" | "expected" | "loss
 /* ------------------------------------------------------------------ */
 
 /** The states the query knows, as the console words them: a pause is its own state. */
-export const PATH_STATES: readonly PathDisplay[] = ["down", "unknown", "paused", "up"];
+export const PATH_STATES: readonly PathDisplay[] = ["down", "degraded", "unknown", "paused", "up"];
 export const PATH_METHODS = ["tcp", "http", "tls", "icmp", "beacon"] as const;
 
 /** Queries the help offers on Paths; each key names the sentence that says what it finds. */
 export const PATHS_QUERY_EXAMPLES = [
   { key: "down", query: "state:down" },
+  { key: "degraded", query: "state:degraded" },
   { key: "unknown", query: "state:unknown" },
   { key: "region", query: "region:europe p50>200" },
   { key: "loss", query: "loss>1% sort:-loss" },
@@ -789,7 +929,7 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
       type: "enum",
       hint: hint("state"),
       values: PATH_STATES,
-      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up", stopped: "paused" },
+      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up", stopped: "paused", slow: "degraded" },
       get: (p) => displayState(p),
     },
     { key: "reason", aliases: ["why"], type: "list", hint: hint("reason"), get: reasonWords, suggest: (rows) => rows.map((p) => reasonCode(p.reason) ?? p.reason ?? "").filter(Boolean), sort: false },

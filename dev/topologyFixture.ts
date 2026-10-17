@@ -11,6 +11,10 @@
  *   none            the server answers an empty list
  *
  * `?deny=chains` answers 403 and drops proxy:read; `?fail=chains` answers 502.
+ *
+ * The probes come from the paths matrix (dev/pathsFixture.ts) since design 29
+ * D13: `?paths=three&m3=1` draws three fans with every path state, and
+ * `?paths=six&m3=1` six sources, of which the picker draws the first four.
  */
 import type { LineChainView } from "@/lib/api/index";
 

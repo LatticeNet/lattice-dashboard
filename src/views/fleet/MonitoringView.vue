@@ -52,7 +52,7 @@ import TopologyLayer from "./TopologyLayer.vue";
 import WindowControl from "./WindowControl.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
-import { DEFAULT_WINDOW, LEGACY_WINDOWS, MONITORING_LAYERS, legacyMonitoringRedirect, legacyWindow, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
+import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
 import { isReachabilityCheck } from "./beaconModel";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
@@ -149,11 +149,11 @@ const data = usePathsData({
 });
 /** The control shows the window the reads use, so a link naming another marks the one actually read. */
 const windowModel = computed<MonitorWindow>({
-  get: () => (layer.value === "topology" ? legacyWindow(data.window.value) : data.window.value),
+  get: () => data.window.value,
   set: (value) => (windowParam.value = value),
 });
-/** Topology draws from the latency rollups, which keep 1h, 24h and 7d; it offers only those. */
-const windowsOffered = computed(() => (layer.value === "topology" ? data.offered.value.filter((w) => LEGACY_WINDOWS.includes(w)) : data.offered.value));
+/** Every layer reads the same matrix, Topology included (design 29 D13), so all of them offer the same windows. */
+const windowsOffered = computed(() => data.offered.value);
 const matrix = computed(() => data.matrix.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
@@ -179,12 +179,19 @@ const noSources = computed(() => {
   return !!plan && plan.stored && (plan.config.sources ?? []).length === 0;
 });
 
-/** Topology reads the latency rollups; when the page window is one they do not keep, say what it shows. */
-const topologyNote = computed(() =>
-  layer.value === "topology" && !LEGACY_WINDOWS.includes(data.window.value)
-    ? t("fleet.monitoring.window.topologyNote", { window: t(`fleet.monitoring.window.long.${legacyWindow(data.window.value)}`) })
-    : "",
-);
+/**
+ * The node a generated check reaches, by check id, so a path.degraded
+ * incident names and opens its path (design 29 D13): the check's own
+ * target_node, else the node its generated paths in the matrix reach.
+ */
+const monitorTargets = computed(() => {
+  const fromPaths = new Map<string, string>();
+  for (const p of matrix.value?.paths ?? []) if (p.managed && p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
+  return new Map((monitorsQuery.data.value ?? []).map((m) => {
+    const generated = m.managed_by === "latency";
+    return [m.id, { generated, targetNode: generated ? (m.target_node ?? fromPaths.get(m.id)) : undefined }];
+  }));
+});
 
 /* ---- Head ---- */
 
@@ -229,7 +236,10 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const sources = reachBySource(m).filter((r) => r.total > 0).length;
   if (sources > 1) out.push({ key: "sources", text: t("fleet.monitoring.paths.proof.sources", { n: sources }, sources) });
   if (m.counts.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.paths.proof.down", { n: m.counts.down }), to: pathsLink("state:down") });
-  if (m.counts.unknown) out.push({ key: "unknown", tone: "warning", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
+  // Degraded after down, in the warning tone, only from a server that judges it (design 29 D13).
+  if (m.judgesDegraded && m.counts.degraded) out.push({ key: "degraded", tone: "warning", text: t("fleet.monitoring.paths.proof.degraded", { n: m.counts.degraded }), to: pathsLink("state:degraded") });
+  // Amber means degraded wherever a path state is shown: unknown is muted.
+  if (m.counts.unknown) out.push({ key: "unknown", tone: "muted", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
   if (m.counts.paused) out.push({ key: "paused", tone: "muted", text: t("fleet.monitoring.paths.proof.paused", { n: m.counts.paused }), to: pathsLink("state:paused") });
   if (data.source.value === "legacy") out.push({ key: "legacy", tone: "muted", text: t("fleet.monitoring.paths.proof.legacy") });
   return out;
@@ -364,6 +374,29 @@ const plan = computed(() => data.planQuery.data.value);
 const m2a = computed(() => serverSpeaksM2a(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
 /** Whether it speaks M2b, the beacon, read the same way (checkRulesModel.serverSpeaksM2b). */
 const m2b = computed(() => serverSpeaksM2b(nodesQuery.data.value, plan.value, monitorsQuery.data.value));
+/**
+ * Whether the server judges degraded (design 29 D13): its matrix carries
+ * `degraded_at`, or a check or the path set already holds an M3 field (so an
+ * editor opened before the first paths read, or while it fails, still shows
+ * a stored down_and_degraded and its thresholds). Once seen it stays seen for
+ * the page. Only then do the editors offer down and degraded and the
+ * thresholds.
+ */
+const m3Seen = ref(false);
+watch(
+  () =>
+    !!matrix.value?.judgesDegraded ||
+    (monitorsQuery.data.value ?? []).some((m) => m.alert === "down_and_degraded" || !!m.degraded) ||
+    (() => {
+      const config = data.planQuery.data.value?.config;
+      return !!config && (config.alert !== undefined || config.alert_after !== undefined || !!config.degraded);
+    })(),
+  (seen) => {
+    if (seen) m3Seen.value = true;
+  },
+  { immediate: true },
+);
+const m3 = computed(() => data.source.value !== "legacy" && m3Seen.value);
 /** A source's agent version, said on a path whose agent is too old. */
 const agentOf = (id: string) => (nodesQuery.data.value ?? []).find((n) => n.id === id)?.agent_version;
 const shortestIntervalSec = computed(() => {
@@ -389,7 +422,6 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
         <ProofLine v-if="canReadMonitors && layer !== 'topology'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
-        <p v-if="topologyNote" class="text-xs text-muted-foreground" data-testid="topology-window-note">{{ topologyNote }}</p>
       </template>
       <template v-if="canReadMonitors" #actions>
         <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="openPathSet">
@@ -466,6 +498,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       <TopologyLayer
         v-if="layer === 'topology'"
         :owned="owned"
+        :data="data"
         :nodes-query="nodesQuery"
         :monitors-query="monitorsQuery"
         :incidents-query="incidentsQuery"
@@ -482,6 +515,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :loading="incidentsQuery.loading.value"
         :nodes="nodes"
         :monitor-names="monitorNames"
+        :monitor-targets="monitorTargets"
         :now="now.getTime()"
         @refresh="incidentsQuery.refresh()"
       />
@@ -497,6 +531,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :with-alert="data.source.value === 'paths'"
       :m2a="m2a && data.source.value === 'paths'"
       :m2b="m2b && data.source.value === 'paths'"
+      :m3="m3"
       :monitors="allMonitors"
       :plan="plan"
       @close="editorOpen = false; backToSheet()"
@@ -510,6 +545,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :nodes="nodes"
       :m2a="m2a && data.source.value === 'paths'"
       :m2b="m2b && data.source.value === 'paths'"
+      :m3="m3"
       @close="pathSetOpen = false; backToSheet()"
       @saved="(next) => { data.planQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"

@@ -33,6 +33,9 @@ const CONTRACT: [type: string, category: string, severity: string, recovery: boo
   ["service.recovered", "services", "info", true, "power"],
   ["monitor.down", "monitors", "warning", false, "activity"],
   ["monitor.recovered", "monitors", "info", true, "heart-pulse"],
+  // Design 29 D13: placed after monitor.recovered, glyphs apart from the monitor's.
+  ["path.degraded", "monitors", "warning", false, "trending-down"],
+  ["path.recovered", "monitors", "info", true, "trending-up"],
   ["agent.stalled", "agents", "warning", false, "hourglass"],
   ["agent.recovered", "agents", "info", true, "bot"],
   ["ssh.login", "ssh", "notice", false, "key-round"],
@@ -90,6 +93,8 @@ test("tone follows severity, and a recovery reads as recovered whatever its seve
   assert.equal(tones["node.offline"], "critical");
   assert.equal(tones["node.online"], "recovered");
   assert.equal(tones["monitor.down"], "warning");
+  assert.equal(tones["path.degraded"], "warning");
+  assert.equal(tones["path.recovered"], "recovered", "a recovery is info with recovery set, which reads recovered");
   assert.equal(tones["ssh.login"], "notice");
   assert.equal(tones["notify.test"], "quiet");
   // Only critical and warning spell their severity out on the meta line.

@@ -10,6 +10,15 @@ import { applyQuery, compileQuery } from "@/lib/query/engine";
 import {
   attentionQuery,
   availability,
+  DEGRADED_LEAVE_AFTER_MS,
+  DEGRADED_REASONS,
+  formatShare,
+  quoteQueryValue,
+  judgesDegraded,
+  PATH_STATES,
+  PATHS_QUERY_EXAMPLES,
+  readDegradation,
+  stateRank,
   availableWindows,
   buildPathsMatrix,
   cellKey,
@@ -112,10 +121,12 @@ test("path keys: generated paths keep the old pair spelling, operator checks nam
   assert.equal(decodePathKey("nope"), undefined);
 });
 
-test("states: anything but up or down is unknown, never up", () => {
+test("states: degraded only from a server that judges it; anything else unknown, never up", () => {
   assert.equal(normalizeState("up"), "up");
   assert.equal(normalizeState("down"), "down");
-  assert.equal(normalizeState("degraded"), "unknown");
+  assert.equal(normalizeState("degraded"), "degraded");
+  assert.equal(normalizeState("degraded", false), "unknown", "a server that sends no degraded_at does not judge degraded");
+  assert.equal(normalizeState("slow"), "unknown");
   assert.equal(normalizeState(undefined), "unknown");
 });
 
@@ -137,7 +148,8 @@ test("matrix: node targets as rows by region, operator checks as rows of their o
   const m = buildPathsMatrix(response(), { checkName: (id) => (id === "mon_http" ? "Status page" : undefined) });
   assert.deepEqual(m.sources, [{ nodeId: "sh", name: "cd-hs-sh" }]);
   assert.equal(m.rows.length, 7);
-  assert.deepEqual(m.counts, { paths: 7, up: 3, down: 1, unknown: 2, paused: 1 }, "a pause is counted apart from unknown");
+  assert.deepEqual(m.counts, { paths: 7, up: 3, degraded: 0, down: 1, unknown: 2, paused: 1 }, "a pause is counted apart from unknown");
+  assert.equal(m.judgesDegraded, false, "an M2 server sends no degraded_at");
   const check = m.rows.find((r) => r.kind === "check")!;
   assert.equal(check.key, "@mon_http");
   assert.equal(check.name, "Status page");
@@ -165,6 +177,18 @@ test("matrix: a source the server did not list still gets a column; the control 
   assert.equal(m.paths[0]!.key, "_~@mon_tls");
 });
 
+test("matrix: the control plane the server lists as a source is named in the console's words", () => {
+  // The server sends it with no node id and its English name, first in its name order.
+  const tls = { source: "", target: "example.com:443", monitor_id: "mon_tls", managed: false, method: "tls", state: "up", samples: 24, expected: 24 };
+  const r = response({ paths: [tls] });
+  r.sources = [{ node_id: "", name: "Control plane", region: "" }, ...r.sources];
+  const zh = buildPathsMatrix(r, { controlPlane: "控制面" });
+  assert.deepEqual(zh.sources.map((s) => [s.nodeId, s.name]), [["", "控制面"], ["sh", "cd-hs-sh"]]);
+  assert.equal(zh.paths[0]!.sourceName, "控制面");
+  // Without a label of its own the console keeps the server's name.
+  assert.equal(buildPathsMatrix(r).sources[0]!.name, "Control plane");
+});
+
 test("matrix: two checks in one cell show the worse state", () => {
   const base = response().paths[0]!;
   const m = buildPathsMatrix(response({ paths: [base, { ...base, monitor_id: "mon_latb_hk", method: "beacon", state: "down" }] }));
@@ -187,10 +211,10 @@ test("attention: downs one per target first, then unknowns grouped by reason, pa
   );
   const jp = items[0]!;
   assert.equal(jp.kind === "down" && jp.paths[0]!.sourceName, "cd-hs-sh", "the worse loss leads");
-  assert.equal(attentionQuery(items[0]!), 'state:down target:xuezhang-jp-nat');
-  assert.equal(attentionQuery(items[2]!), "state:unknown reason:udp_only");
+  assert.equal(attentionQuery(items[0]!), 'state:down target:=xuezhang-jp-nat');
+  assert.equal(attentionQuery(items[2]!), "state:unknown reason:=udp_only");
   assert.equal(attentionQuery(items[4]!), "state:paused");
-  assert.equal(attentionQuery({ kind: "down", rowKey: "x", targetName: "[cd] hk mini", paths: [], worstLoss: 1, measuredBy: 1 }), 'state:down target:"[cd] hk mini"');
+  assert.equal(attentionQuery({ kind: "down", rowKey: "x", targetName: "[cd] hk mini", paths: [], worstLoss: 1, measuredBy: 1 }), 'state:down target:="[cd] hk mini"');
 });
 
 test("attention: an offline agent is one line for its source, not one per path", () => {
@@ -201,14 +225,14 @@ test("attention: an offline agent is one line for its source, not one per path",
   const offline = items.find((i) => i.kind === "offline")!;
   assert.equal(offline.kind === "offline" && offline.sourceName, "mkcloud hr");
   assert.equal(offline.paths.length, 3);
-  assert.equal(attentionQuery(offline), 'state:unknown source:"mkcloud hr"');
+  assert.equal(attentionQuery(offline), 'state:unknown source:="mkcloud hr"');
   assert.ok(items.findIndex((i) => i.kind === "offline") < items.findIndex((i) => i.kind === "unknown"), "offline sources come before other unknowns");
 });
 
 test("reach: each source's paths by state", () => {
   const reach = reachBySource(buildPathsMatrix(response()));
-  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 2, down: 1, unknown: 2, paused: 1, total: 6 }], "the operator check to a URL is not reach; a pause is not unknown");
-  assert.equal(reachQuery(reach[0]!, "down"), "source:cd-hs-sh state:down");
+  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 2, degraded: 0, down: 1, unknown: 2, paused: 1, total: 6 }], "the operator check to a URL is not reach; a pause is not unknown");
+  assert.equal(reachQuery(reach[0]!, "down"), "source:=cd-hs-sh state:down");
 });
 
 test("delta and availability", () => {
@@ -441,4 +465,206 @@ test("a beacon's reachability check is not a path: the matrix leaves it out", ()
   assert.deepEqual(m.paths.map((p) => p.monitorId), ["mon_latb_jp"]);
   assert.equal(m.counts.paths, 1);
   assert.equal(m.rows.length, 1, "no row for the reachability check");
+});
+
+/* ---- Design 29 M3 (contract D13): degraded ---- */
+
+const DEGRADED = {
+  since: "2026-10-16T07:20:00Z",
+  evaluated_at: "2026-10-16T07:59:00Z",
+  loss: { value: 0.042, baseline: 0.004, trigger: 0.02, sent: 290, lost: 12 },
+};
+
+function m3(over: Partial<PathsResponse> = {}): PathsResponse {
+  const r = response({ degraded_at: "2026-10-16T07:59:30Z", ...over });
+  r.paths[0] = { ...r.paths[0]!, state: "degraded", reason: "degraded_loss", degraded: DEGRADED };
+  return r;
+}
+
+test("degraded: read from an M3 server with its evidence, counted, ranked between down and unknown", () => {
+  const m = buildPathsMatrix(m3());
+  assert.equal(m.judgesDegraded, true);
+  assert.equal(m.degradedAt, Date.parse("2026-10-16T07:59:30Z"));
+  const hk = m.paths.find((p) => p.key === "sh~hk")!;
+  assert.equal(hk.state, "degraded");
+  assert.equal(hk.reason, "degraded_loss");
+  assert.deepEqual(hk.degraded, {
+    since: Date.parse(DEGRADED.since),
+    evaluatedAt: Date.parse(DEGRADED.evaluated_at),
+    clearingSince: undefined,
+    loss: { value: 0.042, baseline: 0.004, trigger: 0.02, sent: 290, lost: 12 },
+  });
+  assert.equal(m.counts.degraded, 1);
+  assert.equal(m.counts.up, 2);
+  assert.deepEqual(["up", "unknown", "degraded", "down"].map((s) => stateRank(s as "up")), [3, 2, 1, 0]);
+  assert.deepEqual(PATH_STATES, ["down", "degraded", "unknown", "paused", "up"]);
+  assert.ok(PATHS_QUERY_EXAMPLES.some((e) => e.query === "state:degraded"));
+});
+
+test("degraded: degraded_at null before the evaluator's first run still marks an M3 server; no key marks an older one", () => {
+  assert.equal(judgesDegraded({ degraded_at: null }), true);
+  assert.equal(judgesDegraded({}), false);
+  assert.equal(buildPathsMatrix(response({ degraded_at: null })).degradedAt, undefined);
+  const older = response();
+  older.paths[0] = { ...older.paths[0]!, state: "degraded" };
+  assert.equal(buildPathsMatrix(older).paths[0]!.state, "unknown", "a state the server does not compute is never shown");
+});
+
+test("degraded: a clearing path keeps its state and says when the condition went; an unreadable arm drops", () => {
+  const r = m3();
+  r.paths[0] = { ...r.paths[0]!, reason: "degraded_latency", degraded: { since: DEGRADED.since, evaluated_at: DEGRADED.evaluated_at, clearing_since: "2026-10-16T07:56:00Z", loss: null, latency: { p50_ms: 140, runs: 15, baseline_ms: 64, trigger_ms: 128 } } };
+  const d = buildPathsMatrix(r).paths[0]!.degraded!;
+  assert.equal(d.clearingSince, Date.parse("2026-10-16T07:56:00Z"));
+  assert.deepEqual(d.latency, { p50Ms: 140, runs: 15, baselineMs: 64, triggerMs: 128 });
+  assert.equal(d.loss, undefined);
+  assert.equal(readDegradation({ since: "x", evaluated_at: "y", latency: { p50_ms: Number.NaN, runs: 1, baseline_ms: 1, trigger_ms: 2 } })!.latency, undefined);
+  assert.equal(readDegradation(null), undefined);
+});
+
+test("degraded: the three reasons are known codes with sentences, and never a pause", () => {
+  for (const code of DEGRADED_REASONS) {
+    assert.equal(reasonCode(code), code);
+    assert.equal(isChosenUnknown(code), false);
+  }
+  for (const messages of [enFleet, zhFleet] as unknown as { fleet: { monitoring: { paths: { reason: Record<string, string>; reasonShort: Record<string, string>; state: Record<string, string> } } } }[]) {
+    const paths = messages.fleet.monitoring.paths;
+    for (const code of DEGRADED_REASONS) {
+      assert.equal(typeof paths.reason[code], "string", `reason.${code}`);
+      assert.equal(typeof paths.reasonShort[code], "string", `reasonShort.${code}`);
+    }
+    assert.equal(typeof paths.state.degraded, "string");
+  }
+});
+
+test("degraded: the query finds it by state, and reach counts it apart from up and down", () => {
+  const m = buildPathsMatrix(m3());
+  const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
+  const run = (text: string) => applyQuery(m.paths, compileQuery(text, schema).query).map((p) => p.key);
+  assert.deepEqual(run("state:degraded"), ["sh~hk"]);
+  assert.deepEqual(run("state:slow"), ["sh~hk"]);
+  assert.deepEqual(run("reason:degraded_loss"), ["sh~hk"]);
+  const reach = reachBySource(m)[0]!;
+  assert.equal(reach.degraded, 1);
+  assert.equal(reach.up, 1);
+  assert.equal(reachQuery(reach, "degraded"), "source:=cd-hs-sh state:degraded");
+});
+
+function threeSources(): PathsResponse {
+  const p = (source: string, target: string, state: string, over: Partial<PathsResponse["paths"][number]> = {}) => ({ source, target_node: target, target: "203.0.113.9:443", monitor_id: `mon_lat_${target}`, managed: true, method: "tcp", state, samples: 60, expected: 60, ...over });
+  const deg = (kind: "loss" | "latency") => ({ reason: `degraded_${kind}`, degraded: kind === "loss" ? DEGRADED : { ...DEGRADED, loss: undefined, latency: { p50_ms: 150, runs: 15, baseline_ms: 60, trigger_ms: 120 } } });
+  return {
+    window: "1h",
+    degraded_at: "2026-10-16T07:59:30Z",
+    sources: [
+      { node_id: "sh", name: "cd-hs-sh" },
+      { node_id: "volc", name: "volc-sh" },
+      { node_id: "hr", name: "mkcloud-hr" },
+    ],
+    targets: ["dmit4", "a", "b", "c", "d", "tyo", "lon", "par"].map((id) => ({ node_id: id, name: id })),
+    paths: [
+      // DMIT-4 down from all three: the target.
+      p("sh", "dmit4", "down"),
+      p("volc", "dmit4", "down"),
+      p("hr", "dmit4", "down"),
+      // volc-sh fails four targets the others reach, and reports on five: its network.
+      ...["a", "b", "c", "d"].flatMap((t) => [p("volc", t, "down"), p("sh", t, "up"), p("hr", t, "up")]),
+      p("volc", "tyo", "up"),
+      // tyo degraded from cd-hs-sh alone: this path, quality family.
+      p("sh", "tyo", "degraded", deg("latency")),
+      p("hr", "tyo", "up"),
+      // lon degraded from every fresh source; mkcloud's path is stale.
+      p("sh", "lon", "degraded", deg("loss")),
+      p("volc", "lon", "degraded", deg("loss")),
+      p("hr", "lon", "unknown", { reason: "results_stopped" }),
+      p("sh", "par", "unknown", { reason: "path_paused" }),
+    ],
+  };
+}
+
+test("attention with triangulation: down by target, down by source, degraded by target, then unknown and paused", () => {
+  const items = pathAttention(buildPathsMatrix(threeSources()));
+  const shape = items.map((i) => {
+    switch (i.kind) {
+      case "down":
+      case "degraded":
+        return `${i.kind}:${i.rowKey}:${i.paths.length}:${i.verdict?.kind}`;
+      case "downSource":
+      case "degradedSource":
+        return `${i.kind}:${i.source}:${i.paths.length}:${i.verdict.kind}`;
+      case "unknown":
+        return `unknown:${i.reason}`;
+      default:
+        return i.kind;
+    }
+  });
+  assert.deepEqual(shape, ["down:dmit4:3:target", "downSource:volc:4:source", "degraded:lon:2:target", "degraded:tyo:1:path", "unknown:results_stopped", "paused"]);
+  const source = items[1]!;
+  assert.equal(attentionQuery(source), "state:down source:=volc-sh target:=a,b,c,d");
+  // Show lists exactly the item's paths: volc-sh's down path to dmit4 carries the target verdict and is not in it.
+  const m = buildPathsMatrix(threeSources());
+  const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
+  const shown = applyQuery(m.paths, compileQuery(attentionQuery(source), schema).query).map((p) => p.key);
+  assert.deepEqual(shown.sort(), source.paths.map((p) => p.key).sort());
+  assert.equal(shown.length, 4);
+  assert.deepEqual(source.kind === "downSource" && source.verdict.evidence, { kind: "source", source: "volc-sh", bad: 5, fresh: 7, elsewhere: 4 });
+  assert.equal(attentionQuery(items[2]!), "state:degraded target:=lon");
+  const tyo = items[3]!;
+  assert.deepEqual(tyo.kind === "degraded" && tyo.verdict?.evidence, { kind: "path", target: "tyo", others: 2 });
+});
+
+test("attention: with one source every down and degraded item reads this path", () => {
+  const r = m3();
+  const items = pathAttention(buildPathsMatrix(r));
+  const judged = items.filter((i) => i.kind === "down" || i.kind === "degraded");
+  assert.deepEqual(judged.map((i) => i.kind), ["down", "degraded"]);
+  for (const i of judged) assert.equal((i as { verdict?: { kind: string } }).verdict?.kind, "path");
+});
+
+test("a source item's Show quotes names the query would split, and lists each target once", () => {
+  assert.equal(quoteQueryValue("[cd]-linode-sgp"), "[cd]-linode-sgp");
+  assert.equal(quoteQueryValue("hk, sg"), '"hk, sg"', "a comma would separate two values");
+  const r = threeSources();
+  r.targets = r.targets!.map((t) => (t.node_id === "a" ? { ...t, name: "[cd] hk mini" } : t.node_id === "b" ? { ...t, name: "edge,sg" } : t));
+  const m = buildPathsMatrix(r);
+  const item = pathAttention(m).find((i) => i.kind === "downSource")!;
+  const q = attentionQuery(item);
+  assert.equal(q, 'state:down source:=volc-sh target:="[cd] hk mini",c,d,"edge,sg"', "in the item's target order");
+  const shown = applyQuery(m.paths, compileQuery(q, pathsQuerySchema({ reasonText: (x) => x ?? "" })).query).map((p) => p.key);
+  assert.deepEqual(shown.sort(), item.paths.map((p) => p.key).sort());
+});
+
+test("a degraded target's item is led by the path furthest over its trigger, on either arm", () => {
+  const r = threeSources();
+  // lon: cd-hs-sh's loss is 1.5 times its trigger; volc-sh's latency is 3 times its trigger, so volc-sh leads.
+  r.paths = r.paths.map((p) => {
+    if (p.target_node !== "lon") return p;
+    if (p.source === "sh") return { ...p, reason: "degraded_loss", degraded: { ...DEGRADED, loss: { value: 0.03, baseline: 0.004, trigger: 0.02, sent: 290, lost: 9 } } };
+    if (p.source === "volc") return { ...p, reason: "degraded_latency", degraded: { since: DEGRADED.since, evaluated_at: DEGRADED.evaluated_at, latency: { p50_ms: 360, runs: 15, baseline_ms: 60, trigger_ms: 120 } } };
+    return p;
+  });
+  const lon = pathAttention(buildPathsMatrix(r)).find((i) => i.kind === "degraded" && i.rowKey === "lon")!;
+  assert.deepEqual(lon.paths.map((p) => p.source), ["volc", "sh"], "the worse arm leads, whichever arm it is");
+  // A path that held both arms is ranked by the worse of the two, not the milder.
+  r.paths = r.paths.map((p) => (p.target_node === "lon" && p.source === "sh" ? { ...p, reason: "degraded_loss_latency", degraded: { ...DEGRADED, loss: { value: 0.03, baseline: 0.004, trigger: 0.02, sent: 290, lost: 9 }, latency: { p50_ms: 480, runs: 15, baseline_ms: 60, trigger_ms: 120 } } } : p));
+  const again = pathAttention(buildPathsMatrix(r)).find((i) => i.kind === "degraded" && i.rowKey === "lon")!;
+  assert.deepEqual(again.paths.map((p) => p.source), ["sh", "volc"], "4 times over on latency beats 3 times");
+});
+
+test("formatShare: one decimal under ten percent, whole from ten, never negative", () => {
+  assert.equal(formatShare(0.042), "4.2%");
+  assert.equal(formatShare(0.004), "0.4%");
+  assert.equal(formatShare(0.072), "7.2%", "one decimal up to ten percent");
+  assert.equal(formatShare(0.02), "2%", "a trailing .0 is dropped");
+  assert.equal(formatShare(0.0999), "10%", "9.99 rounds to one decimal as 10.0, printed whole");
+  assert.equal(formatShare(0.1), "10%");
+  assert.equal(formatShare(0.156), "16%");
+  assert.equal(formatShare(0), "0%");
+  assert.equal(formatShare(-0.01), "0%");
+  assert.equal(formatShare(undefined), "");
+  assert.equal(formatShare(Number.NaN), "");
+});
+
+test("a clearing path leaves ten minutes after the condition stopped (lattice-sdk PathDegradedLeaveAfter)", () => {
+  // The server sends clearing_since, not the leave time; the console adds the SDK's constant, so the test pins it.
+  assert.equal(DEGRADED_LEAVE_AFTER_MS, 10 * 60 * 1000);
 });

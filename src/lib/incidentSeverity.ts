@@ -10,7 +10,7 @@
  *   critical  node.offline, service.down (and ssh.compromise_suspected)
  *             re-sent once when nobody acknowledges them, never held by
  *             quiet hours, and what a channel's fallback carries
- *   warning   monitor.down, agent.stalled (and every other event)
+ *   warning   monitor.down, agent.stalled, path.degraded (and every other event)
  *             never re-sent; quiet hours hold them
  *
  * A recovery has the severity of the incident it closes.
@@ -26,6 +26,8 @@ export const INCIDENT_KIND_TABLE = {
   "service.down": { severity: "critical", recovery: "service.recovered" },
   "monitor.down": { severity: "warning", recovery: "monitor.recovered" },
   "agent.stalled": { severity: "warning", recovery: "agent.recovered" },
+  // Design 29 D13: a path set or check on down_and_degraded; quiet hours hold it, nothing escalates.
+  "path.degraded": { severity: "warning", recovery: "path.recovered" },
 } as const satisfies Record<string, { severity: Severity; recovery: string }>;
 
 export type IncidentKind = keyof typeof INCIDENT_KIND_TABLE;

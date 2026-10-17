@@ -34,6 +34,7 @@ import {
   phoneState,
   type IncidentTone,
 } from "@/views/fleet/incidentsModel";
+import { encodePathKey } from "@/views/fleet/pathsModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,6 +56,8 @@ const props = withDefaults(
     nodeNames?: ReadonlyMap<string, string>;
     /** Monitor names by id, so a failing monitor's claim is worded here rather than in the server's English. */
     monitorNames?: ReadonlyMap<string, string>;
+    /** The node a generated check reaches, by check id: a path.degraded row names and opens its path (design 29 D13). */
+    monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
     /** A row control to focus once the row has re-rendered (useIncidentActions). */
     focusRequest?: IncidentFocusRequest | null;
     /** Acknowledged rows that offer Undo in Acknowledge's place, and those whose Undo landed (actionHold.undoSlot). */
@@ -67,6 +70,7 @@ const props = withDefaults(
     busy: () => new Set<string>(),
     nodeNames: () => new Map<string, string>(),
     monitorNames: () => new Map<string, string>(),
+    monitorTargets: () => new Map<string, { generated: boolean; targetNode?: string }>(),
     focusRequest: null,
     undoable: () => new Set<string>(),
     undone: () => new Set<string>(),
@@ -237,6 +241,15 @@ function claim(incident: Incident): string {
     if (monitor && node) return t("fleet.keepalive.claim.monitor_down", { monitor, node });
     return t("fleet.keepalive.claim.monitor_downAlone", { subject: subject(incident) });
   }
+  if (kind === "path.degraded") {
+    // The server's subject is English ("cd-hs-sh to tyo-3"); worded here from the two names when both are known.
+    const source = nodeName(incident);
+    // A generated path is named by the node it reaches, an operator check's path by the check; otherwise the server's subject.
+    const entry = incident.monitor_id ? props.monitorTargets.get(incident.monitor_id) : undefined;
+    const target = entry?.targetNode ? props.nodeNames.get(entry.targetNode) || entry.targetNode : entry && !entry.generated && incident.monitor_id ? props.monitorNames.get(incident.monitor_id) : undefined;
+    if (source && target) return t("fleet.keepalive.claim.path_degradedPair", { source, target });
+    return t("fleet.keepalive.claim.path_degraded", { subject: subject(incident) });
+  }
   return t(`fleet.keepalive.claim.${kind.replace(".", "_")}`, { subject: nodeName(incident) || subject(incident) });
 }
 
@@ -292,6 +305,12 @@ function ageLine(incident: Incident): string {
 
 function openTarget(incident: Incident): RouteLocationRaw | undefined {
   if (incident.kind === "monitor.down" && incident.monitor_id) return { name: "monitoring", query: { view: "checks", open: incident.monitor_id } };
+  // A degraded path opens its path sheet: by target node when the path set generated it, by check otherwise (D13).
+  if (incident.kind === "path.degraded" && incident.monitor_id) {
+    const targetNode = props.monitorTargets.get(incident.monitor_id)?.targetNode;
+    const path = encodePathKey(targetNode ? { source: incident.node_id ?? "", targetNode } : { source: incident.node_id ?? "", monitorId: incident.monitor_id });
+    return { name: "monitoring", query: { view: "paths", path } };
+  }
   if (incident.node_id) return { name: "node-detail", params: { id: incident.node_id } };
   return undefined;
 }

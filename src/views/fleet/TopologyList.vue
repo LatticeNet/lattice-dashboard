@@ -12,7 +12,8 @@ import { useI18n } from "vue-i18n";
 import { cn } from "@/lib/utils";
 
 import { CONTROL_PLANE, edgeStyle, pathsWorstFirst, type TopoEdge, type TopoEdgeKind, type TopologyModel } from "./topologyModel";
-import { edgeValue, freshnessDot, freshnessText, lastSampleText, quietText, stateLabel } from "./topologyCopy";
+import { edgeValue, freshnessDot, freshnessText, lastSampleText, stateLabel } from "./topologyCopy";
+import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
   model: TopologyModel;
@@ -26,6 +27,7 @@ const emit = defineEmits<{
 }>();
 
 const { t, locale } = useI18n();
+const { reasonShort } = usePathsCopy();
 
 const CAP = 40;
 const showAll = ref<Record<string, boolean>>({});
@@ -59,8 +61,8 @@ function detail(edge: TopoEdge): string {
     parts.push(t("fleet.monitoring.topology.list.from", { source: nameOf(edge.from) }));
     const country = props.model.nodes.get(edge.to)?.country;
     if (country) parts.push(country);
-    if (edge.state === "quiet") parts.push(quietText(t, locale.value, edge, props.now));
-    else if (edge.state === "paused" && edge.pausedReason) parts.push(t(`fleet.monitoring.latency.paused.${edge.pausedReason}`));
+    // Why it is not up, short, in the server's reason; else when it was last heard.
+    if (edge.state !== "up" && edge.reason) parts.push(reasonShort(edge.reason));
     else if (edge.last) parts.push(lastSampleText(t, locale.value, edge.last, props.now));
   } else if (edge.kind === "chain") {
     parts.push(t("fleet.monitoring.topology.list.to", { exit: nameOf(edge.to) }));
@@ -148,7 +150,7 @@ function open(edge: TopoEdge, el: HTMLElement): void {
             </span>
             <span class="shrink-0 text-end font-mono text-xs tabular">
               <span :class="cn('block', edgeValue(t, edge).tone)">{{ edgeValue(t, edge).text }}</span>
-              <span v-if="edgeValue(t, edge).loss" class="block text-[11px] text-destructive">{{ $t('fleet.monitoring.latency.cell.loss', { loss: edgeValue(t, edge).loss }) }}</span>
+              <span v-if="edgeValue(t, edge).loss" class="block text-[11px] text-muted-foreground">{{ $t('fleet.monitoring.latency.cell.loss', { loss: edgeValue(t, edge).loss }) }}</span>
             </span>
           </button>
         </li>

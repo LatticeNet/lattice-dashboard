@@ -5,38 +5,36 @@
  *   control plane   every node's heartbeat freshness, counted (the relation
  *                   is the same for every node, so it is drawn once, as a
  *                   count, and as a mark on each node, never as 34 lines)
- *   probes          latency probe pairs, source to target, classed by the
- *                   same rule as the Latency matrix (latencyCell) plus two
- *                   facts the matrix cannot show in a window: a source that
- *                   stopped reporting and a last probe that is old
+ *   probes          the path set's paths, source to target, from the same
+ *                   matrix Paths draws (usePathsData) at the page's window;
+ *                   an edge's state is the path's display state (up,
+ *                   degraded, down, unknown, paused) and its colour that
+ *                   state's tone, nothing else (design 29 D13)
  *   chains          relay line to exit node (GET /api/network/lines/chains)
  *   checks          operator monitors, from the nodes that run them (or the
- *                   control plane, for a certificate watch) to their target
+ *                   control plane, for a certificate watch) to their target;
+ *                   a source whose newest run passes on a path the matrix
+ *                   judges degraded reads degraded, as the Checks list does
  *
  * Layout, left to right as traffic leaves the fleet: the control plane and
- * the probe sources in a narrow left column (they are few), every other node
- * in one tall column grouped by region in rough order of distance from
- * mainland China, then by country, then by name, so latency colours read as
- * a gradient down the column and an odd one stands out; chains as arcs on
- * that column's right edge, so a relay that is also a probe target keeps one
- * row; checks in a right column. Past COLLAPSE_AT rows each country folds
- * into one row and the edges into it fold into one, coloured by the worst.
+ * the drawn probe sources in a narrow left column (they are few; the picker
+ * chooses which, the first four in the path set's order by default), each
+ * drawing its own fan; every other node in one tall column grouped by region
+ * in rough order of distance from mainland China, then by country, then by
+ * name, each target row carrying one state mark per drawn source so
+ * overlapping fans stay readable; chains as arcs on that column's right edge,
+ * so a relay that is also a probe target keeps one row; checks in a right
+ * column. Past COLLAPSE_AT rows each country folds into one row and the
+ * edges into it fold into one, coloured by the worst.
  *
  * Kept free of Vue so `node --test` covers it directly.
  */
-import type {
-  Incident,
-  LatencyProbeNode,
-  LatencyProbePlan,
-  LatencyRollups,
-  LatencyWindow,
-  LineChainView,
-  MonitorView,
-  Node,
-} from "@/lib/api/types";
+import type { Incident, LatencyProbeNode, LatencyProbePlan, LineChainView, MonitorView, Node } from "@/lib/api/types";
 import { nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 import { REGION_ORDER, regionOf, regionRank, type RegionKey } from "@/lib/regions";
-import { LOSS_ATTENTION, isTarget, latencyCell, latencySources, pairKey, quietAfterMs, type LatencyBand, type PausedReason } from "@/views/fleet/latencyModel";
+import type { QueryValue } from "@/components/common/tableUrlState";
+import { quietAfterMs } from "@/views/fleet/latencyModel";
+import { cellKey, displayState, reasonCode, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
 
 export { REGION_ORDER, regionOf, regionRank, quietAfterMs, type RegionKey };
 
@@ -89,24 +87,22 @@ export const checkEndpoint = (monitorId: string) => `@check:${monitorId}`;
 /* ------------------------------------------------------------------ */
 
 /**
- *   measured  probes succeeded in the window
- *   lossy     measured, and LOSS_ATTENTION or more of them failed
- *   failing   probes were heard and none succeeded
- *   unknown   the pair runs and nothing was heard in the window
- *   paused    the pair, its target or the whole configuration is off
- *   quiet     the window has numbers, but the source stopped reporting or
- *             its last probe is older than quietAfterMs: what is drawn is
- *             history, not now
+ * A probe edge's state is its path's display state (pathsModel.displayState):
+ * up, degraded, down, unknown (with the server's reason) or paused. The server
+ * decides freshness, so a path whose source went quiet already reads unknown;
+ * nothing here re-judges it with a clock.
  */
-export type ProbeState = "measured" | "lossy" | "failing" | "unknown" | "paused" | "quiet";
+export type ProbeState = PathDisplay;
 export type ChainState = "converged" | "pending" | "drifted" | "failed";
-export type CheckState = "up" | "failing" | "stale" | "none";
+/** `degraded`: the newest run passed, but the control plane judges the path degraded (design 29 D13). */
+export type CheckState = "up" | "degraded" | "failing" | "stale" | "none";
 export type TopoEdgeKind = "probe" | "chain" | "check";
 export type TopoEdgeState = ProbeState | ChainState | CheckState;
 
 export interface TopoLastSample {
   at: number;
-  ok: boolean;
+  /** The outcome, when it is known: a check's newest result has one; a probe path only says when it last heard. */
+  ok?: boolean;
   ms?: number;
   error?: string;
 }
@@ -120,17 +116,15 @@ export interface TopoEdge {
   state: TopoEdgeState;
   /** Lower is worse; lists and bundles sort and pick by it. */
   severity: number;
-  band?: LatencyBand;
   p50Ms?: number;
   p95Ms?: number;
   loss?: number;
   samples?: number;
   expected?: number;
-  coverage?: number;
-  partial?: boolean;
-  pausedReason?: PausedReason;
-  /** Why a quiet probe is quiet. */
-  quietReason?: "source" | "old";
+  /** A probe's reason as the server sent it: why it is unknown, paused or degraded. */
+  reason?: string;
+  /** A probe's method (tcp, icmp, beacon). */
+  method?: string;
   last?: TopoLastSample;
   chain?: { status: string; sourceLine: string; targetLine?: string; error?: string };
   monitorId?: string;
@@ -171,23 +165,28 @@ export const TOPOLOGY_LAYERS: readonly TopologyLayer[] = ["all", "probes", "chai
 export interface TopologyInput {
   /** Undefined when not read (no node:read, or still loading). */
   nodes?: readonly Node[];
+  /** The path set plan: its source order and each target's note; probe edges come from the matrix. */
   plan?: LatencyProbePlan;
-  rollups?: LatencyRollups;
+  /** The shared matrix (usePathsData) at the page's window; undefined until read. */
+  matrix?: Pick<PathsMatrix, "sources" | "paths" | "cells">;
+  /** The sources the picker drew (`?topo.sources=`); undefined draws the default. */
+  drawnSources?: readonly string[];
   /** Undefined when not read or not readable. */
   chains?: readonly LineChainView[];
   /** Every monitor the server listed; generated ones are left out here. */
   monitors?: readonly MonitorView[];
   incidents?: readonly Incident[];
-  window: LatencyWindow;
+  /** The page's window, for the words that name it. */
+  window: string;
   layer: TopologyLayer;
   now: number;
 }
 
 export interface TopologyCounts {
+  /** Probe paths drawn (the drawn sources' only). */
   paths: number;
-  failing: number;
-  lossy: number;
-  quiet: number;
+  down: number;
+  degraded: number;
   unknown: number;
   paused: number;
   chains: number;
@@ -198,13 +197,24 @@ export interface TopologyCounts {
   checksFailing: number;
 }
 
+/** A source the picker lists: every path set source with its reach counts, drawn or not. */
+export interface TopoSourceChoice {
+  node: TopoNode;
+  reach: SourceReach;
+  drawn: boolean;
+}
+
 export interface TopologyModel {
   layer: TopologyLayer;
-  window: LatencyWindow;
+  window: string;
   /** Every node the reads named, by id. */
   nodes: Map<string, TopoNode>;
-  /** The left column: probe sources in the configured order. */
+  /** The left column: the drawn probe sources, in the path set's order. */
   sources: TopoNode[];
+  /** Every source the picker offers, in the path set's order. */
+  sourceChoices: TopoSourceChoice[];
+  /** The drawn sources' ids, in the picker's (the path set's) order: a target row's marks follow it. */
+  drawnSourceIds: string[];
   /** The tall column, sorted region, country, name, id. */
   members: TopoNode[];
   checks: TopoCheck[];
@@ -221,16 +231,79 @@ function parseTime(value: string | undefined): number | undefined {
 }
 
 const SEVERITY: Record<TopoEdgeKind, Record<string, number>> = {
-  probe: { failing: 0, lossy: 1, quiet: 2, unknown: 4, paused: 8 },
+  probe: { down: 0, degraded: 1, unknown: 4, up: 7, paused: 8 },
   chain: { failed: 0, drifted: 1, pending: 4, converged: 7 },
-  check: { failing: 0, stale: 2, none: 4, up: 7 },
+  check: { failing: 0, degraded: 1, stale: 2, none: 4, up: 7 },
 };
 
-const BAND_SEVERITY: Record<LatencyBand, number> = { destructive: 3, warning: 5, "chart-2": 6, success: 7 };
-
-export function edgeSeverity(kind: TopoEdgeKind, state: TopoEdgeState, band?: LatencyBand): number {
-  if (kind === "probe" && state === "measured") return band ? BAND_SEVERITY[band] : 3;
+export function edgeSeverity(kind: TopoEdgeKind, state: TopoEdgeState): number {
   return SEVERITY[kind][state] ?? 5;
+}
+
+/** How many sources the drawing shows before the operator picks: a stable default that does not reorder as states change. */
+export const DEFAULT_DRAWN_SOURCES = 4;
+
+/** `?topo.sources=` read: node ids, comma separated, in the order given; empty is the default. */
+export function parseDrawnSources(raw: QueryValue | undefined): string[] | undefined {
+  const value = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string").join(",") : raw;
+  if (typeof value !== "string") return undefined;
+  const ids = [...new Set(value.split(",").map((id) => id.trim()).filter(Boolean))];
+  return ids.length ? ids : undefined;
+}
+
+/** `?topo.sources=` written: undefined when the choice is the default, so the bare address stays bare. */
+export function formatDrawnSources(ids: readonly string[] | undefined, defaults: readonly string[]): string | undefined {
+  if (!ids || ids.length === 0) return undefined;
+  const same = ids.length === defaults.length && ids.every((id, i) => id === defaults[i]);
+  return same ? undefined : ids.join(",");
+}
+
+/**
+ * The path set's sources in its order, then any other source with a path to
+ * a node; from the matrix alone when the plan is not read. A source the plan
+ * notes (deleted or disabled) probes nothing and is left out, so it never
+ * takes one of the default four places.
+ */
+export function probeSourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_notes"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
+  const noted = new Set(Object.keys(plan?.source_notes ?? {}));
+  const probing = new Set((matrix?.paths ?? []).filter((p) => p.targetNode && !p.rowKey.startsWith("@") && p.source && !noted.has(p.source)).map((p) => p.source));
+  const out: string[] = [];
+  for (const id of plan?.config.sources ?? []) if (probing.has(id) && !out.includes(id)) out.push(id);
+  for (const column of matrix?.sources ?? []) if (probing.has(column.nodeId) && !out.includes(column.nodeId)) out.push(column.nodeId);
+  return out;
+}
+
+/** The sources drawn: the picker's choice that still probes, kept in the path set's order; else the first four. */
+export function drawnSources(order: readonly string[], chosen: readonly string[] | undefined): string[] {
+  const picked = chosen ? order.filter((id) => chosen.includes(id)) : [];
+  return picked.length ? picked : order.slice(0, DEFAULT_DRAWN_SOURCES);
+}
+
+/** Reasons a path has nothing to dial on its target: no edge is drawn, and the row says "not probed". */
+const NOTHING_TO_DIAL = new Set(["not_probeable", "no_tcp_line", "udp_only", "no_public_address", "no_inventory"]);
+
+/** A path Topology draws as a probe: one the path set generated to a node, with something to dial. */
+function isDrawnProbe(path: Pick<PathItem, "targetNode" | "rowKey" | "state" | "reason">): boolean {
+  if (!path.targetNode || path.rowKey.startsWith("@")) return false;
+  return !(path.state === "unknown" && NOTHING_TO_DIAL.has(reasonCode(path.reason) ?? path.reason ?? ""));
+}
+
+/**
+ * Each source's reach as the drawing counts it (the picker's line): its
+ * drawn probes by state, so "12 of 12 up" matches the fan, and a target with
+ * nothing to dial is not counted as a problem.
+ */
+export function drawnReach(matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): Map<string, SourceReach> {
+  const out = new Map<string, SourceReach>();
+  for (const column of matrix?.sources ?? []) out.set(column.nodeId, { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 });
+  for (const path of matrix?.paths ?? []) {
+    if (!isDrawnProbe(path)) continue;
+    const reach = out.get(path.source);
+    if (!reach) continue;
+    reach[displayState(path)] += 1;
+    reach.total += 1;
+  }
+  return out;
 }
 
 /** A chain row's status in the four words the drawing uses. */
@@ -278,7 +351,7 @@ export const CHECK_FAN = 6;
 
 /** The whole model for one layer and window. */
 export function buildTopology(input: TopologyInput): TopologyModel {
-  const { plan, rollups, window, layer, now } = input;
+  const { plan, matrix, window, layer, now } = input;
   const nodes = new Map<string, TopoNode>();
 
   for (const node of input.nodes ?? []) {
@@ -326,9 +399,8 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   const edges: TopoEdge[] = [];
   const counts: TopologyCounts = {
     paths: 0,
-    failing: 0,
-    lossy: 0,
-    quiet: 0,
+    down: 0,
+    degraded: 0,
     unknown: 0,
     paused: 0,
     chains: 0,
@@ -337,77 +409,58 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     checks: 0,
     checksFailing: 0,
   };
-  const showProbes = layer === "all" || layer === "probes";
   const showChains = layer === "all" || layer === "chains";
   const showChecks = layer === "all" || layer === "checks";
 
   /* ---- Probes ---- */
   const sources: TopoNode[] = [];
-  if (plan) {
-    const quietAfter = quietAfterMs(plan.config.interval_sec);
-    const pairs = new Map(plan.pairs.map((p) => [pairKey(p.source, p.target), p]));
-    const rollupByPair = new Map((rollups?.pairs ?? []).map((r) => [pairKey(r.source, r.target), r]));
-    const columns = latencySources(plan).filter((s) => !s.note);
-    for (const column of columns) {
-      const node = ensure(column.nodeId);
-      node.probeSource = true;
-      if (node.name === node.id && column.name) node.name = column.name;
-      if (showProbes) sources.push(node);
-    }
-    if (showProbes) {
-      for (const target of plan.nodes.filter(isTarget)) {
-        for (const column of columns) {
-          const key = pairKey(column.nodeId, target.node_id);
-          const pair = pairs.get(key);
-          const rollup = rollupByPair.get(key);
-          const cell = latencyCell(plan, column, target, pair, rollup, window, "p50");
-          if (cell.kind === "self" || cell.kind === "notProbeable") continue;
-          if (cell.kind === "paused" && cell.pausedReason === "source") continue;
-          let state: ProbeState;
-          if (cell.kind === "paused") state = "paused";
-          else if (cell.kind === "unknown") state = "unknown";
-          else if (cell.kind === "failing") state = "failing";
-          else state = (cell.loss ?? 0) >= LOSS_ATTENTION ? "lossy" : "measured";
-          const latestAt = parseTime(rollup?.latest?.at);
-          let quietReason: TopoEdge["quietReason"];
-          if (state === "measured" || state === "lossy" || state === "failing") {
-            const source = nodes.get(column.nodeId);
-            if (source?.freshness === "quiet" || source?.freshness === "never") quietReason = "source";
-            else if (latestAt !== undefined && now - latestAt > quietAfter) quietReason = "old";
-            if (quietReason) state = "quiet";
-          }
-          const edge: TopoEdge = {
-            id: `probe:${key}`,
-            kind: "probe",
-            from: column.nodeId,
-            to: target.node_id,
-            state,
-            severity: 0,
-            band: cell.band,
-            p50Ms: cell.p50Ms,
-            p95Ms: cell.p95Ms,
-            loss: cell.loss,
-            samples: cell.samples,
-            expected: cell.expected,
-            coverage: cell.coverage,
-            partial: cell.partial,
-            pausedReason: cell.pausedReason,
-            quietReason,
-            monitorId: pair?.monitor_id,
-          };
-          if (rollup?.latest && latestAt !== undefined) {
-            edge.last = { at: latestAt, ok: rollup.latest.success, ms: rollup.latest.latency_ms, error: rollup.latest.error };
-          }
-          edge.severity = edgeSeverity("probe", state, cell.band);
-          edges.push(edge);
-          counts.paths += 1;
-          if (state === "failing") counts.failing += 1;
-          else if (state === "lossy") counts.lossy += 1;
-          else if (state === "quiet") counts.quiet += 1;
-          else if (state === "unknown") counts.unknown += 1;
-          else if (state === "paused") counts.paused += 1;
-        }
+  const order = probeSourceOrder(plan, matrix);
+  const drawn = drawnSources(order, input.drawnSources);
+  const reachOf = drawnReach(matrix);
+  const sourceName = new Map((matrix?.sources ?? []).map((s) => [s.nodeId, s.name]));
+  const sourceChoices: TopoSourceChoice[] = order.map((id) => {
+    const node = ensure(id);
+    node.probeSource = true;
+    if (node.name === node.id && sourceName.get(id)) node.name = sourceName.get(id)!;
+    const reach = reachOf.get(id) ?? { source: id, name: node.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
+    return { node, reach, drawn: drawn.includes(id) };
+  });
+  const showProbes = layer === "all" || layer === "probes";
+  if (showProbes) for (const id of drawn) sources.push(nodes.get(id)!);
+  if (showProbes && matrix) {
+    const drawnSet = new Set(drawn);
+    for (const path of matrix.cells.values()) {
+      // Your checks stay checks: a probe is a path the path set generated to a node.
+      if (!isDrawnProbe(path) || !drawnSet.has(path.source)) continue;
+      const target = ensure(path.targetNode!);
+      if (target.name === target.id && path.targetNodeName) target.name = path.targetNodeName;
+      if (!target.country && path.country) {
+        target.country = path.country;
+        target.region = regionOf(path.country);
       }
+      if (!target.probeTarget || target.probeTarget === "none") target.probeTarget = "probed";
+      const state = displayState(path);
+      const edge: TopoEdge = {
+        id: `probe:${path.source}~${path.targetNode}`,
+        kind: "probe",
+        from: path.source,
+        to: path.targetNode!,
+        state,
+        severity: edgeSeverity("probe", state),
+        p50Ms: path.p50Ms,
+        p95Ms: path.p95Ms,
+        loss: path.loss,
+        samples: path.samples,
+        expected: path.expected,
+        reason: path.reason,
+        method: path.method,
+        monitorId: path.monitorId || undefined,
+      };
+      // The matrix says when the path last heard; only a down path's newest outcome is known (it failed).
+      if (path.lastAt !== undefined) edge.last = { at: path.lastAt, ok: state === "down" ? false : undefined };
+      edges.push(edge);
+      counts.paths += 1;
+      if (state === "down" || state === "degraded" || state === "unknown" || state === "paused") counts[state] += 1;
     }
   }
 
@@ -465,7 +518,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         serverEvaluated,
         assignAll: !!monitor.assign_all && !serverEvaluated,
         sourceIds,
-        summary: { up: 0, failing: 0, stale: 0, none: 0 },
+        summary: { up: 0, degraded: 0, failing: 0, stale: 0, none: 0 },
         fannedOut: false,
       };
       const perSource = sourceIds.map((sourceId) => {
@@ -473,6 +526,9 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         const at = parseTime(result?.at);
         let state: CheckState = "none";
         if (result && at !== undefined) state = now - at > staleAfter ? "stale" : result.success ? "up" : "failing";
+        // Degraded takes the warning tone wherever a path state is drawn (design 29 D13): a passing run on a
+        // path the control plane judges degraded is not a green up. A check's path sits in its own matrix row.
+        if (state === "up" && !serverEvaluated && matrix?.cells.get(cellKey(`@${monitor.id}`, sourceId))?.state === "degraded") state = "degraded";
         check.summary[state] += 1;
         return { sourceId, result, at, state };
       });
@@ -524,7 +580,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     cp[node.freshness] += 1;
   }
 
-  return { layer, window, nodes, sources, members, checks, edges, cp, counts };
+  return { layer, window, nodes, sources, sourceChoices, drawnSourceIds: showProbes ? drawn : [], members, checks, edges, cp, counts };
 }
 
 /** The edges that touch one endpoint. */
@@ -533,13 +589,13 @@ export function edgesOf(model: Pick<TopologyModel, "edges">, id: string): TopoEd
 }
 
 /**
- * States that describe the path now. Quiet and stale are history, unknown is
+ * States that describe the path now. A stale check is history, unknown is
  * silence and paused is off: none of them says how the path behaves today.
  */
 const LIVE: Record<TopoEdgeKind, ReadonlySet<string>> = {
-  probe: new Set(["measured", "lossy", "failing"]),
+  probe: new Set(["up", "degraded", "down"]),
   chain: new Set(["converged", "pending", "drifted", "failed"]),
-  check: new Set(["up", "failing"]),
+  check: new Set(["up", "degraded", "failing"]),
 };
 
 export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
@@ -549,14 +605,15 @@ export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
 /**
  * The edge that speaks for several into one place (a row's probes, a folded
  * bundle): the worst of the live ones, and the worst of the rest only when
- * none is live. Severity alone ranks quiet above every measured band, so one
- * source that stopped reporting would grey a row the live sources still
- * measure. Lists keep plain severity order.
+ * none is live. Severity alone ranks unknown above up, so one source whose
+ * path went unknown would grey a row the other sources still measure. Lists
+ * keep plain severity order.
  */
 export function worstLive(edges: readonly TopoEdge[]): TopoEdge {
   const live = edges.filter(isLive);
   const pool = live.length ? live : edges;
-  return pool.reduce((a, b) => (b.severity < a.severity ? b : a));
+  // Within one state the slowest speaks for the row, so a row of up paths shows its worst p50.
+  return pool.reduce((a, b) => (b.severity < a.severity || (b.severity === a.severity && (b.p50Ms ?? -1) > (a.p50Ms ?? -1)) ? b : a));
 }
 
 /** What a node's row says about the probes into it: the worst live one, and how many there are. */
@@ -564,6 +621,41 @@ export function rowProbe(model: Pick<TopologyModel, "edges">, nodeId: string): {
   const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
   if (into.length === 0) return undefined;
   return { edge: worstLive(into), count: into.length };
+}
+
+/** A target row's word across its drawn sources: the state that speaks for it and how many of them read it. */
+export interface RowSummary {
+  /** The worst live state among the paths into the row, else the worst of the rest. */
+  state: ProbeState;
+  /** Drawn sources whose path reads that state. */
+  n: number;
+  /** Drawn sources with a path into the row. */
+  of: number;
+}
+
+/**
+ * With several sources drawn, a target row summarises across them ("down
+ * from 1 of 4") rather than printing its worst edge: the worst edge alone
+ * made one failing source read as the node being down while three others
+ * reach it, and a p50 without its source said nothing true. Undefined with
+ * one drawn source, whose edge says it all, and for a row no path enters.
+ */
+export function rowSummary(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
+  if (model.drawnSourceIds.length < 2) return undefined;
+  const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
+  if (into.length === 0) return undefined;
+  const state = worstLive(into).state as ProbeState;
+  return { state, n: into.filter((e) => e.state === state).length, of: into.length };
+}
+
+/**
+ * A target row's marks: one per drawn source, in the picker's order, so the
+ * fans that overlap on the row stay readable; undefined where that source has
+ * no path to it.
+ */
+export function rowMarks(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): { source: string; state?: ProbeState }[] {
+  const into = new Map(model.edges.filter((e) => e.kind === "probe" && e.to === nodeId).map((e) => [e.from, e.state as ProbeState]));
+  return model.drawnSourceIds.map((source) => ({ source, state: into.get(source) }));
 }
 
 /** Every path worst first, for the list and for the phone. */
@@ -587,40 +679,40 @@ export interface EdgeStyle {
   width: number;
   /**
    * Drawn as two rails (the colour, with the card's colour down its middle).
-   * Chains carry it so that shape, not only hue, tells them from probes: the
-   * accent and the info blue sit next to the two fastest latency bands.
+   * Chains carry it so that shape, not only hue, tells them from probes.
    */
   double?: boolean;
 }
 
-const BAND_VAR: Record<LatencyBand, string> = {
-  success: "--success",
-  "chart-2": "--chart-2",
-  warning: "--warning",
-  destructive: "--destructive",
+/** A probe state's tone token: state tones are the only saturated colour (design 29 D13). */
+export const PROBE_TONE: Record<ProbeState, string> = {
+  up: "--success",
+  degraded: "--warning",
+  down: "--destructive",
+  unknown: "--muted-foreground",
+  paused: "--muted-foreground",
 };
 
 /**
- * One rule for every edge. A colour means a measurement or a state worth
- * reading; nothing heard is dotted grey and never a colour, and history from
- * a quiet source is dashed grey so it cannot pass for a live green.
+ * One rule for every edge. A probe's colour is its state's tone and nothing
+ * else (the latency bands that coloured edges were a second saturated
+ * scale): up, degraded and down solid; unknown dashed and paused dotted, both
+ * muted, so neither can pass for a live green.
  */
-export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state" | "band">): EdgeStyle {
+export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state">): EdgeStyle {
   switch (edge.kind) {
     case "probe":
       switch (edge.state) {
-        case "measured":
-          return { color: BAND_VAR[edge.band ?? "destructive"], stroke: "solid", width: 1.5 };
-        case "lossy":
-          return { color: BAND_VAR[edge.band ?? "destructive"], stroke: "solid", width: 2.5 };
-        case "failing":
-          return { color: "--destructive", stroke: "dashed", width: 2 };
-        case "quiet":
-          return { color: "--muted-foreground", stroke: "dashed", width: 1.25 };
+        case "up":
+          return { color: PROBE_TONE.up, stroke: "solid", width: 1.5 };
+        case "degraded":
+          return { color: PROBE_TONE.degraded, stroke: "solid", width: 2 };
+        case "down":
+          return { color: PROBE_TONE.down, stroke: "solid", width: 2.5 };
         case "paused":
-          return { color: "--muted-foreground", stroke: "dashed", width: 1 };
+          return { color: PROBE_TONE.paused, stroke: "dotted", width: 1.25 };
         default:
-          return { color: "--muted-foreground", stroke: "dotted", width: 1.25 };
+          return { color: PROBE_TONE.unknown, stroke: "dashed", width: 1.25 };
       }
     case "chain":
       switch (edge.state) {
@@ -637,6 +729,8 @@ export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state" | "band">): Edge
       switch (edge.state) {
         case "up":
           return { color: "--success", stroke: "solid", width: 1.25 };
+        case "degraded":
+          return { color: "--warning", stroke: "solid", width: 1.75 };
         case "failing":
           return { color: "--destructive", stroke: "solid", width: 2 };
         case "stale":
@@ -665,6 +759,17 @@ export const CHECK_W = 232;
 export const SOURCES_TOP = CP_H + 24;
 /** Rows past this fold by country. */
 export const COLLAPSE_AT = 60;
+/**
+ * With several sources drawn, a target row also carries a summary across
+ * them ("degraded from 1 of 6") and one mark per source, all of which keep
+ * their width, so the name gets what is left. The row column grows by the
+ * summary's extra width and a mark's width per drawn source, taken from the
+ * width the fan gap does not need, so the name keeps its room as sources are
+ * added. The fan never narrows below FAN_MIN_W for it.
+ */
+export const ROW_SUMMARY_EXTRA_W = 96;
+export const ROW_MARK_W = 10;
+export const FAN_MIN_W = 160;
 
 export interface Box {
   x: number;
@@ -752,7 +857,10 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const arcW = hasChains ? 80 : 16;
   const checkW = hasChecks ? CHECK_W : 0;
   const checkGap = hasChecks ? 56 : 0;
-  const rowsW = clamp(Math.round(width * 0.3), 260, 380);
+  const drawnCount = model.drawnSourceIds.length;
+  const baseRowsW = clamp(Math.round(width * 0.3), 260, 380);
+  const rowsExtra = drawnCount > 1 ? ROW_SUMMARY_EXTRA_W + ROW_MARK_W * drawnCount : 0;
+  const rowsW = baseRowsW + clamp(width - LEFT_W - baseRowsW - arcW - checkW - checkGap - FAN_MIN_W, 0, rowsExtra);
   const spare = width - LEFT_W - rowsW - arcW - checkW - checkGap;
   const gapLR = clamp(spare, 72, 300);
   const rowsX = LEFT_W + gapLR;
@@ -927,7 +1035,7 @@ export function neighbourhood(model: Pick<TopologyModel, "edges">, id: string): 
  * chains read; the page makes the node list, incidents and monitors, which it
  * polls for its other layers anyway.
  */
-export type TopoRead = "plan" | "rollups" | "nodes" | "incidents" | "monitors" | "chains";
+export type TopoRead = "plan" | "paths" | "nodes" | "incidents" | "monitors" | "chains";
 
 export interface TopoReadStatus {
   /** The session holds the scope the read needs; a read it cannot make is never sent. */
@@ -957,7 +1065,7 @@ export function readState(status: TopoReadStatus): TopoReadState {
  */
 export function readsFor(layer: TopologyLayer, statuses: TopoReadStatuses): TopoRead[] {
   const out: TopoRead[] = ["plan"];
-  if (layer === "all" || layer === "probes") out.push("rollups");
+  if (layer === "all" || layer === "probes") out.push("paths");
   out.push("nodes", "incidents");
   if (layer === "all" || layer === "checks") out.push("monitors");
   if (layer === "all" || layer === "chains") out.push("chains");

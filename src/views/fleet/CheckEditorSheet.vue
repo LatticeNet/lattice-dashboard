@@ -22,6 +22,11 @@
  * target, offered only on nodes with an enabled beacon, sent only from
  * sources that run the beacon client, and with a target chosen, the sheet
  * reads that node's beacon to say which sources its plan admits.
+ *
+ * On a server that judges degraded (`m3`, design 29 D13) the alert step adds
+ * "Down and degraded" (refused on tls, which measures a certificate), and a
+ * collapsed "Degraded when" disclosure offers the rule's four thresholds. The
+ * draft sends `degraded` only when it changed, and `{}` for a reset.
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -39,6 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import DegradedRuleFields from "./DegradedRuleFields.vue";
 import HeaderRows from "./HeaderRows.vue";
 import NodeTargetPicker from "./NodeTargetPicker.vue";
 import SourcePicker from "./SourcePicker.vue";
@@ -96,6 +102,8 @@ const props = defineProps<{
   m2a?: boolean;
   /** The server speaks M2b, the beacon (checkRulesModel.serverSpeaksM2b). */
   m2b?: boolean;
+  /** The server judges degraded (its matrix carries degraded_at, design 29 D13). */
+  m3?: boolean;
   /** Every check, for the ICMP packet budget to one address. */
   monitors?: MonitorView[];
   /** The path set plan: the server's own resolution of the nodes it targets. */
@@ -116,7 +124,7 @@ watch(draft, () => (saveError.value = undefined), { deep: true });
 let stash: Parameters<typeof switchDraftKind>[2];
 
 function copyDraft(d: CheckDraft): CheckDraft {
-  return { ...d, nodeIds: [...d.nodeIds], pausedNodeIds: [...d.pausedNodeIds], headers: d.headers.map((h) => ({ ...h })) };
+  return { ...d, nodeIds: [...d.nodeIds], pausedNodeIds: [...d.pausedNodeIds], headers: d.headers.map((h) => ({ ...h })), degraded: { ...d.degraded } };
 }
 
 watch(
@@ -138,6 +146,7 @@ watch(
 
 const m2a = computed(() => !!props.m2a);
 const m2b = computed(() => m2a.value && !!props.m2b);
+const m3 = computed(() => !!props.m3);
 const editing = computed(() => !!props.monitor);
 const isTls = computed(() => isServerEvaluated(draft.value.type));
 const kinds = computed(() => {
@@ -276,6 +285,7 @@ const replaces = computed(() => !!props.monitor && identityChanged(props.monitor
 const newCheck = computed(() => !props.monitor || replaces.value);
 const rules = computed(() => ({
   m2a: m2a.value,
+  m3: m3.value,
   nodeTarget: nodeResolution.value,
   budgetPps: budgetRechecked(props.monitor, draft.value, newCheck.value) ? budget.value?.pps : undefined,
   newCheck: newCheck.value,
@@ -324,7 +334,7 @@ function formatPps(pps: number): string {
   return pps >= 10 ? pps.toFixed(0) : pps.toFixed(2).replace(/\.?0+$/, "");
 }
 /** Problems shown at the form's end: the ones with no field of their own. */
-const FIELD_PROBLEMS = new Set(["interval", "timeout", "timeoutVsInterval", "runLength", "packets", "budget", "threshold", "target", "destination", "targetNode", "expectStatus", "headers", "alertAfter"]);
+const FIELD_PROBLEMS = new Set(["interval", "timeout", "timeoutVsInterval", "runLength", "packets", "budget", "threshold", "target", "destination", "targetNode", "expectStatus", "headers", "alertAfter", "alertTls", "degraded"]);
 const problemText = computed(() => problems.value.filter((p) => !FIELD_PROBLEMS.has(p)).map(problemOf));
 const missing = computed(() => {
   const out: string[] = [];
@@ -339,7 +349,7 @@ const missing = computed(() => {
 const pending = ref(false);
 const replaceOpen = ref(false);
 const discardOpen = ref(false);
-const bodyOptions = computed(() => ({ m2a: m2a.value, nodeName: targetNode.value?.name }));
+const bodyOptions = computed(() => ({ m2a: m2a.value, m3: m3.value, nodeName: targetNode.value?.name }));
 
 function statusOf(error: unknown): number | undefined {
   return (error as { status?: number } | null)?.status;
@@ -708,31 +718,53 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       </fieldset>
 
       <!-- 6. When it fails -->
-      <fieldset v-if="withAlert" :class="SECTION">
+      <fieldset v-if="withAlert" :class="SECTION" data-testid="check-alert">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.fail') }}</legend>
         <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
-          <input type="radio" name="check-alert" class="accent-[var(--primary)]" :checked="draft.alert === 'off'" @change="draft = { ...draft, alert: 'off' }" />
+          <input type="radio" name="check-alert" class="accent-[var(--primary)]" value="off" :checked="draft.alert === 'off'" @change="draft = { ...draft, alert: 'off' }" />
           <span>{{ $t('fleet.monitoring.checks.editor.alertOff') }}</span>
         </label>
-        <div class="flex flex-wrap items-center gap-2.5">
-          <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
-            <input type="radio" name="check-alert" class="accent-[var(--primary)]" :checked="draft.alert === 'down'" @change="draft = { ...draft, alert: 'down' }" />
-            <span>{{ $t('fleet.monitoring.checks.editor.alertDown') }}</span>
+        <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
+          <input type="radio" name="check-alert" class="accent-[var(--primary)]" value="down" :checked="draft.alert === 'down'" @change="draft = { ...draft, alert: 'down' }" />
+          <span>{{ $t('fleet.monitoring.checks.editor.alertDown') }}</span>
+        </label>
+        <!-- Down and degraded (D13): pages as Down does and adds path.degraded and path.recovered; never on tls. -->
+        <div v-if="m3" class="grid gap-0.5">
+          <label :class="cn('flex items-center gap-2.5 pointer-coarse:min-h-11', isTls ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')">
+            <input
+              type="radio"
+              name="check-alert"
+              class="accent-[var(--primary)]"
+              value="down_and_degraded"
+              :checked="draft.alert === 'down_and_degraded'"
+              :disabled="isTls"
+              :aria-describedby="isTls ? 'check-alert-tls' : 'check-alert-degraded-hint'"
+              @change="draft = { ...draft, alert: 'down_and_degraded' }"
+            />
+            <span>{{ $t('fleet.monitoring.checks.editor.alertDownDegraded') }}</span>
           </label>
+          <p v-if="isTls" id="check-alert-tls" class="ps-6.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertTls') }}</p>
+          <p v-else id="check-alert-degraded-hint" class="ps-6.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertDegradedHint') }}</p>
+        </div>
+        <!-- The run count applies to both down choices. -->
+        <div class="flex flex-wrap items-center gap-2.5 ps-6.5">
           <Input
             v-model.number="draft.alertAfter"
             type="number"
             min="1"
             :max="ALERT_MAX_AFTER"
             class="h-8 w-20"
-            :disabled="draft.alert !== 'down'"
+            :disabled="draft.alert === 'off'"
             :aria-label="$t('fleet.monitoring.checks.editor.alertAfter')"
             :aria-invalid="problems.includes('alertAfter') || undefined"
             :aria-describedby="problems.includes('alertAfter') ? 'check-alert-error' : undefined"
+            data-testid="check-alert-after"
           />
-          <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRuns') }}</span>
+          <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRunsBefore') }}</span>
         </div>
         <p v-if="problems.includes('alertAfter')" id="check-alert-error" role="alert" class="text-xs text-destructive">{{ problemOf('alertAfter') }}</p>
+        <p v-if="problems.includes('alertTls')" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checks.editor.alertTls') }}</p>
+        <DegradedRuleFields v-if="m3 && !isTls" v-model="draft.degraded" id-prefix="check-degraded" />
       </fieldset>
 
       <!-- 7. Name -->

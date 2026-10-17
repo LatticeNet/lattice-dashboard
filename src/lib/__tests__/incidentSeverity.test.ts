@@ -13,11 +13,19 @@ import {
 } from "../incidentSeverity.ts";
 
 // lattice-server incidents.go (incidentKinds) at a108: node.offline and
-// service.down are critical, monitor.down and agent.stalled warnings.
+// service.down are critical, monitor.down and agent.stalled warnings; design 29
+// D13 adds path.degraded as a warning, recovered by path.recovered.
 test("the table mirrors the server's incident kinds", () => {
-  assert.deepEqual(INCIDENT_KINDS, ["node.offline", "service.down", "monitor.down", "agent.stalled"]);
+  assert.deepEqual(INCIDENT_KINDS, ["node.offline", "service.down", "monitor.down", "agent.stalled", "path.degraded"]);
   assert.deepEqual(ESCALATING_KINDS, ["node.offline", "service.down"]);
-  assert.deepEqual(HELD_KINDS, ["monitor.down", "agent.stalled"]);
+  assert.deepEqual(HELD_KINDS, ["monitor.down", "agent.stalled", "path.degraded"]);
+});
+
+test("path.degraded is a warning quiet hours hold; its recovery takes its severity; nothing reaches a fallback (D13)", () => {
+  assert.equal(eventSeverity("path.degraded"), "warning");
+  assert.equal(eventSeverity("path.recovered"), "warning");
+  assert.equal(CRITICAL_ALERT_EVENTS.includes("path.degraded"), false);
+  assert.deepEqual(ruleIncidentReach(["path.degraded", "path.recovered"]), { critical: [], warning: ["path.degraded"] });
 });
 
 test("a recovery takes its incident's severity, and other events are warnings", () => {
@@ -43,7 +51,7 @@ test("rule routing matches the server: empty and * route everything", () => {
 test("a rule's reach splits what it re-sends from what quiet hours hold", () => {
   assert.deepEqual(ruleIncidentReach(["monitor.down", "node.offline", "inventory.renewal"]), { critical: ["node.offline"], warning: ["monitor.down"] });
   assert.deepEqual(ruleIncidentReach(["monitor.down", "monitor.recovered"]), { critical: [], warning: ["monitor.down"] });
-  assert.deepEqual(ruleIncidentReach(["*"]), { critical: ["node.offline", "service.down"], warning: ["monitor.down", "agent.stalled"] });
+  assert.deepEqual(ruleIncidentReach(["*"]), { critical: ["node.offline", "service.down"], warning: ["monitor.down", "agent.stalled", "path.degraded"] });
   assert.deepEqual(ruleIncidentReach(["ssh.login"]), { critical: [], warning: [] });
 });
 

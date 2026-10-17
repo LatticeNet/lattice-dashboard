@@ -87,7 +87,7 @@ import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, plan
 import { lineChains } from "./topologyFixture";
 import { M2B, beaconShape, runsBeaconClient } from "./beaconShapes";
 import { appliedBeaconApproval, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
-import { PATHS_SHAPE, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
+import { GOLDEN, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
 
@@ -150,7 +150,16 @@ function answer<T>(name: string, value: () => T, ms = LATENCY_MS): Promise<T> {
       throw new ApiError(502, "bad_gateway", `${name} read failed: upstream timed out after 10s`);
     });
   }
-  return delay(value(), ms);
+  // A value that refuses the read (?m3=golden's notGolden) fails it the way a server would, after the delay.
+  let body: T;
+  try {
+    body = value();
+  } catch (error) {
+    return delay(undefined, ms).then(() => {
+      throw error;
+    });
+  }
+  return delay(body, ms);
 }
 
 const principal: Principal = {
@@ -227,6 +236,11 @@ function missingRoute<T>(path: string): Promise<T> {
   });
 }
 const pathsOld = () => PATHS_SHAPE === "old";
+
+/** ?m3=golden: a read the golden responses do not hold fails, rather than answer something the server never sent. */
+function notGolden(what: string): never {
+  throw new ApiError(502, "bad_gateway", `the golden responses do not hold ${what}`);
+}
 
 /**
  * A check as the server answers it (design 29 M2a): a secret header's value
@@ -380,7 +394,8 @@ export const api = {
     ssoProviders: () => delay([]),
   },
   nodes: {
-    list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
+    // ?m3=golden: the path set's nodes, so the drawing holds only what the golden responses name.
+    list: () => answer("nodes", () => ({ nodes: GOLDEN ? goldenNodes(nodes.find((n) => n.name === "[cd]-volcengine-shanghai") ?? nodes[0]!) : nodes.filter(enrolled).map((n) => ({ ...n })) })),
     beacon: {
       get: (nodeId: string) =>
         !M2B ? missingRoute("/api/nodes/beacon") : answer("beacon", () => beaconViewFor(beaconNode(nodeId), nodes, currentBeaconSources(nodeId)), Number(PARAMS.get("beaconMs")) || LATENCY_MS),
@@ -633,7 +648,8 @@ export const api = {
     // Each node's newest result rides on the list, as the server sends it.
     // On latency renders the list also carries the generated latency monitors, as the server sends them.
     list: () =>
-      answer("monitors", () => ({
+      // ?m3=golden: GET /api/monitors as the server answered it, a bare array.
+      GOLDEN ? answer("monitors", () => goldenMonitors()) : answer("monitors", () => ({
         monitors: [
           ...monitors.map((m) => ({ ...viewOf(m), latest: PARAMS.has("paths") ? pathsLatest(m.id) : monitorLatest(m.id) })),
           ...(PARAMS.has("latency") || PARAMS.has("paths")
@@ -645,12 +661,26 @@ export const api = {
       })),
     // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.
     results: (id: string) =>
-      answer("monitors", () => ({ results: PARAMS.has("paths") ? resultsFor(pathPlan(), monitors, id) : monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
+      answer("monitors", () => ({ results: GOLDEN ? [] : PARAMS.has("paths") ? resultsFor(pathPlan(), monitors, id) : monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
     paths: (window: MonitorWindow) =>
-      pathsOld() ? missingRoute("/api/monitors/paths") : answer("paths", () => pathsFor(pathPlan(), window, monitors), Number(PARAMS.get("pathsMs")) || LATENCY_MS),
-    series: (query: PathSeriesQuery) => (pathsOld() ? missingRoute("/api/monitors/series") : answer("series", () => pathSeriesFor(pathPlan(), monitors, query))),
+      GOLDEN
+        ? answer("paths", () => goldenPaths(window) ?? notGolden(`the paths read for window ${window}`))
+        : pathsOld()
+          ? missingRoute("/api/monitors/paths")
+          : answer("paths", () => pathsFor(pathPlan(), window, monitors), Number(PARAMS.get("pathsMs")) || LATENCY_MS),
+    series: (query: PathSeriesQuery) =>
+      GOLDEN
+        ? answer("series", () => goldenSeries(query) ?? notGolden(`the series of ${query.source || "the control plane"} to ${query.target_node ?? query.monitor} over ${query.window}`))
+        : pathsOld()
+          ? missingRoute("/api/monitors/series")
+          : answer("series", () => pathSeriesFor(pathPlan(), monitors, query)),
     settings: {
-      get: () => (pathsOld() || !PARAMS.has("paths") ? missingRoute("/api/monitors/settings") : answer("settings", () => settingsFor(pathsFor(pathPlan(), "1h", monitors).paths.length))),
+      get: () =>
+        GOLDEN
+          ? answer("settings", () => settingsFor(goldenPaths("1h")!.paths.length))
+          : pathsOld() || !PARAMS.has("paths")
+            ? missingRoute("/api/monitors/settings")
+            : answer("settings", () => settingsFor(pathsFor(pathPlan(), "1h", monitors).paths.length)),
       update: (input: { version: number; fine_retention_days: number }) => {
         const saved = saveSettings(input.version, input.fine_retention_days);
         if (saved === "conflict") {
@@ -704,7 +734,7 @@ export const api = {
     },
     latency: {
       // `?latencyMs=<ms>` slows the plan and rollups reads, so the loading state can be drawn.
-      plan: () => answer("latency", () => planFor(latency.config, latency.stored), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
+      plan: () => answer("latency", () => (GOLDEN ? goldenPlan() : planFor(latency.config, latency.stored)), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       rollups: () =>
         answer("latency", () => rollupsFor(planFor(latency.config, latency.stored)), Number(PARAMS.get("rollupsMs")) || Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       series: (source: string, target: string, window: LatencyWindow) =>
@@ -734,7 +764,7 @@ export const api = {
   },
   // Monitoring's Topology reads the relay to exit routes (dev/topologyFixture.ts).
   proxy: {
-    lineChains: () => answer("chains", () => ({ chains: lineChains() })),
+    lineChains: () => answer("chains", () => ({ chains: GOLDEN ? [] : lineChains() })),
   },
   plugins: {
     // vpn-core is installed in production; the node sheet links to its Lines.

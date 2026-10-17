@@ -24,6 +24,7 @@ import {
   type PathsMatrix,
   type PathsSource,
 } from "./pathsModel";
+import { triangulate, type Triangulation } from "./triangulationModel";
 
 export interface PathsData {
   /** Which server answered. */
@@ -34,6 +35,8 @@ export interface PathsData {
   window: ComputedRef<MonitorWindow>;
   pathsQuery: AsyncData<PathsResponse | undefined>;
   matrix: ComputedRef<PathsMatrix | undefined>;
+  /** Where each down or degraded path's cause most likely sits (design 29 D13), worked out once for every layer. */
+  triangulation: ComputedRef<Triangulation | undefined>;
   /** Retention settings; null when the server has no such route. */
   settingsQuery: AsyncData<MonitorSettings | null | undefined>;
   settings: ComputedRef<MonitorSettings | undefined>;
@@ -114,6 +117,8 @@ export function usePathsData(options: PathsDataOptions): PathsData {
     return data ? buildPathsMatrix(data, { checkName: options.checkName, nodeName: options.nodeName, controlPlane: options.controlPlane() }) : undefined;
   });
 
+  const triangulation = computed(() => (matrix.value ? triangulate(matrix.value) : undefined));
+
   function refresh(): void {
     if (!options.canRead.value) return;
     void pathsQuery.refresh();
@@ -121,5 +126,5 @@ export function usePathsData(options: PathsDataOptions): PathsData {
     void planQuery.refresh();
   }
 
-  return { source, offered, window, pathsQuery, matrix, settingsQuery, settings, planQuery, refresh };
+  return { source, offered, window, pathsQuery, matrix, triangulation, settingsQuery, settings, planQuery, refresh };
 }

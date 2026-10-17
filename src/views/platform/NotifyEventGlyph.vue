@@ -5,7 +5,7 @@
  * from the tone (how bad), the glyph from the catalogue (what happened).
  *
  * The icons are named imports from an explicit allow-list, so the bundle
- * carries these twenty and no more; the Record type makes vue-tsc refuse a
+ * carries these twenty-two and no more; the Record type makes vue-tsc refuse a
  * name in NOTIFY_ICON_NAMES without an import here.
  */
 import { computed, type Component, type HTMLAttributes } from "vue";
@@ -29,6 +29,8 @@ import {
   Server,
   ServerOff,
   ShieldAlert,
+  TrendingDown,
+  TrendingUp,
   Webhook,
 } from "lucide-vue-next";
 
@@ -42,6 +44,8 @@ const ICONS: Record<NotifyIconName, Component> = {
   power: Power,
   activity: Activity,
   "heart-pulse": HeartPulse,
+  "trending-down": TrendingDown,
+  "trending-up": TrendingUp,
   hourglass: Hourglass,
   bot: Bot,
   "key-round": KeyRound,

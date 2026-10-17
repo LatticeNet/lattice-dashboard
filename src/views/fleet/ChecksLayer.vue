@@ -46,6 +46,7 @@ import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQu
 import { isServerEvaluated } from "./monitorTypeModel";
 import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { verdictFor } from "./triangulationModel";
 import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
 import type { PathsData } from "./usePathsData";
 
@@ -175,6 +176,14 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; titl
         text: state.total > 1 ? t("fleet.monitoring.checks.downOn", { n: state.failing, total: state.total }) : t("fleet.monitoring.paths.state.down"),
         tone: "destructive",
         textClass: "text-destructive font-medium",
+      };
+    case "degraded":
+      // Amber means degraded wherever a path state is drawn (design 29 D13), here as on Paths.
+      return {
+        text: state.total > 1 ? t("fleet.monitoring.checks.degradedOn", { n: state.degraded, total: state.total }) : t("fleet.monitoring.paths.state.degraded"),
+        detail: state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined,
+        tone: "warning",
+        textClass: "text-warning-text font-medium",
       };
     case "stale":
       return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
@@ -584,7 +593,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                 <span class="min-w-0">
                   <span class="block truncate font-medium">{{ row.name }}</span>
                   <span v-if="row.paused" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.paused') }}</span>
-                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block text-xs break-words', row.path.state === 'down' ? 'text-destructive' : 'text-muted-foreground')">
+                  <span v-else-if="row.path && row.path.state !== 'up'" :class="cn('block text-xs break-words', row.path.state === 'down' ? 'text-destructive' : row.path.state === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')">
                     {{ displayLabel(row.path) }}: {{ whyText(row.path, failureOn(selected, row.source)) }}
                   </span>
                   <span v-else-if="row.latest?.reason" class="block text-xs break-words text-muted-foreground">{{ reasonText(row.latest.reason) }}</span>
@@ -619,6 +628,9 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           :failure="failureOn(selected, chosenRow.source)"
           :agent-version="nodes.find((n) => n.id === chosenRow!.source)?.agent_version"
           :paths-failed="!!data.pathsQuery.error.value && data.source.value === 'unknown'"
+          :owned="owned"
+          :judges-degraded="!!data.matrix.value?.judgesDegraded"
+          :verdict="data.triangulation.value && chosenRow.path ? verdictFor(data.triangulation.value, chosenRow.path) : undefined"
           @window="(w) => emit('window', w)"
         />
       </div>

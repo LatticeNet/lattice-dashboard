@@ -63,6 +63,8 @@ const props = defineProps<{
   nodes: Node[];
   /** Monitor names by id, for failing monitors' claims. */
   monitorNames?: ReadonlyMap<string, string>;
+  /** The node a generated check reaches, by check id: a path.degraded row's link to its path (design 29 D13). */
+  monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
   now: number;
 }>();
 const emit = defineEmits<{ refresh: [] }>();
@@ -471,6 +473,7 @@ function coverageText(window: MaintenanceWindow): string {
             :busy="actions.busy.value"
             :node-names="nodeNames"
             :monitor-names="monitorNames"
+            :monitor-targets="monitorTargets"
             :focus-request="actions.focusRequest.value"
             :undoable="actions.undoable.value"
             :undone="actions.undone.value"

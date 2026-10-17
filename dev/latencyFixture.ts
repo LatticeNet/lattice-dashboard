@@ -47,6 +47,8 @@ import type {
   Node,
 } from "@/lib/api/index";
 
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, effectiveAlert } from "@/views/fleet/degradedRuleModel";
+
 import { HOUR, MINUTE, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
 import { M2B, beaconEndpoint, beaconListening, beaconShape, beaconSourceGate, beaconTargetGate, runsBeaconClient } from "./beaconShapes";
 
@@ -200,7 +202,10 @@ export function initialConfig(): { config: LatencyProbeConfig; stored: boolean }
   const base: LatencyProbeConfig = { enabled: true, interval_sec: 60, timeout_sec: 5, sources: [SOURCE_ID], auto_targets: true, version: 4, updated_by: "cdcd", updated_at: iso(-3 * HOUR) };
   const paths = PARAMS.get("paths");
   if (paths && paths !== "old") {
-    const sources = paths === "three" ? [SOURCE_ID, id("[cd]-volcengine-shanghai"), id("[Metix]-mkcloud-hr-iplc")].sort() : [SOURCE_ID];
+    const three = [SOURCE_ID, id("[cd]-volcengine-shanghai"), id("[Metix]-mkcloud-hr-iplc")];
+    // ?paths=six: three more sources, so Topology's picker draws the first four of six (design 29 D13).
+    const six = [...three, id("[cd]-hetzner-fsn"), id("[cd]-racknerd-la"), id("[cd]-DMIT-pro-malibu")];
+    const sources = (paths === "three" ? three : paths === "six" ? six : [SOURCE_ID]).sort();
     const config: LatencyProbeConfig = {
       ...base,
       sources: paths === "empty" ? [] : sources,
@@ -373,10 +378,14 @@ function baseMs(node: Node | undefined): number {
   }
 }
 
-/** What happened on a pair, by target name. */
+/**
+ * What happened on a pair, by target name. On `?paths=` the paths harness
+ * (dev/pathsFixture.ts) makes VIRCS lossy, degraded on M3, so the rollups the
+ * Map reads beside it say lossy too rather than all failing.
+ */
 function behaviour(targetName: string): "normal" | "lossy" | "failing" | "partial" | "dark" {
   if (targetName === "[Metix]-Aaitr-ATT-VDS") return "lossy";
-  if (targetName === "[Metix]-VIRCS-ATT-VDS") return "failing";
+  if (targetName === "[Metix]-VIRCS-ATT-VDS") return PARAMS.has("paths") ? "lossy" : "failing";
   if (targetName === "[cd]-cloudcone-la") return "partial";
   if (LAST_KNOWN.has(targetName)) return "dark";
   return "normal";
@@ -464,6 +473,21 @@ export function seriesFor(plan: LatencyProbePlan, source: string, target: string
   return { source, target, monitor_id: `mon_lat_${target}`, window, bucket_sec: step / 1000, from: new Date(from).toISOString(), to: new Date(to).toISOString(), buckets };
 }
 
+/** Design 29 M3 (contract D13), read here as pathsFixture reads it: a server that judges degraded. */
+const M3_SERVER = PARAMS.get("m3") === "1" && PARAMS.get("paths") !== "old";
+
+/**
+ * What an M3 server adds to every generated check it lists (as its golden
+ * monitors.json shows): the path set's effective alert and run count, so the
+ * list says what the path set pages, and the version and assignment fields it
+ * always writes.
+ */
+function generatedFields(plan: LatencyProbePlan): Partial<MonitorView> {
+  if (!M3_SERVER) return {};
+  const after = plan.config.alert_after && plan.config.alert_after >= 1 && plan.config.alert_after <= ALERT_MAX_AFTER ? plan.config.alert_after : ALERT_DEFAULT_AFTER;
+  return { assign_all: false, alert: effectiveAlert(plan.config.alert, true), alert_after: after, version: 0 };
+}
+
 /** The tcp monitors the server generates from a plan, as GET /api/monitors lists them. */
 export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] {
   // The icmp checks of design 29 M2a, one per target, beside the tcp ones.
@@ -483,6 +507,7 @@ export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] 
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });
@@ -503,6 +528,7 @@ export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] 
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });
@@ -519,11 +545,14 @@ function tcpGenerated(plan: LatencyProbePlan): MonitorView[] {
         name: `Latency to ${n.name}`,
         type: "tcp",
         target: n.endpoint!,
+        // Since M2a the server names the node a generated tcp check resolves its target from.
+        ...(M2A || M3_SERVER ? { target_node: n.node_id } : {}),
         interval_sec: plan.config.interval_sec,
         timeout_sec: plan.config.timeout_sec,
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });

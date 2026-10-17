@@ -24,6 +24,32 @@
  *                         character name
  *   ?m2a=auto             the path set on Auto: NAT targets answer ICMP and
  *                         read up; hetzner-hel never answers (ICMP filtered)
+ *   ?paths=six            three more sources (hetzner-fsn, racknerd-la, DMIT-pro-malibu), so
+ *                         Topology's picker draws the first four of six
+ *   ?m3=1                 a design 29 M3 server (contract D13): the matrix carries
+ *                         degraded_at, series carry their baseline (and the previous
+ *                         period with compare=previous), and the status page check is
+ *                         on down_and_degraded with its own thresholds. From cd-hs-sh:
+ *                         hetzner-fsn degraded on loss, gomami-hk degraded on latency
+ *                         (after its switch from TCP to ICMP two days ago), racknerd-la
+ *                         clearing, VIRCS-ATT degraded on both from every source that
+ *                         reports, TiDB-1 new with 14 hours of baseline. With
+ *                         ?paths=three mkcloud is online, volcengine-shanghai fails four
+ *                         targets the other sources reach and reports on eight (its other
+ *                         paths stopped 25 minutes ago), DMIT-4 is down from all three,
+ *                         so every triangulation verdict appears; with one source every
+ *                         verdict reads "this path"
+ *   ?names=long           two nodes the matrix names with long names, to see
+ *                         truncation in cells, lists, sheets and the attention list
+ *   ?m3=golden            the M3 server's golden responses (src/testing/m3Golden.ts),
+ *                         served verbatim: the 1h and 7d matrices, the one series they
+ *                         hold (hk-edge to tyo-3, 1h, with compare=previous), the
+ *                         monitors list and the path set. dev/goldenClock.ts moves the
+ *                         page's clock to when the server answered. Other windows and
+ *                         other paths' series answer 502, since the server was not asked
+ *                         for them; runs answer empty; the node list is the path set's
+ *                         four nodes on a template node, the one thing here not taken
+ *                         from the server
  *   ?m2b=1                a design 29 M2b server (dev/beaconShapes.ts). With
  *                         ?m2a=auto the NAT targets whose beacon admits
  *                         cd-hs-sh move from TCP (failing) to Beacon (up) two
@@ -40,16 +66,21 @@
  */
 import type {
   LatencyProbePlan,
+  MonitorDegradedRule,
   MonitorResult,
   MonitorSettings,
   MonitorView,
   MonitorWindow,
   Node,
+  PathBaseline,
   PathBucket,
+  PathDegradation,
+  PathSeriesQuery,
   PathSeriesResponse,
   PathView,
   PathsResponse,
 } from "@/lib/api/index";
+import { GOLDEN_MONITORS, GOLDEN_PATHS_1H, GOLDEN_PATHS_7D, GOLDEN_PATH_SET, GOLDEN_SERIES, GOLDEN_SERIES_QUERY } from "@/testing/m3Golden";
 import { expectedStepSeconds } from "@/views/fleet/pathSeriesModel";
 import { WINDOW_SECONDS } from "@/views/fleet/pathsModel";
 import { seriesStats, seriesFromResponse } from "@/views/fleet/pathSeriesModel";
@@ -58,9 +89,23 @@ import { HOUR, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
 import { M2A, SOURCE_ID, SOURCE_NODE, agentPredatesM2a, icmpRefusal } from "./latencyFixture";
 import { M2B, beaconShape, beaconSourceGate, beaconTargetGate, runsBeaconClient } from "./beaconShapes";
 
-export const PATHS_SHAPE = (PARAMS.get("paths") ?? "") as "" | "one" | "three" | "empty" | "old";
+export const PATHS_SHAPE = (PARAMS.get("paths") ?? "") as "" | "one" | "three" | "six" | "empty" | "old";
 export const FINE_DAYS = PARAMS.get("retention") === "14" ? 14 : 7;
-const SWITCH = PARAMS.get("switch") === "1";
+/** Design 29 M3 (contract D13): a server that judges degraded. */
+export const M3 = PARAMS.get("m3") === "1" && PATHS_SHAPE !== "old";
+/** `?m3=golden`: the M3 server's own answers, verbatim (see the header). */
+export const GOLDEN = PARAMS.get("m3") === "golden";
+// The M3 fixture shows a method switch on gomami-hk as well.
+const SWITCH = PARAMS.get("switch") === "1" || M3;
+const SEVERAL = PATHS_SHAPE === "three" || PATHS_SHAPE === "six";
+/** `?names=long`: the names the matrix carries for two nodes, long enough to wrap or truncate everywhere. */
+const LONG_NAMES: Record<string, string> = PARAMS.get("names") === "long"
+  ? {
+      "[cd]-hetzner-fsn": "[cd]-hetzner-fsn-falkenstein-dedicated-ax41-nvme-relay-and-backup-target",
+      "[cd]-volcengine-shanghai": "[cd]-volcengine-shanghai-east-china-2-ecs-g3i-probe-source",
+    }
+  : {};
+const shownName = (name: string) => LONG_NAMES[name] ?? name;
 
 const id = (name: string) => nodeByName(name)?.id ?? name;
 const allNodes = (): Node[] => [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : [])];
@@ -120,8 +165,48 @@ function baseMs(node: Node | undefined, source: string): number {
 }
 
 function sourceOffline(source: string): boolean {
-  return PATHS_SHAPE === "three" && source === id("[Metix]-mkcloud-hr-iplc");
+  // On an M3 server mkcloud is back, so three sources report and triangulation has something to place.
+  return PATHS_SHAPE === "three" && !M3 && source === id("[Metix]-mkcloud-hr-iplc");
 }
+
+/* ---- Design 29 M3: degraded paths and triangulation ---- */
+
+/** The last hour's story on a path, for the degraded evaluator to find (D13). */
+type Recent = "loss" | "latency" | "clearing" | "both" | "sourceDown";
+
+/** Targets volcengine-shanghai fails while the other sources reach them: its own network. */
+const VOLC_BAD = new Set(["[cd]-linode-sgp", "[cd]-Akkocloud-UK-London-KVM", "[Metix]-DMIT-1", "[Metix]-DMIT-2"]);
+/** The other targets it still reports on; every path not named here stopped 25 minutes ago. */
+const VOLC_FRESH = new Set(["[Metix]-DMIT-4", "[cd]-gomami-hk-turin-mini", "[cd]-Oracle-KIX-arm", "[cd]-racknerd-la"]);
+/** mkcloud's two paths whose results stopped. */
+const MK_STALE = new Set(["[OpenJobs-Data]-TiDB-2", "[OpenJobs-Data]-scripts"]);
+/** How long ago a stale path last heard anything. */
+const STALE_FOR = 25 * 60;
+
+function m3Recent(source: string, targetName: string | undefined): Recent | undefined {
+  if (!M3 || !targetName) return undefined;
+  if (SEVERAL && source === id("[cd]-volcengine-shanghai") && VOLC_BAD.has(targetName)) return "sourceDown";
+  if (targetName === "[Metix]-VIRCS-ATT-VDS") return "both";
+  if (source !== SOURCE_ID) return undefined;
+  if (targetName === "[cd]-hetzner-fsn") return "loss";
+  if (targetName === "[cd]-gomami-hk-turin-mini") return "latency";
+  if (targetName === "[cd]-racknerd-la") return "clearing";
+  return undefined;
+}
+
+function m3Stale(source: string, targetName: string | undefined): boolean {
+  if (!M3 || !SEVERAL || !targetName) return false;
+  if (source === id("[cd]-volcengine-shanghai")) return !VOLC_BAD.has(targetName) && !VOLC_FRESH.has(targetName);
+  return source === id("[Metix]-mkcloud-hr-iplc") && MK_STALE.has(targetName);
+}
+
+/** A target added a little over half a day ago: its baseline holds 14 hours, so it is not judged yet. */
+function m3BornAgo(source: string, targetName: string | undefined): number | undefined {
+  return M3 && source === SOURCE_ID && targetName === "[OpenJobs-Data]-TiDB-1" ? 14 * 3600 + 20 * 60 : undefined;
+}
+
+/** The status page's own thresholds on an M3 server. */
+const STATUS_RULE: MonitorDegradedRule = { loss_percent: 5, latency_margin_ms: 50 };
 
 function natEndpoint(node: Node): string {
   return `${node.public_ip ?? "203.0.113.1"}:${node.name.toLowerCase().includes("nat") || node.name.includes("qqpw") ? 50100 : 443}`;
@@ -142,66 +227,105 @@ interface Shape {
   /** Seconds back to the switch from TCP: older buckets were TCP and behaved as `before`. */
   switchedAt?: number;
   before?: Behaviour;
+  /** Design 29 M3: what the last hour holds (a loss burst, a slow spell, one that is clearing). */
+  recent?: Recent;
+  /** Seconds since a stale path last heard anything. */
+  staleFor?: number;
+  /** Seconds since the path was made; nothing was expected before. */
+  bornAgo?: number;
+}
+
+/** Whether one minute of a path failed in the recent spell, as a coin that lands the same way every render. */
+function failsMinute(shape: Shape, minute: number, share: number): boolean {
+  return hash(`${shape.source}:${shape.target?.id ?? shape.operator}:m${minute}`) < share;
 }
 
 /** Beacon paths to NAT targets were TCP until two days ago, failing on the unmapped port. */
 const BEACON_SWITCH_AGE = 2 * 86400;
 
+/**
+ * One path's buckets over a window, as the server's pathSeriesFor lays them
+ * out: the window starts on a step boundary and runs to now (`to` is now, not
+ * a step), so the last bucket is the step in progress. That step expects the
+ * whole minutes it covers and has heard the runs already due (a run lands at
+ * the half minute, as resultsFor stamps them), so it can hear one run while
+ * expecting none, as the golden series' last bucket does (1 of 0).
+ */
 function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step: number; from: number; to: number; buckets: PathBucket[] } {
   const step = expectedStepSeconds(window, 60, FINE_DAYS);
-  const to = Math.floor((NOW / 1000 - offsetSec) / step) * step;
+  const to = NOW / 1000 - offsetSec;
   const span = WINDOW_SECONDS[window];
-  const from = to - span;
+  const from = Math.floor((to - span) / step) * step;
   const perBucket = Math.max(1, Math.round(step / 60));
   const buckets: PathBucket[] = [];
   const now = NOW / 1000;
-  for (let t = from; t < to; t += step) {
+  for (let t = from; t <= to; t += step) {
     const age = now - t;
+    const covered = Math.min(step, to - t);
+    const runs = covered >= step ? perBucket : Math.min(perBucket, Math.floor((covered + 30) / 60));
+    const due = covered >= step ? perBucket : Math.floor(covered / 60);
     const j = hash(`${shape.source}:${shape.target?.id ?? shape.operator}:${Math.floor(t / step)}`);
     // Before a switch the path ran the old method with its old behaviour (a NAT target failing over TCP).
     const switched = shape.switchedAt !== undefined && age > shape.switchedAt;
     const behaviourNow: Behaviour = switched ? (shape.before ?? "normal") : shape.behaviour;
     const packets = switched ? undefined : shape.packets;
-    const expected = shape.pausedSince !== undefined && age < shape.pausedSince ? 0 : perBucket;
+    const born = shape.bornAgo === undefined || age < shape.bornAgo;
+    const off = (shape.pausedSince !== undefined && age < shape.pausedSince) || !born;
+    const expected = off ? 0 : due;
     // The control plane was down for a while, two thirds of the week back: nobody heard anything.
     const outage = age > 7 * 86400 * 0.62 && age < 7 * 86400 * 0.62 + 5 * 3600;
     let heard = !outage;
     if (behaviourNow === "gap" && age > 4 * 86400 && age < 4 * 86400 + 10 * 3600) heard = false;
     if (behaviourNow === "never") heard = false;
     if (sourceOffline(shape.source) && age < 20 * 3600) heard = false;
-    if (!expected) {
+    if (shape.staleFor !== undefined && age < shape.staleFor) heard = false;
+    if (off) {
       buckets.push({ t, n: 0, expected: 0, fail: 0 });
       continue;
     }
-    if (!heard) {
+    if (!heard || runs === 0) {
       buckets.push({ t, n: 0, expected, fail: 0 });
       continue;
     }
     // A stray failed run now and then, never in the newest minutes (a check's state reads its newest run).
-    let failShare = j > 0.997 && age > 600 ? 1 / perBucket : 0;
+    let failShare = j > 0.997 && age > 600 ? 1 / runs : 0;
     if (behaviourNow === "nat") failShare = 1;
-    if (behaviourNow === "offline") failShare = age < 30 * 3600 ? 1 : j > 0.9 ? 1 / perBucket : 0;
+    if (behaviourNow === "offline") failShare = age < 30 * 3600 ? 1 : j > 0.9 ? 1 / runs : 0;
     if (behaviourNow === "lossy") failShare = 0.04 + j * 0.08;
     if (behaviourNow === "burst" && age > 22 * 3600 && age < 24 * 3600) failShare = 0.3 + j * 0.3;
     if (behaviourNow === "filtered") failShare = 1;
-    const fail = Math.min(perBucket, Math.round(perBucket * failShare));
-    const bucket: PathBucket = { t, n: perBucket, expected, fail, loss: fail / perBucket };
+    let fail = Math.min(runs, Math.round(runs * failShare));
+    // Design 29 M3: the recent spell, minute by minute, so an hour of one-minute buckets holds the share it should.
+    const spell = (share: number, within: number) => {
+      let n = 0;
+      for (let m = 0; m < runs; m++) {
+        const minuteAge = age - m * 60;
+        if (minuteAge < within && minuteAge > 0 && failsMinute(shape, Math.floor((t + m * 60) / 60), share)) n += 1;
+      }
+      return n;
+    };
+    if (shape.recent === "loss") fail = Math.min(runs, fail + spell(0.075, 52 * 60));
+    if (shape.recent === "both") fail = Math.min(runs, fail + spell(0.26, 48 * 60));
+    if (shape.recent === "sourceDown" && age < 3 * 3600) fail = runs;
+    const bucket: PathBucket = { t, n: runs, expected, fail, loss: fail / runs };
     if (packets) {
       // Every echo of a failed run is lost; a run that came back may still lose one now and then.
-      const sent = perBucket * packets;
+      const sent = runs * packets;
       const stray = behaviourNow === "filtered" ? 0 : j > 0.93 ? 1 + Math.floor((j - 0.93) * 30) : 0;
       const lost = Math.min(sent, fail * packets + stray);
       bucket.sent = sent;
       bucket.lost = lost;
       bucket.loss = lost / sent;
     }
-    if (fail < perBucket) {
+    if (fail < runs) {
       const local = new Date((t + 8 * 3600) * 1000).getUTCHours();
       const evening = local >= 19 && local <= 23 ? 1.28 + j * 0.12 : 1;
       // ICMP is answered by the kernel: a little faster than a TCP handshake to the same node.
       const base = shape.operator === "tls" ? 82 : shape.operator === "http" ? 118 : baseMs(shape.target, shape.source) * (packets ? 0.94 : 1);
       const burst = behaviourNow === "burst" && age > 22 * 3600 && age < 24 * 3600 ? 1.6 : 1;
-      const p50 = (base + j * 9) * evening * burst;
+      // Design 29 M3: a slow spell, ongoing (latency, both) or over five minutes ago and clearing.
+      const slow = (shape.recent === "latency" && age < 38 * 60) || (shape.recent === "clearing" && age < 75 * 60 && age > 5 * 60) ? 2.4 : shape.recent === "both" && age < 26 * 60 ? 2.1 : 1;
+      const p50 = (base + j * 9) * evening * burst * slow;
       bucket.p50_ms = Math.round(p50 * 10) / 10;
       bucket.p95_ms = Math.round(p50 * (1.12 + j * 0.35) * 10) / 10;
       bucket.min_ms = Math.round(p50 * (0.9 - j * 0.04) * 10) / 10;
@@ -217,6 +341,17 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
 
 function shapeFor(plan: LatencyProbePlan, source: string, targetNode: string): Shape {
   const target = allNodes().find((n) => n.id === targetNode);
+  const shape = baseShapeFor(plan, source, targetNode, target);
+  // Design 29 M3: the spells and stale paths the evaluator and triangulation read.
+  const recent = m3Recent(source, target?.name);
+  if (recent) shape.recent = recent;
+  if (m3Stale(source, target?.name)) shape.staleFor = STALE_FOR;
+  const born = m3BornAgo(source, target?.name);
+  if (born !== undefined) shape.bornAgo = born;
+  return shape;
+}
+
+function baseShapeFor(plan: LatencyProbePlan, source: string, targetNode: string, target: Node | undefined): Shape {
   const pair = plan.pairs.find((p) => p.source === source && p.target === targetNode);
   const icmp = pair?.method === "icmp";
   const beacon = pair?.method === "beacon";
@@ -256,6 +391,88 @@ function shapeFor(plan: LatencyProbePlan, source: string, targetNode: string): S
   };
 }
 
+/* ---- Design 29 M3: the evaluator's view of a path ---- */
+
+const ruleOf = (rule: MonitorDegradedRule | undefined) => ({
+  lossPercent: rule?.loss_percent || 2,
+  lossFactor: rule?.loss_factor || 2,
+  latencyFactor: rule?.latency_factor || 2,
+  latencyMarginMs: rule?.latency_margin_ms || 30,
+});
+
+function median(values: number[]): number | undefined {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return undefined;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+const round1 = (v: number) => Math.round(v * 10) / 10;
+const round4 = (v: number) => Math.round(v * 10000) / 10000;
+
+/**
+ * The 7-day baseline as the server reads it (D13): the whole hours before
+ * the current one, the hours with runs in them, the merged p50 and loss, and
+ * the triggers once 24 hours are in.
+ */
+function baselineFor(shape: Shape, rule: MonitorDegradedRule | undefined): PathBaseline {
+  const hourStart = Math.floor(NOW / 3_600_000) * 3600;
+  const week = bucketsFor(shape, "7d");
+  const inWindow = week.buckets.filter((b) => Number(b.t) < hourStart && Number(b.t) >= hourStart - 7 * 86400);
+  const hours = new Set(inWindow.filter((b) => b.n > 0).map((b) => Math.floor(Number(b.t) / 3600))).size;
+  const stats = seriesStats(seriesFromResponse({ window: "7d", step_seconds: week.step, from: week.from, to: week.to, buckets: inWindow }).points);
+  const r = ruleOf(rule);
+  const ready = hours >= 24;
+  const p50 = stats.p50Ms !== undefined ? round1(stats.p50Ms) : null;
+  const loss = stats.loss !== undefined ? round4(stats.loss) : null;
+  return {
+    from: new Date((hourStart - 7 * 86400) * 1000).toISOString(),
+    to: new Date(hourStart * 1000).toISOString(),
+    hours,
+    ready,
+    p50_ms: p50,
+    loss,
+    trigger_p50_ms: ready && p50 !== null ? round1(Math.max(r.latencyFactor * p50, p50 + r.latencyMarginMs)) : null,
+    trigger_loss: ready ? round4(Math.max(r.lossPercent / 100, r.lossFactor * (loss ?? 0))) : null,
+    rule: { loss_percent: r.lossPercent, loss_factor: r.lossFactor, latency_factor: r.latencyFactor, latency_margin_ms: r.latencyMarginMs },
+  };
+}
+
+/** The degradation record the evaluator would hold for a path with a recent spell, or undefined. */
+function degradationFor(shape: Shape, rule: MonitorDegradedRule | undefined): { reason: string; degraded: PathDegradation } | undefined {
+  const recent = shape.recent;
+  if (!recent || recent === "sourceDown") return undefined;
+  const base = baselineFor(shape, rule);
+  if (!base.ready) return undefined;
+  const raw = bucketsFor(shape, "1h").buckets;
+  const now = NOW / 1000;
+  let sent = 0;
+  let lost = 0;
+  for (const b of raw) {
+    sent += b.sent || b.n;
+    lost += b.sent ? (b.lost ?? 0) : b.fail;
+  }
+  const last15 = raw.filter((b) => Number(b.t) >= now - 900 && b.n > b.fail && b.p50_ms != null);
+  const p50 = median(last15.map((b) => b.p50_ms!));
+  const runs = last15.reduce((n, b) => n + b.n - b.fail, 0);
+  const minute = (m: number) => new Date(NOW - m * 60_000).toISOString();
+  const loss = sent > 0 ? { value: round4(lost / sent), baseline: base.loss ?? 0, trigger: base.trigger_loss ?? 0.02, sent, lost } : undefined;
+  const latency = p50 !== undefined && base.p50_ms != null && base.trigger_p50_ms != null ? { p50_ms: round1(p50), runs, baseline_ms: base.p50_ms, trigger_ms: base.trigger_p50_ms } : undefined;
+  switch (recent) {
+    case "loss":
+      return { reason: "degraded_loss", degraded: { since: minute(51), evaluated_at: minute(0.5), loss } };
+    case "latency":
+      return { reason: "degraded_latency", degraded: { since: minute(36), evaluated_at: minute(0.5), latency } };
+    case "both":
+      return { reason: "degraded_loss_latency", degraded: { since: minute(24), evaluated_at: minute(0.5), loss, latency } };
+    case "clearing": {
+      // The condition went away five minutes ago; the evidence is the last evaluation that found it.
+      const slow = { p50_ms: round1((base.p50_ms ?? 150) * 2.4), runs: 15, baseline_ms: base.p50_ms ?? 150, trigger_ms: base.trigger_p50_ms ?? 300 };
+      return { reason: "degraded_latency", degraded: { since: minute(73), evaluated_at: minute(5), clearing_since: minute(4), latency: slow } };
+    }
+  }
+}
+
 /* ---- Operator checks ---- */
 
 const STATUS_SOURCES = () => [SOURCE_ID, id("[cd]-hetzner-fsn"), id("[cd]-racknerd-la")];
@@ -275,6 +492,8 @@ export function operatorChecks(): MonitorView[] {
     enabled: true,
     created_at: iso(-40 * 24 * HOUR),
     ...(old ? {} : { version: 3, paused_node_ids: [id("[cd]-racknerd-la")], alert: "down", alert_after: 2 }),
+    // Design 29 M3: pages on degraded too, with thresholds of its own.
+    ...(M3 ? { alert: "down_and_degraded", alert_after: 3, degraded: STATUS_RULE } : {}),
   };
   const cert: MonitorView = {
     id: "mon_api_cert",
@@ -400,7 +619,7 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
       const paused = (check.paused_node_ids ?? []).includes(source);
       const shape = operatorShape(check, source, paused);
       const reason = paused ? "source_paused" : operatorReason(check, source);
-      out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type }, reason));
+      out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type }, reason, undefined, check.degraded ?? undefined));
     }
   }
   return out;
@@ -408,28 +627,34 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
 
 /* ---- The matrix ---- */
 
-function pathFrom(shape: Shape, window: MonitorWindow, base: Omit<PathView, "state" | "samples" | "expected">, unknownReason?: string, downReason?: string): PathView {
+function pathFrom(shape: Shape, window: MonitorWindow, base: Omit<PathView, "state" | "samples" | "expected">, unknownReason?: string, downReason?: string, rule?: MonitorDegradedRule): PathView {
   const now = bucketsFor(shape, window);
   const prev = bucketsFor(shape, window, WINDOW_SECONDS[window]);
   const stats = seriesStats(seriesFromResponse({ window, step_seconds: now.step, from: now.from, to: now.to, buckets: now.buckets }).points);
   const prevStats = seriesStats(seriesFromResponse({ window, step_seconds: prev.step, from: prev.from, to: prev.to, buckets: prev.buckets }).points);
   const last = [...now.buckets].reverse().find((b) => b.n > 0);
+  // As the server sends a cell: every figure present, null where nothing was measured, and an empty reason.
   const path: PathView = {
     ...base,
     state: "up",
+    reason: "",
     samples: stats.samples,
     expected: stats.expected,
-    p50_ms: stats.p50Ms,
-    p95_ms: stats.p95Ms,
-    jitter_ms: stats.jitterMs !== undefined ? Math.round(stats.jitterMs * 10) / 10 : undefined,
-    loss: stats.loss !== undefined ? Math.round(stats.loss * 10000) / 10000 : undefined,
-    prev: prevStats.samples > 0 ? { p50_ms: prevStats.p50Ms, loss: prevStats.loss !== undefined ? Math.round(prevStats.loss * 10000) / 10000 : undefined } : null,
-    last_at: last ? new Date((Number(last.t) + now.step) * 1000 - 20_000).toISOString() : undefined,
+    p50_ms: stats.p50Ms ?? null,
+    p95_ms: stats.p95Ms ?? null,
+    jitter_ms: stats.jitterMs !== undefined ? Math.round(stats.jitterMs * 10) / 10 : null,
+    loss: stats.loss !== undefined ? Math.round(stats.loss * 10000) / 10000 : null,
+    prev: prevStats.samples > 0 ? { p50_ms: prevStats.p50Ms ?? null, loss: prevStats.loss !== undefined ? Math.round(prevStats.loss * 10000) / 10000 : null } : null,
+    // The newest run lands at the half minute of its step; the step in progress may hold one already.
+    last_at: last ? new Date(Math.min(NOW, (Number(last.t) + 30 + Math.max(0, last.n - 1) * 60) * 1000)).toISOString() : null,
   };
   if (unknownReason) return { ...path, state: "unknown", reason: unknownReason };
   // The server sends a down path without a reason; the error is in the path's runs.
   if (downReason) return { ...path, state: "down", reason: "" };
   if (!last) return { ...path, state: "unknown", reason: "no_results" };
+  // Design 29 M3: degraded only where the path would read up (down and unknown win).
+  const degraded = M3 ? degradationFor(shape, rule) : undefined;
+  if (degraded) return { ...path, state: "degraded", reason: degraded.reason, degraded: degraded.degraded };
   return path;
 }
 
@@ -468,7 +693,7 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       }
       if (target.target === "not_probeable" || (pair?.reason === "not_probeable" && !icmp)) {
         // The server says not_probeable whatever the plan's note (udp_only, no_public_address, no_tcp_line).
-        paths.push({ ...base, target: "", monitor_id: "", state: "unknown", reason: "not_probeable", samples: 0, expected: 0, prev: null });
+        paths.push({ ...base, target: "", monitor_id: "", state: "unknown", reason: "not_probeable", p50_ms: null, p95_ms: null, jitter_ms: null, loss: null, samples: 0, expected: 0, prev: null, last_at: null });
         continue;
       }
       if (!plan.config.enabled) {
@@ -481,6 +706,11 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       }
       if (sourceOffline(source)) {
         paths.push(pathFrom(shape, window, base, "agent_offline"));
+        continue;
+      }
+      // Design 29 M3: results that stopped read unknown before anything else the path did (the server's order).
+      if (shape.staleFor !== undefined) {
+        paths.push(pathFrom(shape, window, base, "results_stopped"));
         continue;
       }
       const b = shape.behaviour;
@@ -496,33 +726,67 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         paths.push(pathFrom(shape, window, base, "no_results"));
         continue;
       }
+      // Design 29 M3: a source that fails targets the others reach, and paths whose results stopped.
+      if (shape.recent === "sourceDown") {
+        paths.push(pathFrom(shape, window, base, undefined, `read tcp ${base.target}: connection reset by peer`));
+        continue;
+      }
+
       if (b === "filtered") {
         paths.push(pathFrom(shape, window, base, beacon ? "beacon_filtered" : "icmp_filtered"));
         continue;
       }
-      paths.push(pathFrom(shape, window, base));
+      paths.push(pathFrom(shape, window, base, undefined, undefined, plan.config.degraded ?? undefined));
     }
   }
   paths.push(...operatorPaths(checks, window));
+  // As the server's matrix (monitor_paths.go, held to the golden responses): the sources and targets its
+  // paths name, each sorted by name then id, the control plane among the sources with no id and its own
+  // English name; the paths the path set generated first, then by target node, target, source and check.
+  const byName = (a: { node_id: string; name: string }, b: { node_id: string; name: string }) => compare(a.name, b.name) || compare(a.node_id, b.node_id);
+  const planNode = new Map(plan.nodes.map((n) => [n.node_id, n]));
+  const sourceViews = [...new Set(paths.map((p) => p.source))]
+    .map((s) => (s ? { node_id: s, name: shownName(byId.get(s)?.name ?? s), region: planNode.get(s)?.region ?? "unknown" } : { node_id: "", name: "Control plane", region: "" }))
+    .sort(byName);
+  const targetViews = [...new Set(paths.map((p) => p.target_node ?? "").filter(Boolean))]
+    .map((id) => {
+      const node = byId.get(id);
+      const name = planNode.get(id)?.name ?? node?.name ?? id;
+      return { node_id: id, name: shownName(name), region: planNode.get(id)?.region ?? "unknown", country: node?.geo?.country ?? COUNTRY[name] ?? planNode.get(id)?.country };
+    })
+    .sort(byName);
+  paths.sort((a, b) => Number(b.managed) - Number(a.managed) || compare(a.target_node ?? "", b.target_node ?? "") || compare(a.target, b.target) || compare(a.source, b.source) || compare(a.monitor_id, b.monitor_id));
   return {
     window,
-    observed_at: new Date(NOW - 12_000).toISOString(),
-    // Every source a path names, the path set's first, then the checks' (the control plane has no node).
-    sources: [...new Set([...sources, ...paths.map((p) => p.source).filter(Boolean)])].map((s) => ({ node_id: s, name: byId.get(s)?.name ?? s })),
-    targets: targets.map((t) => {
-      const node = byId.get(t.node_id);
-      return { node_id: t.node_id, name: t.name, country: node?.geo?.country ?? COUNTRY[t.name], region: t.region };
-    }),
+    observed_at: iso(-12_000),
+    // Design 29 M3: when the degraded evaluator last ran; the key's presence is what marks the server.
+    ...(M3 ? { degraded_at: iso(-31_000) } : {}),
+    sources: sourceViews,
+    targets: targetViews,
     paths,
   };
 }
 
-export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: { source: string; target_node?: string; monitor?: string; window: MonitorWindow }): PathSeriesResponse {
+/** Go's string order, bytewise, which the server sorts its matrix by (the names here are ASCII). */
+function compare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** A time as the server writes it: RFC 3339 in UTC, without a fraction on a whole second. */
+function rfc3339(sec: number): string {
+  return new Date(sec * 1000).toISOString().replace(/\.000Z$/, "Z");
+}
+
+export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: PathSeriesQuery): PathSeriesResponse {
   let shape: Shape;
+  let rule: MonitorDegradedRule | undefined = plan.config.degraded ?? undefined;
+  let tls = false;
   if (query.monitor && !query.target_node) {
     const check = checks.find((c) => c.id === query.monitor);
     const paused = (check?.paused_node_ids ?? []).includes(query.source);
     shape = check ? operatorShape(check, query.source, paused) : { source: query.source, behaviour: "normal", operator: "http" };
+    rule = check?.degraded ?? undefined;
+    tls = check?.type === "tls";
   } else {
     shape = shapeFor(plan, query.source, query.target_node ?? "");
     const target = plan.nodes.find((n) => n.node_id === query.target_node);
@@ -549,10 +813,37 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
       : query.monitor && !query.target_node
         ? (checks.find((c) => c.id === query.monitor)?.type ?? "tcp")
         : (shape.method ?? (shape.packets ? "icmp" : "tcp"));
-  const method_changes = [{ t: firstHeard, method: first }];
+  const method_changes = [{ t: Number(firstHeard), method: first }];
   if (switched && Number(firstHeard) < switchAt) method_changes.push({ t: switchAt, method: "icmp" });
   if (beaconAt !== undefined && Number(firstHeard) < beaconAt) method_changes.push({ t: beaconAt, method: "beacon" });
-  return { window: query.window, step_seconds: step, from, to, method_changes, buckets };
+  // Every time as the server writes it (RFC 3339), never unix seconds.
+  const out: PathSeriesResponse = {
+    window: query.window,
+    step_seconds: step,
+    from: rfc3339(from),
+    to: rfc3339(to),
+    method_changes: method_changes.map((c) => ({ t: rfc3339(c.t), method: c.method })),
+    buckets: buckets.map((b) => ({ ...b, t: rfc3339(Number(b.t)) })),
+  };
+  if (M3) {
+    // A certificate check is never judged; every other path carries the baseline it is judged on.
+    out.baseline = tls ? null : baselineFor(shape, rule);
+    if (query.compare === "previous") {
+      const prev = bucketsFor(shape, query.window, WINDOW_SECONDS[query.window]);
+      out.previous = {
+        from: rfc3339(prev.from),
+        to: rfc3339(prev.to),
+        offset_seconds: WINDOW_SECONDS[query.window],
+        step_seconds: prev.step,
+        p50_ms: buckets.map((_, i) => {
+          const b = prev.buckets[i];
+          // Invented: the week before ran a little faster, so the overlay reads apart from the line.
+          return b && b.n > b.fail && b.p50_ms != null ? Math.round(b.p50_ms * 0.82 * 10) / 10 : null;
+        }),
+      };
+    }
+  }
+  return out;
 }
 
 /** The raw runs the results route serves for a path: the last twenty per source. */
@@ -652,4 +943,48 @@ export function saveSettings(version: number, days: number): MonitorSettings | "
     fine_retention_days: days,
   };
   return { ...settings };
+}
+
+/* ---- ?m3=golden: the server's own answers ---- */
+
+/** A copy, so a view that changes what it was handed never changes the golden. */
+const copy = <T>(value: T): T => structuredClone(value);
+
+/** The matrix the server answered for the window, or undefined for a window it was not asked for. */
+export function goldenPaths(window: MonitorWindow): PathsResponse | undefined {
+  if (window === "1h") return copy(GOLDEN_PATHS_1H);
+  if (window === "7d") return copy(GOLDEN_PATHS_7D);
+  return undefined;
+}
+
+/** The one series the server answered, without `previous` when the read did not ask for it; undefined for any other path. */
+export function goldenSeries(query: PathSeriesQuery): PathSeriesResponse | undefined {
+  const want = GOLDEN_SERIES_QUERY;
+  if (query.source !== want.source || query.target_node !== want.target_node || query.monitor || query.window !== want.window) return undefined;
+  const series = copy(GOLDEN_SERIES);
+  if (query.compare !== "previous") delete series.previous;
+  return series;
+}
+
+export function goldenMonitors(): MonitorView[] {
+  return copy(GOLDEN_MONITORS);
+}
+
+export function goldenPlan(): LatencyProbePlan {
+  return copy(GOLDEN_PATH_SET);
+}
+
+/** The path set's four nodes as the node list would carry them, on a template node: invented, as the header says. */
+export function goldenNodes(template: Node): Node[] {
+  return GOLDEN_PATH_SET.nodes.map((n) => ({
+    ...template,
+    id: n.node_id,
+    name: n.name,
+    tags: [],
+    public_ip: n.icmp_target ?? template.public_ip,
+    geo: { country: n.country ?? "" },
+    online: true,
+    status: "online",
+    last_seen: new Date(Date.now() - 4_000).toISOString(),
+  }));
 }

@@ -69,12 +69,15 @@ function valueOf(path: PathItem): { text: string; tone: string } {
     return { text: path.p50Ms !== undefined ? `${formatMs(path.p50Ms)}${loss}` : t("fleet.monitoring.paths.reasonShort.no_data"), tone: "text-foreground" };
   }
   if (state === "down") return { text: (path.loss ?? 0) > 0 ? `${displayLabel(path)} · ${formatLoss(path.loss)}` : displayLabel(path), tone: "text-destructive" };
+  // Degraded (design 29 D13): the p50 and the reason, in the warning tone.
+  if (state === "degraded") return { text: [path.p50Ms !== undefined ? formatMs(path.p50Ms) : "", reasonShort(path.reason)].filter(Boolean).join(" · "), tone: "text-warning-text" };
   if (state === "paused") return { text: displayLabel(path), tone: "text-muted-foreground" };
   return { text: reasonShort(path.reason), tone: "text-muted-foreground" };
 }
 
 const DOT: Record<string, string> = {
   up: "bg-success",
+  degraded: "bg-warning",
   down: "bg-destructive",
   unknown: "border border-muted-foreground bg-transparent",
   paused: "bg-muted-foreground/50",
