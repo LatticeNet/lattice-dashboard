@@ -5,8 +5,8 @@
  */
 import { formatAge } from "@/lib/format";
 
-import { formatLoss, formatMs } from "./latencyModel";
-import type { ProbeState, RowSummary, TopoEdge, TopoLastSample, TopoNode } from "./topologyModel";
+import { formatLoss, formatMs } from "@/views/fleet/latencyModel";
+import type { ProbeState, RowSummary, TopoEdge, TopoLastSample, TopoNode } from "@/views/fleet/topologyModel";
 
 type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string;
 

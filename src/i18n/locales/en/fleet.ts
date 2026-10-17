@@ -2530,10 +2530,6 @@ export default {
           noPath: "no path",
           paused: "paused",
           notProbed: "not probed",
-        },
-        card: {
-          pair: "{from} → {to}",
-          p50: "p50",
           // A target row with several sources drawn: how many of them read its worst live state.
           summary: {
             down: "down from {n} of {of}",
@@ -2541,6 +2537,10 @@ export default {
             up: "up from {n} of {of}",
             upAll: "up from all {of}",
           },
+        },
+        card: {
+          pair: "{from} → {to}",
+          p50: "p50",
           p95: "p95",
           loss: "loss",
           heard: "heard",

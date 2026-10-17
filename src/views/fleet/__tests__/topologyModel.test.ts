@@ -3,7 +3,11 @@ import { test } from "node:test";
 
 import type { Incident, LatencyProbePlan, LineChainView, MonitorView, Node, PathView, PathsResponse } from "@/lib/api/types";
 
+import enFleet from "../../../i18n/locales/en/fleet.ts";
+import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
+
 import { buildPathsMatrix } from "../pathsModel.ts";
+import { rowSummaryValue } from "../topologyCopy.ts";
 import {
   CHECK_FAN,
   DEFAULT_DRAWN_SOURCES,
@@ -294,6 +298,31 @@ test("several sources: a target row summarises across them; one failing source d
   // One source drawn: no summary, the edge's own value speaks.
   assert.equal(rowSummary(buildTopology({ ...nineSources(), drawnSources: ["s2"] }), "hk"), undefined);
   assert.equal(rowSummary(m, "jp"), undefined, "no path into the row");
+});
+
+test("the row summary's words exist in both locales, under the keys the copy reads", () => {
+  for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
+    // A tiny t: walks the key path through the messages and fills {placeholders}; a missing key comes back as the key.
+    const t = (key: string, named: Record<string, unknown> = {}) => {
+      const found = key.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined), messages);
+      return typeof found === "string" ? found.replace(/\{(\w+)\}/g, (_, k: string) => String(named[k] ?? "")) : key;
+    };
+    for (const summary of [
+      { state: "down", n: 1, of: 4 },
+      { state: "degraded", n: 2, of: 4 },
+      { state: "up", n: 3, of: 4 },
+      { state: "up", n: 4, of: 4 },
+      { state: "unknown", n: 4, of: 4 },
+      { state: "paused", n: 1, of: 1 },
+    ] as const) {
+      const v = rowSummaryValue(t, summary);
+      assert.ok(!v.text.startsWith("fleet."), `${v.text} resolves`);
+      if (summary.state !== "unknown" && summary.state !== "paused") assert.match(v.text, new RegExp(String(summary.of)));
+    }
+  }
+  const en = (key: string, named: Record<string, unknown> = {}) => (key.endsWith("summary.down") ? `down from ${named.n} of ${named.of}` : key.endsWith("summary.upAll") ? `up from all ${named.of}` : key);
+  assert.deepEqual(rowSummaryValue(en, { state: "down", n: 1, of: 4 }), { text: "down from 1 of 4", tone: "text-destructive" });
+  assert.deepEqual(rowSummaryValue(en, { state: "up", n: 4, of: 4 }), { text: "up from all 4", tone: "text-foreground" });
 });
 
 test("?topo.sources= round trips: ids comma separated, the default written as nothing", () => {
