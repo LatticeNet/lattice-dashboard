@@ -18,14 +18,15 @@
  * the path reads in usePathsData) and the editors, so Overview and Paths can
  * open the path set or a new check without leaving for Checks first.
  */
-import { computed, ref, shallowRef, watch } from "vue";
+import { computed, provide, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
 import { Plus, RadioTower, RefreshCw, Settings2 } from "lucide-vue-next";
 
-import { api, unwrap, type IncidentListResponse, type MonitorType, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
+import { api, unwrap, type BeaconView, type IncidentListResponse, type MonitorType, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
@@ -42,6 +43,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import KeepaliveLayer from "@/components/fleet/KeepaliveLayer.vue";
 import { Button } from "@/components/ui/button";
 
+import BeaconPlanSheet from "./BeaconPlanSheet.vue";
 import CheckEditorSheet from "./CheckEditorSheet.vue";
 import ChecksLayer from "./ChecksLayer.vue";
 import OverviewLayer from "./OverviewLayer.vue";
@@ -54,7 +56,8 @@ import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
 import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
-import { isReachabilityCheck } from "./beaconModel";
+import { isReachabilityCheck, replanMissingScopes, replanOf, type BeaconReplanItem } from "./beaconModel";
+import { BEACON_REPLAN } from "./useBeaconReplan";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
 
@@ -172,6 +175,44 @@ function failureOf(monitorId: string, source: string): string | undefined {
 function nodeSeen(id: string): string | undefined {
   return nodes.value.find((n) => n.id === id)?.last_seen || undefined;
 }
+
+/* ---- A beacon's change plan (the server's replan) ---- */
+
+/**
+ * The path sheet, the check sheet and the attention list offer the change
+ * plan a target's beacon needs. The page reads the node's beacon (the plan
+ * sheet works from the applied settings and the current sources) and opens
+ * the sheet on a change that keeps the port, bind address and endpoint: the
+ * request the server words. The beacon's own replan is the newest word, so a
+ * plan filed meanwhile shows as the one to review.
+ */
+const replanSheet = shallowRef<{ item: BeaconReplanItem; view: BeaconView; node: Pick<Node, "id" | "name" | "internal_ip" | "public_ip"> }>();
+const replanSheetOpen = ref(false);
+const replanOpening = ref<string>();
+const nameOfNode = (id: string) => nodes.value.find((n) => n.id === id)?.name || matrix.value?.sources.find((s) => s.nodeId === id)?.name || undefined;
+async function openReplan(item: BeaconReplanItem): Promise<void> {
+  if (replanOpening.value) return;
+  replanOpening.value = item.nodeId;
+  const target = nameOfNode(item.nodeId) || item.name;
+  try {
+    const view = await api.nodes.beacon.get(item.nodeId);
+    const node = nodes.value.find((n) => n.id === item.nodeId) ?? { id: item.nodeId, name: target };
+    replanSheet.value = { item: replanOf(view, target) ?? item, view, node };
+    fromSheet(() => (replanSheetOpen.value = true));
+  } catch (error) {
+    toast.error(t("fleet.monitoring.beacon.replan.failed", { target, reason: error instanceof Error ? error.message : String(error) }));
+  } finally {
+    replanOpening.value = undefined;
+  }
+}
+provide(BEACON_REPLAN, {
+  replanFor: (nodeId) => (nodeId ? matrix.value?.replans.get(nodeId) : undefined),
+  missing: (item) =>
+    replanMissingScopes(item, { monitorAdmin: auth.can("monitor:admin"), nodeAdmin: auth.can("node:admin"), networkPlan: auth.can("network:plan"), netguardAdmin: auth.can("netguard:admin") }),
+  nameOf: nameOfNode,
+  open: (item) => void openReplan(item),
+  opening: replanOpening,
+});
 
 /** The path set exists and has no source: nothing is measured, and the empty state says why. */
 const noSources = computed(() => {
@@ -549,6 +590,16 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       @close="pathSetOpen = false; backToSheet()"
       @saved="(next) => { data.planQuery.data.value = next; data.refresh(); }"
       @reload="data.refresh"
+    />
+    <BeaconPlanSheet
+      v-if="replanSheet"
+      :open="replanSheetOpen"
+      action="change"
+      :node="replanSheet.node"
+      :view="replanSheet.view"
+      :replan="replanSheet.item"
+      @close="replanSheetOpen = false; backToSheet()"
+      @filed="data.refresh()"
     />
     <RetentionSheet
       v-if="data.settings.value"

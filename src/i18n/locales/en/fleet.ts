@@ -1368,8 +1368,8 @@ export default {
           destination_refused: "The source refused the address: it is private, local or a metadata service, or a secret header's rule forbids the request",
           icmp_filtered: "Every echo was lost and none has ever come back: the target or a provider may filter ICMP",
           beacon_not_enabled: "The target has no beacon enabled",
-          firewall_pending: "NetGuard on the target does not admit this source yet: a beacon change plan on the target must be approved",
-          beacon_source_pending: "The target's beacon plan does not include this source yet: a change plan on the target must be approved",
+          firewall_pending: "NetGuard on the target does not admit this source yet. The firewall changes only through an approved beacon change plan, so this source cannot measure the target until one is approved",
+          beacon_source_pending: "The target's beacon plan does not include this source yet, so the target holds no key for it. This source cannot measure the target until a change plan on the target is approved",
           refused_by_node: "The target refuses to run a beacon: its agent runs with -no-beacon",
           beacon_not_listening: "Nothing answers on the target's beacon port: its agent is too old for a responder, could not bind the port, or closed it for a cooldown; the target's Beacon card says which",
           beacon_filtered: "Every request was lost and none has ever been answered: a firewall or provider may drop UDP to the beacon port",
@@ -2060,10 +2060,30 @@ export default {
           unknown: "decided by the first plan",
         },
         waiting: {
-          firewall: "{names} uses this beacon, but NetGuard does not admit it yet. Its path reads \"firewall pending\" until a change plan is approved. | {names} use this beacon, but NetGuard does not admit them yet. Their paths read \"firewall pending\" until a change plan is approved.",
-          plan: "{names} uses this beacon, but its plan does not include it yet, so it holds no key. A change plan admits it. | {names} use this beacon, but its plan does not include them yet, so they hold no key. A change plan admits them.",
           action: "Plan a change",
+        },
+        // A change plan the sources need (the server's replan): said on the path sheet, the Beacon card, the plan sheet and the attention list.
+        replan: {
+          firewall: "NetGuard on {target} does not admit {names} yet. The firewall changes only through an approved beacon plan, so {names} cannot measure {target} with its beacon until a change plan is approved. | NetGuard on {target} does not admit {names} yet. The firewall changes only through an approved beacon plan, so these sources cannot measure {target} with its beacon until a change plan is approved.",
+          plan: "The beacon plan of {target} does not include {names} yet, so {target} holds no key for it. {names} cannot measure {target} with its beacon until a change plan is approved. | The beacon plan of {target} does not include {names} yet, so {target} holds no key for them. These sources cannot measure {target} with its beacon until a change plan is approved.",
+          firewallUnnamed: "NetGuard on {target} does not admit every source that uses its beacon yet. The firewall changes only through an approved beacon plan, so those sources cannot measure {target} with its beacon until a change plan is approved.",
+          planUnnamed: "The beacon plan of {target} does not include every source that uses it yet. Those sources cannot measure {target} with its beacon until a change plan is approved.",
+          removed: "NetGuard on {target} still admits {names}, which no longer uses its beacon; the change plan removes it. | NetGuard on {target} still admits {names}, which no longer use its beacon; the change plan removes them.",
+          keeps: "The change plan keeps the port, bind address and endpoint. Nothing changes until someone approves it in Approvals.",
+          waits: "A plan for this beacon already waits for approval and may settle this; review it before filing another.",
+          action: "Plan the change",
           review: "Review the waiting plan",
+          openBeacon: "Open the beacon of {target}",
+          opening: "Reading the beacon of {target}",
+          failed: "The beacon of {target} was not read: {reason}",
+          // The attention list's line: who cannot measure what, and why, in one clause.
+          claim: {
+            firewall: "{names} cannot measure {target} with its beacon until NetGuard admits it through a change plan | {names} cannot measure {target} with its beacon until NetGuard admits them through a change plan",
+            plan: "{names} cannot measure {target} with its beacon until a change plan adds it | {names} cannot measure {target} with its beacon until a change plan adds them",
+            firewallUnnamed: "Sources cannot measure {target} with its beacon until NetGuard admits them through a change plan",
+            planUnnamed: "Sources cannot measure {target} with its beacon until a change plan adds them",
+            removed: "NetGuard on {target} still admits {names}, which no longer uses its beacon | NetGuard on {target} still admits {names}, which no longer use its beacon",
+          },
         },
         reach: {
           pending: "Checking from {source}.",

@@ -56,7 +56,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, BeaconPlanRequest, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, Principal } from "@/lib/api/index";
+import type { AuditEvent, BeaconPlanRequest, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, PathsResponse, Principal } from "@/lib/api/index";
 import { canonicalHeaderName, monitorOrigin } from "@/views/fleet/checkRulesModel";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
@@ -85,8 +85,8 @@ import {
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
 import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, probeFacts, rollupsFor, seriesFor } from "./latencyFixture";
 import { lineChains } from "./topologyFixture";
-import { M2B, beaconShape, runsBeaconClient } from "./beaconShapes";
-import { appliedBeaconApproval, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
+import { M2B, REPLANS, beaconShape, runsBeaconClient } from "./beaconShapes";
+import { appliedBeaconApproval, beaconReplansFor, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
 import { GOLDEN, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
@@ -305,6 +305,11 @@ function currentBeaconSources(targetId: string): string[] {
     .map((p) => p.source);
   const fromChecks = monitors.filter((m) => m.type === "beacon" && m.enabled && m.target_node === targetId).flatMap((m) => m.node_ids ?? []);
   return [...new Set([...fromPlan, ...fromChecks])].filter(runs).sort();
+}
+
+/** The server with the monitoring follow-ups names the beacons that need a change plan in every paths read (REPLANS). */
+function withReplans(response: PathsResponse): PathsResponse {
+  return REPLANS ? { ...response, beacon_replans: beaconReplansFor(nodes, currentBeaconSources) } : response;
 }
 
 function reachabilityCheck(): MonitorView {
@@ -667,7 +672,7 @@ export const api = {
         ? answer("paths", () => goldenPaths(window) ?? notGolden(`the paths read for window ${window}`))
         : pathsOld()
           ? missingRoute("/api/monitors/paths")
-          : answer("paths", () => pathsFor(pathPlan(), window, monitors), Number(PARAMS.get("pathsMs")) || LATENCY_MS),
+          : answer("paths", () => withReplans(pathsFor(pathPlan(), window, monitors)), Number(PARAMS.get("pathsMs")) || LATENCY_MS),
     series: (query: PathSeriesQuery) =>
       GOLDEN
         ? answer("series", () => goldenSeries(query) ?? notGolden(`the series of ${query.source || "the control plane"} to ${query.target_node ?? query.monitor} over ${query.window}`))

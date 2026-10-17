@@ -8,12 +8,12 @@
  * Plans and rotations change the in-memory state, so the card's pending and
  * rotated states can be driven end to end.
  */
-import type { ApprovalView, BeaconFinding, BeaconPlan, BeaconPlanRequest, BeaconPlanResponse, BeaconSettings, BeaconView, Node } from "@/lib/api/index";
+import type { ApprovalView, BeaconFinding, BeaconPlan, BeaconPlanRequest, BeaconPlanResponse, BeaconReplan, BeaconSettings, BeaconView, Node } from "@/lib/api/index";
 import { sha256Hex } from "@/lib/crypto";
 import { DEFAULT_BEACON_LIMITS, parseBeaconEndpoint, parseBeaconIPv4 } from "@/views/fleet/beaconModel";
 
 import { DAY, HOUR, NOW, iso } from "./fleetFixture";
-import { beaconEndpoint, beaconShape, type BeaconShape } from "./beaconShapes";
+import { REPLANS, beaconEndpoint, beaconShape, type BeaconShape } from "./beaconShapes";
 
 /** Nodes NetGuard does not manage beyond the shapes that say so: a plan for them is open to the internet. */
 const UNGUARDED = new Set(["[cd]-DMIT-pro-malibu", "[cd]-bandwagon-dc6"]);
@@ -130,7 +130,40 @@ export function beaconViewFor(node: Node, nodes: readonly Node[], current: reado
     };
   });
   if (shape.enabled && view.exposure === "netguard") view.firewall_pending = !!shape.companionPending || view.sources!.some((s) => s.current !== s.approved);
+  if (REPLANS) view.replan = replanFrom(node, view) ?? null;
   return view;
+}
+
+/**
+ * The change plan a beacon needs, by the server's beaconReplanFor: a current
+ * source the applied plan did not approve, or under NetGuard an approved one
+ * no longer current. The harness session reads every node, so every id is listed.
+ */
+function replanFrom(node: Node, view: BeaconView): BeaconReplan | undefined {
+  if (!view.applied?.enabled) return undefined;
+  const netguard = view.exposure === "netguard";
+  const added = (view.sources ?? []).filter((s) => s.current && !s.approved).map((s) => s.node_id).sort();
+  const removed = netguard ? (view.sources ?? []).filter((s) => s.approved && !s.current).map((s) => s.node_id).sort() : [];
+  if (!added.length && !removed.length) return undefined;
+  return {
+    node_id: node.id,
+    name: node.name,
+    reason: netguard ? "firewall_pending" : "beacon_source_pending",
+    added,
+    removed,
+    ...(view.pending_approval_id ? { pending_approval_id: view.pending_approval_id } : {}),
+    request: { node_id: node.id, action: "change" },
+  };
+}
+
+/** GET /api/monitors/paths's beacon_replans: every enabled beacon that needs a change plan, by node id. */
+export function beaconReplansFor(nodes: readonly Node[], current: (nodeId: string) => string[]): BeaconReplan[] {
+  if (!REPLANS) return [];
+  return nodes
+    .filter((n) => beaconShape(n.name).enabled)
+    .map((n) => beaconViewFor(n, nodes, current(n.id)).replan)
+    .filter((r): r is BeaconReplan => !!r)
+    .sort((a, b) => a.node_id.localeCompare(b.node_id));
 }
 
 export type PlanOutcome =

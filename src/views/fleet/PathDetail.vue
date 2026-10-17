@@ -45,6 +45,9 @@ import {
 } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 import WindowControl from "./WindowControl.vue";
+import BeaconReplanNote from "./BeaconReplanNote.vue";
+import { replanNames } from "./beaconModel";
+import { useBeaconReplan } from "./useBeaconReplan";
 
 // The chart and uPlot load with the first sheet that draws one, not with the page. A chunk
 // that fails to load (a tab left open across a deploy) says so instead of leaving a blank.
@@ -97,6 +100,20 @@ const unmeasured = computed(() => {
 /** Beacon reasons the target's Beacon card explains and fixes: no beacon, not admitted, refused, not listening, filtered. */
 const BEACON_ON_TARGET = new Set(["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "beacon_not_listening", "beacon_filtered"]);
 const beaconFixOnTarget = computed(() => BEACON_ON_TARGET.has(reasonCode(unmeasured.value) ?? ""));
+
+/**
+ * A source the target's beacon does not admit yet (firewall_pending,
+ * beacon_source_pending) waits on a change plan the server names: the sheet
+ * offers it, pre-filled as the server words it, or the plan that already
+ * waits, where the Beacon card link stood.
+ */
+const replans = useBeaconReplan();
+const replan = computed(() => {
+  const code = reasonCode(unmeasured.value);
+  if (!replans || (code !== "firewall_pending" && code !== "beacon_source_pending")) return undefined;
+  const item = replans.replanFor(props.path?.targetNode);
+  return item ? { item, names: replanNames(item, undefined, replans.nameOf), canPlan: replans.missing(item).length === 0 } : undefined;
+});
 
 const monitorId = computed(() => props.path?.monitorId || props.address.monitorId || "");
 /** The range the chart is zoomed to, whose figures replace the window's. */
@@ -362,6 +379,19 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
         <RouterLink v-if="canUpdateAgents" :to="{ name: 'platform-agent-updates' }" class="font-medium text-foreground underline underline-offset-2">{{ $t('fleet.monitoring.paths.sheet.agentUpdate') }}</RouterLink>
       </p>
       <p v-else-if="unmeasured === 'icmp_filtered'" class="text-xs text-muted-foreground" data-testid="path-next">{{ $t('fleet.monitoring.paths.sheet.filteredNext') }}</p>
+      <!-- A source the target's beacon does not admit yet: the change plan the server names, in one action. -->
+      <BeaconReplanNote
+        v-else-if="replan && replans"
+        class="mt-1.5"
+        :item="replan.item"
+        :target="path?.targetNodeName || replan.item.name"
+        :names="replan.names"
+        :sentences="false"
+        :can-plan="replan.canPlan"
+        :opening="replans.opening.value === replan.item.nodeId"
+        beacon-link
+        @plan="replans.open(replan.item)"
+      />
       <!-- A beacon reason whose fix is on the target: its Beacon card on the node page (design 29 D12). -->
       <p v-else-if="beaconFixOnTarget && path?.targetNode" class="text-xs text-muted-foreground" data-testid="path-next">
         <RouterLink

@@ -185,6 +185,9 @@ test("golden matrix: degraded evidence, the clearing time and unmeasured figures
   assert.equal(down.expected, 60);
   assert.equal(availability(down), 1 - 0.0333);
   assert.equal(pathOf(m, "node-hk~node-fra").prev?.p50Ms, 158.8);
+  // The server lists the beacons that need a change plan; this fleet runs none.
+  assert.deepEqual(GOLDEN_PATHS_1H.beacon_replans, []);
+  assert.equal(m.replans.size, 0);
 
   // Loss takes the path's state tone: red on the down path, amber on the lossy degraded ones, never red on an up path.
   assert.equal(lossTone(displayState(down)), "destructive");

@@ -698,3 +698,54 @@ test("loss tone: a down path's loss is red, a degraded path's amber, an up path'
   } as PathsResponse);
   assert.equal(lossTone(m.paths[0]!.state), "ink");
 });
+
+test("attention: a target whose beacon needs a change plan is one line with its waiting paths, after offline sources and before other unknowns", () => {
+  const cell = (source: string, target: string, state: string, reason = "") => ({
+    source, target_node: target, target: `${target}:50231`, monitor_id: `mon_latb_${target}`, managed: true, method: "beacon", state, reason,
+    p50_ms: null, p95_ms: null, jitter_ms: null, loss: null, samples: 0, expected: 60, prev: null, last_at: null,
+  });
+  const response = {
+    window: "1h",
+    degraded_at: "2026-09-14T09:47:00Z",
+    sources: [{ node_id: "hk", name: "hk-edge" }, { node_id: "sh", name: "cd-hs-sh" }, { node_id: "fra", name: "fra-2" }],
+    targets: [{ node_id: "jp", name: "tyo-3" }, { node_id: "hel", name: "hetzner-hel" }, { node_id: "sg", name: "sg-1" }],
+    paths: [
+      cell("hk", "jp", "unknown", "firewall_pending"),
+      cell("sh", "jp", "unknown", "firewall_pending"),
+      // A waiting path whose target the server does not list (a server before replans): it stays with its reason.
+      cell("hk", "sg", "unknown", "beacon_source_pending"),
+      cell("fra", "jp", "unknown", "agent_offline"),
+    ],
+    beacon_replans: [
+      { node_id: "jp", name: "tyo-3", reason: "firewall_pending", added: ["hk", "sh"], removed: [], request: { node_id: "jp", action: "change" } },
+      // NetGuard still admits a source that left: no path waits, the plan only narrows the allow set.
+      { node_id: "hel", name: "hetzner-hel", reason: "firewall_pending", added: [], removed: ["fra"], pending_approval_id: "apr_7", request: { node_id: "hel", action: "change" } },
+    ],
+  } as unknown as PathsResponse;
+  const m = buildPathsMatrix(response);
+  assert.deepEqual([...m.replans.keys()], ["jp", "hel"]);
+  const items = pathAttention(m);
+  assert.deepEqual(
+    items.map((i) => [i.kind, i.paths.map((p) => p.key)]),
+    [
+      ["offline", ["fra~jp"]],
+      // By target, then source name: cd-hs-sh before hk-edge.
+      ["replan", ["sh~jp", "hk~jp"]],
+      ["replan", []],
+      ["unknown", ["hk~sg"]],
+    ],
+  );
+  const [, jp, hel] = items;
+  assert.ok(jp?.kind === "replan" && hel?.kind === "replan");
+  assert.equal(jp.targetName, "tyo-3");
+  assert.deepEqual(jp.replan.request, { node_id: "jp", action: "change" });
+  assert.equal(hel.replan.pendingApprovalId, "apr_7");
+  // Its query still finds exactly its paths, should a caller want them listed.
+  const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
+  const compiled = compileQuery(attentionQuery(jp), schema);
+  assert.ok(compiled.ok);
+  assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.key).sort(), ["hk~jp", "sh~jp"]);
+  // A server that sends no list, and one that sends an empty list, offer no plan.
+  assert.equal(buildPathsMatrix({ ...response, beacon_replans: undefined }).replans.size, 0);
+  assert.equal(pathAttention(buildPathsMatrix({ ...response, beacon_replans: [] })).filter((i) => i.kind === "replan").length, 0);
+});
