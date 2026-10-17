@@ -70,7 +70,15 @@ import { useProof } from "@/composables/useProof";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { hasNeverReported, statusMeta } from "@/lib/status";
-import { describeNodeStatus, isReporting, metricFreshness, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
+import {
+  describeNodeStatus,
+  hasMetricSample,
+  isReporting,
+  metricFreshness,
+  nodeStatus,
+  nodeStatusReason,
+  nodeStatusSince,
+} from "@/lib/nodeStatus";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -78,6 +86,7 @@ import {
   formatDateTime,
   formatRelativeTime,
   formatDuration,
+  isZeroTime,
   NO_VALUE,
   shortId,
 } from "@/lib/format";
@@ -568,7 +577,7 @@ const statusReason = computed(() => {
  * numbers are still worth showing; the heading and the description now say
  * which of the three cases the card is in.
  */
-const metricSample = computed(() => metricFreshness(node.value ?? {}, !!node.value?.metrics));
+const metricSample = computed(() => metricFreshness(node.value ?? {}, hasMetricSample(node.value?.metrics)));
 const metricsAreLive = computed(() => metricSample.value === "live");
 const noSample = computed(() => metricSample.value === "none");
 const statusCardTitle = computed(() =>
@@ -706,7 +715,9 @@ function touchUpdateDraft() {
  * `@/lib/status`; this used to be a private copy of it in each of three views.
  */
 function lastSeenText(node: Node): string {
-  if (hasNeverReported(node)) return t("fleet.nodes.list.neverSeen");
+  // A disabled node keeps the disabled status, so the zero or absent
+  // last_seen is what says it never checked in.
+  if (hasNeverReported(node) || isZeroTime(node.last_seen)) return t("fleet.nodes.list.neverSeen");
   return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
 }
 
@@ -1724,19 +1735,19 @@ async function saveDebug(): Promise<void> {
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.load') }}</p>
                     <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                       <Gauge class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                      {{ node.metrics?.load1?.toFixed(2) ?? NO_VALUE }}
+                      {{ noSample ? NO_VALUE : (node.metrics?.load1?.toFixed(2) ?? NO_VALUE) }}
                     </p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.uptime') }}</p>
                     <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                       <Clock class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                      {{ formatDuration(node.metrics?.uptime_seconds) }}
+                      {{ noSample ? NO_VALUE : formatDuration(node.metrics?.uptime_seconds) }}
                     </p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sampleTime') }}</p>
-                    <p class="mt-1 font-mono text-sm tabular">{{ formatRelativeTime(node.metrics?.collected_at) }}</p>
+                    <p class="mt-1 font-mono text-sm tabular">{{ noSample ? NO_VALUE : formatRelativeTime(node.metrics?.collected_at) }}</p>
                   </div>
                   <!-- A rate is a reading of now; a node that is not reporting has none. -->
                   <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
@@ -1755,7 +1766,8 @@ async function saveDebug(): Promise<void> {
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.transferred') }}</p>
-                    <p class="mt-1 font-mono text-sm tabular">
+                    <p v-if="noSample" class="mt-1 font-mono text-sm tabular">{{ NO_VALUE }}</p>
+                    <p v-else class="mt-1 font-mono text-sm tabular">
                       <span class="text-success">{{ formatBytes(node.metrics?.net_rx_bytes) }}</span>
                       /
                       <span class="text-primary">{{ formatBytes(node.metrics?.net_tx_bytes) }}</span>

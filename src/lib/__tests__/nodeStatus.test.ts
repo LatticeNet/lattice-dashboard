@@ -7,6 +7,7 @@ import {
   compareByAttention,
   countNodeStatuses,
   describeNodeStatus,
+  hasMetricSample,
   isReporting,
   metricFreshness,
   needsAttention,
@@ -135,4 +136,19 @@ test("resource numbers are live, remembered, or absent, and never a confident ze
   // Nothing was ever measured. This is the case that printed "0% / 0% / 0%".
   assert.equal(metricFreshness({ status: "never_reported" }, false), "none");
   assert.equal(metricFreshness({ status: "online" }, false), "none");
+});
+
+/**
+ * Every node carries a metrics object, so its presence is no evidence of a
+ * measurement. A current server omits collected_at until the first beat and
+ * an older one sent the Go zero time; neither is a sample.
+ */
+test("a metrics object is a sample only with a real collected_at", () => {
+  assert.equal(hasMetricSample(undefined), false);
+  assert.equal(hasMetricSample(null), false);
+  assert.equal(hasMetricSample({}), false);
+  assert.equal(hasMetricSample({ collected_at: "" }), false);
+  assert.equal(hasMetricSample({ collected_at: ZERO }), false);
+  assert.equal(hasMetricSample({ collected_at: "2026-10-17T09:30:00Z" }), true);
+  assert.equal(metricFreshness({ online: false }, hasMetricSample({})), "none");
 });

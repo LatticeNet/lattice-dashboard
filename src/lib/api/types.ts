@@ -226,7 +226,8 @@ export interface NodeCapability {
   state: "enrolled" | "excluded";
   reason?: string;
   actor_id?: string;
-  updated_at: string;
+  /** Absent until an operator enrolls or excludes the node. */
+  updated_at?: string;
   enforced: boolean;
 }
 

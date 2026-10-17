@@ -9,6 +9,8 @@ import {
   agentVersions,
   canonicalLayoutQuery,
   compareNodeIdentity,
+  metricCellKind,
+  metricSortValue,
   nodeGroupByCodec,
   nodeGroupKey,
   nodeGroupOrder,
@@ -145,4 +147,33 @@ test("a long name keeps its last part, so siblings stay apart when cut", () => {
   assert.deepEqual(nameParts("cloudcone-la"), ["cloudcone-la", ""]);
   assert.deepEqual(nameParts("[OpenJobs-Data]-gpu-box"), ["[OpenJobs-Data]-gpu", "-box"]);
   assert.deepEqual(nameParts("averyverylongnamewithoutbreaks"), ["averyverylongnamewithoutbr", "eaks"]);
+});
+
+/**
+ * Every node carries a metrics object, all zeros for one that never reported,
+ * and since the server omits the zero collected_at it arrives with none at
+ * all. The sample is checked before contact: a node online before its first
+ * beat has no reading either, and printing its zeros claimed one.
+ */
+test("a metric cell reads the sample before the node's contact", () => {
+  const SAMPLE = { cpu_percent: 41, collected_at: "2026-10-17T09:30:00Z" } as Node["metrics"];
+  const EMPTY = { cpu_percent: 0 } as Node["metrics"];
+  const ZERO = { cpu_percent: 0, collected_at: "0001-01-01T00:00:00Z" } as Node["metrics"];
+  assert.equal(metricCellKind({ status: "online", metrics: SAMPLE }, undefined), "blank");
+  assert.equal(metricCellKind({ status: "online", metrics: SAMPLE }, 41), "live");
+  assert.equal(metricCellKind({ status: "offline", metrics: SAMPLE }, 41), "stale");
+  for (const metrics of [EMPTY, ZERO]) {
+    assert.equal(metricCellKind({ status: "never_reported", metrics }, 0), "none");
+    assert.equal(metricCellKind({ status: "disabled", metrics }, 0), "none");
+    assert.equal(metricCellKind({ status: "online", metrics }, 0), "none");
+  }
+});
+
+test("a node with no reading ranks below every real reading, a real 0% included", () => {
+  const SAMPLE = { collected_at: "2026-10-17T09:30:00Z" } as Node["metrics"];
+  assert.equal(metricSortValue({ metrics: SAMPLE }, 0), 0);
+  assert.equal(metricSortValue({ metrics: SAMPLE }, 41), 41);
+  assert.equal(metricSortValue({ metrics: SAMPLE }, undefined), -1);
+  assert.equal(metricSortValue({ metrics: {} as Node["metrics"] }, 0), -1);
+  assert.equal(metricSortValue({ metrics: { collected_at: "0001-01-01T00:00:00Z" } as Node["metrics"] }, 0), -1);
 });

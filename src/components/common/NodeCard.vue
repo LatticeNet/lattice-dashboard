@@ -30,7 +30,7 @@ import { useI18n } from "vue-i18n";
 import { Activity, ArrowDown, ArrowUp, Clock, Crown } from "lucide-vue-next";
 import type { Node } from "@/lib/api/types";
 import { statusMeta } from "@/lib/status";
-import { describeNodeStatus, metricFreshness, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
+import { describeNodeStatus, hasMetricSample, metricFreshness, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
 import { splitNamePrefix } from "@/lib/fleet";
 import { groupColor } from "@/lib/groupColors";
 import {
@@ -39,6 +39,8 @@ import {
   formatDuration,
   formatPercent,
   formatRelativeTime,
+  isZeroTime,
+  NO_VALUE,
   ratio,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -182,7 +184,7 @@ const statusTitle = computed(() => nodeStatusReason(props.node));
  * rather than a zero; `stale` keeps the numbers but the card is already dimmed
  * and its footer says when the last beat arrived.
  */
-const freshness = computed(() => metricFreshness(props.node, !!props.node.metrics));
+const freshness = computed(() => metricFreshness(props.node, hasMetricSample(props.node.metrics)));
 const { t } = useI18n();
 
 const noSample = computed(() => freshness.value === "none");
@@ -501,25 +503,28 @@ function onGroup(id: string) {
     <div
       class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground tabular"
     >
+      <!-- A node that never reported carries all-zero metrics; they print as
+           the no-value mark, not as "0 B/s (0 B)" and "0s" beside "never". -->
       <span class="inline-flex items-center gap-1">
         <ArrowDown class="size-3" aria-hidden="true" />
-        {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
-        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
+        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_rx_speed) }}
+        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <ArrowUp class="size-3" aria-hidden="true" />
-        {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
-        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
+        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_tx_speed) }}
+        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <Activity class="size-3" aria-hidden="true" />
-        {{ formatDuration(node.metrics?.uptime_seconds) }}
+        {{ noSample ? NO_VALUE : formatDuration(node.metrics?.uptime_seconds) }}
       </span>
-      <!-- A node that never reported carries the zero time as last_seen;
-           formatting it printed "739,861 days ago" under the card. -->
+      <!-- A node that never reported has no last_seen (an older server sent
+           the zero time, which printed "739,861 days ago"). A disabled node
+           keeps the disabled status, so the timestamp itself is checked. -->
       <span class="inline-flex items-center gap-1">
         <Clock class="size-3" aria-hidden="true" />
-        {{ info.status === "never_reported" ? neverLabel : formatRelativeTime(node.last_seen) }}
+        {{ info.status === "never_reported" || isZeroTime(node.last_seen) ? neverLabel : formatRelativeTime(node.last_seen) }}
       </span>
       <!-- Actions (optional). At the end of the footer, where the table keeps
            its action cell, and revealed on hover or keyboard focus rather than

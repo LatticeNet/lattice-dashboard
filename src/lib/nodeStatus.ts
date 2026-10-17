@@ -118,9 +118,10 @@ export function isNodeStatus(value: unknown): value is NodeStatus {
 }
 
 /**
- * The instant before which a timestamp cannot be a real contact time. The API
- * sends `last_seen` unconditionally, so a node that has never beaten arrives
- * carrying the Go zero time rather than omitting the field.
+ * The instant before which a timestamp cannot be a real contact time. A server
+ * that predates the `status` field sends `last_seen` unconditionally, so a node
+ * that has never beaten arrives carrying the Go zero time; a current server
+ * omits it instead. Both read as "never".
  */
 const EARLIEST_PLAUSIBLE_MS = Date.UTC(2000, 0, 1);
 
@@ -184,6 +185,16 @@ export function needsAttention(node: NodeStatusInput): boolean {
  *    "0% CPU" is a claim, and it is false.
  */
 export type MetricFreshness = "live" | "stale" | "none";
+
+/**
+ * Whether a metrics object holds a measurement. Every node carries a metrics
+ * object, a node that never reported included, so its presence proves nothing:
+ * only a real `collected_at` does. A current server omits that field until
+ * the first beat; an older one sent the Go zero time.
+ */
+export function hasMetricSample<T extends { collected_at?: string }>(metrics: T | null | undefined): metrics is T {
+  return !!metrics && !isZeroTime(metrics.collected_at);
+}
 
 export function metricFreshness(node: NodeStatusInput, hasSample: boolean): MetricFreshness {
   if (!hasSample) return "none";
