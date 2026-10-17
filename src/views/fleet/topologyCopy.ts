@@ -68,6 +68,9 @@ export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
       return { text: edge.last?.ms !== undefined ? formatMs(edge.last.ms) : stateLabel(t, edge), tone: "text-foreground" };
     case "failing":
       return { text: stateLabel(t, edge), tone: "text-destructive" };
+    // The run passed but the path is degraded (D13): the word, in the warning ink a degraded probe's value takes.
+    case "degraded":
+      return { text: stateLabel(t, edge), tone: "text-warning-text" };
     default:
       return { text: stateLabel(t, edge), tone: "text-muted-foreground" };
   }

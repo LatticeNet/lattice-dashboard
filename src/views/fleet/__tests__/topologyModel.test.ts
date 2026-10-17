@@ -7,7 +7,7 @@ import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
 import { buildPathsMatrix } from "../pathsModel.ts";
-import { rowSummaryValue } from "../topologyCopy.ts";
+import { edgeValue, rowSummaryValue } from "../topologyCopy.ts";
 import {
   CHECK_FAN,
   DEFAULT_DRAWN_SOURCES,
@@ -403,6 +403,7 @@ test("a check edge reads degraded where its newest run passes on a path the matr
   assert.equal(edge(m, "check:web:de").state, "failing", "a failed newest run stays failing");
   assert.deepEqual(m.checks[0]!.summary, { up: 1, degraded: 1, failing: 1, stale: 0, none: 0 });
   assert.deepEqual(edgeStyle(edge(m, "check:web:sh")), { color: "--warning", stroke: "solid", width: 1.75 });
+  assert.deepEqual(edgeValue((key) => key, edge(m, "check:web:sh")), { text: "fleet.monitoring.topology.state.degraded", tone: "text-warning-text" });
   // Without the matrix (not read yet) the newest run is all there is.
   assert.equal(edge(buildTopology(input({ matrix: undefined, monitors: [web] })), "check:web:sh").state, "up");
   // The check card and the edge label have words for it in both locales.
