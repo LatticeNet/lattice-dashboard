@@ -30,7 +30,7 @@ import { Badge } from "@/components/ui/badge";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
-import { baselinePending, earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, type PathSeries } from "./pathSeriesModel";
+import { baselinePending, earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, stepInProgress, type PathSeries } from "./pathSeriesModel";
 import { formatShare, isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
 import type { Verdict } from "./triangulationModel";
 import {
@@ -321,6 +321,8 @@ const tableRows = computed(() => [...(series.value?.points ?? [])].reverse());
 /** A series that switched method (tcp to icmp) names each bucket's method in the table too. */
 const tableMethods = computed(() => !!series.value && methodMarkers(series.value).length > 0);
 const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, props.path?.method ?? "tcp").toUpperCase() : "");
+/** The newest row is the step in progress: its runs are counted so far, so the row says so. */
+const tableLive = (t: number) => !!series.value && stepInProgress(series.value, { t });
 </script>
 
 <template>
@@ -473,7 +475,9 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
             </thead>
             <tbody class="font-mono tabular">
               <tr v-for="p in tableRows" :key="p.t" class="border-t border-border/60">
-                <td class="whitespace-nowrap px-3 py-1">{{ formatDateTime(p.t * 1000) }}</td>
+                <td class="whitespace-nowrap px-3 py-1">
+                  {{ formatDateTime(p.t * 1000) }}<span v-if="tableLive(p.t)" class="ms-1 font-sans text-muted-foreground" data-testid="path-table-live">{{ $t('fleet.monitoring.chart.inProgress') }}</span>
+                </td>
                 <template v-if="p.missing">
                   <td colspan="4" class="px-2 py-1 text-end font-sans text-muted-foreground">{{ $t('fleet.monitoring.chart.noData') }}</td>
                 </template>

@@ -40,6 +40,7 @@ import {
   bucketIndexAt,
   chartCeilingMs,
   chartColumns,
+  emptyStepNote,
   gapRuns,
   laneLayout,
   methodAt,
@@ -47,6 +48,7 @@ import {
   methodMarkers,
   piecesCrossing,
   placeGuideLabels,
+  stepInProgress,
   stepIndex,
   visibleRange,
   LATENCY_LANE_START,
@@ -628,8 +630,10 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   if (!p) return undefined;
   const start = new Date(p.t * 1000);
   const end = new Date((p.t + step.value) * 1000);
-  const time = `${dateTime.value.format(start)} → ${timeOnly.value.format(end)}`;
-  const runs = t("fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
+  // The step in progress runs to now, and its runs are counted so far.
+  const live = stepInProgress(props.series, p);
+  const time = `${dateTime.value.format(start)} → ${live ? t("fleet.monitoring.chart.now") : timeOnly.value.format(end)}`;
+  const runs = t(live ? "fleet.monitoring.chart.runsSoFar" : "fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
   const method = methodAt(props.series, p.t, props.method);
   const methodEntry: ReadoutEntry[] = [{ key: "method", label: t("fleet.monitoring.chart.method"), value: method.toUpperCase() }];
   // The previous period's p50 at this step, when the comparison is drawn; a gap now may have had runs then.
@@ -637,11 +641,13 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   const previousEntry: ReadoutEntry[] = previous.value
     ? [{ key: "previous", label: t("fleet.monitoring.chart.previous"), value: prev !== null && prev !== undefined ? formatMs(prev) : t("fleet.monitoring.chart.previousNone"), tone: prev === null || prev === undefined ? "muted" : undefined }]
     : [];
-  if (p.missing) {
+  const empty = emptyStepNote(p, live);
+  if (empty === "noData") {
     return { time, note: t("fleet.monitoring.chart.noDataLong"), entries: [{ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs }, ...methodEntry, ...previousEntry] };
   }
-  if (p.n === 0) {
-    return { time, note: t("fleet.monitoring.chart.notExpected"), entries: methodEntry };
+  if (empty) {
+    // Before its first run is due the step in progress is not a pause: it says so, with the previous period's value.
+    return { time, note: t(empty === "notYet" ? "fleet.monitoring.chart.notYet" : "fleet.monitoring.chart.notExpected"), entries: empty === "notYet" ? [...methodEntry, ...previousEntry] : methodEntry };
   }
   const entries: ReadoutEntry[] = [];
   if (p.p50Ms !== undefined) {

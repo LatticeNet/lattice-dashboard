@@ -14,6 +14,7 @@ import {
   LOSS_LANE,
   bucketIndexAt,
   chartColumns,
+  emptyStepNote,
   expectedStepSeconds,
   fillSteps,
   gapRuns,
@@ -29,6 +30,7 @@ import {
   seriesFromLatency,
   seriesFromResponse,
   seriesStats,
+  stepInProgress,
   stepIndex,
   toSeconds,
   visibleRange,
@@ -449,4 +451,29 @@ test("line pieces: gaps break the line; a steep drop crosses a box its points mi
   assert.equal(piecesCrossing(pieces, { x0: 32, x1: 38, y0: 90, y1: 103 }), 1);
   assert.equal(piecesCrossing(pieces, { x0: 12, x1: 28, y0: 0, y1: 200 }), 0, "nothing is drawn across the gap");
   assert.equal(piecesCrossing(pieces, { x0: 0, x1: 10, y0: 20, y1: 40 }), 0);
+});
+
+test("the step in progress: the last step, which ends after now, says its runs so far and is never read as a pause", () => {
+  // An hour at a minute as the server lays it out: 60 steps, the last holding now (09:47:20), 20 s in, no run yet.
+  const to = 1789375640;
+  const from = Math.floor(to / 60) * 60 - 59 * 60;
+  const buckets = Array.from({ length: 60 }, (_, i) => ({ t: from + i * 60, n: i === 59 ? 0 : 1, expected: i === 59 ? 0 : 1, fail: 0, p50_ms: 40 }));
+  const s = seriesFromResponse({ window: "1h", step_seconds: 60, from, to, buckets });
+  assert.equal(s.points.length, 60);
+  assert.deepEqual(
+    s.points.map((p) => stepInProgress(s, p)).flatMap((live, i) => (live ? [i] : [])),
+    [59],
+    "only the newest step is in progress",
+  );
+  const live = s.points[59]!;
+  assert.equal(live.missing, false, "a step that has not reached its first run is not a gap");
+  assert.equal(emptyStepNote(live, true), "notYet");
+  // The same empty step anywhere else expected nothing: a pause.
+  assert.equal(emptyStepNote({ n: 0, missing: false }, false), "notExpected");
+  assert.equal(emptyStepNote({ n: 0, missing: true }, true), "noData", "a whole interval passed with no run: a gap, in progress or not");
+  assert.equal(emptyStepNote({ n: 1, missing: false }, true), undefined);
+  // A series that ends on a step boundary has no step in progress; a step of 0 never is.
+  assert.equal(stepInProgress({ to: from + 60 * 60, stepSec: 60 }, { t: from + 59 * 60 }), false);
+  assert.equal(stepInProgress({ to, stepSec: 0 }, { t: to }), false);
+  assert.equal(stepInProgress({ to: NaN, stepSec: 60 }, { t: to }), false);
 });

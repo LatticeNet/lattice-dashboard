@@ -3,9 +3,16 @@
  *
  * The six files under ./m3-golden/ are byte for byte the files of
  * lattice-server internal/server/testdata/m3-golden/ at commit
- * f1ba66a6f2310f3440a6514533e4dd426a49a7ae (branch
- * feature/20261016_monitoring-paths-m3), written by TestM3GoldenResponses in
- * internal/server/monitor_degraded_golden_test.go. That test builds a fleet on
+ * eee671bef77618eaf5b87079c273bf6a323ef941 (branch
+ * fix/20261017_monitoring-followups), written by TestM3GoldenResponses in
+ * internal/server/monitor_degraded_golden_test.go. That commit counts a
+ * window's whole buckets only: a series of span at step holds ceil(span/step)
+ * steps, the last in progress, which expects the runs it has heard; a matrix
+ * window ends where the bucket in progress begins, so a path that ran every
+ * interval reads as many runs as it expected (60 of 60 for an hour). Its
+ * matrices also carry `beacon_replans`. The server's CI job "m3 golden
+ * drift" compares this directory, at the console commit lattice-server pins
+ * in dashboard.ref, with its own. That test builds a fleet on
  * the production store layout (sources cd-hs-sh, hk-edge and fra-2; targets
  * fra-2, hk-edge and tyo-3; a week of one-minute runs; the clock fixed at
  * 2026-09-14), runs the degraded evaluator minute by minute and records what
@@ -30,7 +37,7 @@ import paths7d from "./m3-golden/paths-7d.json" with { type: "json" };
 import series from "./m3-golden/series-degraded-latency-1h-previous.json" with { type: "json" };
 
 /** The lattice-server commit the files were copied from. */
-export const GOLDEN_SERVER_COMMIT = "f1ba66a6f2310f3440a6514533e4dd426a49a7ae";
+export const GOLDEN_SERVER_COMMIT = "eee671bef77618eaf5b87079c273bf6a323ef941";
 
 /** The server's clock when it answered: the matrices' observed_at. */
 export const GOLDEN_NOW = "2026-09-14T09:47:00Z";

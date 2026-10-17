@@ -36,6 +36,7 @@ import {
   methodStarts,
   seriesFromResponse,
   seriesStats,
+  stepInProgress,
 } from "../pathSeriesModel.ts";
 import {
   attentionQuery,
@@ -169,16 +170,19 @@ test("golden matrix: degraded evidence, the clearing time and unmeasured figures
   assert.equal(cert.method, "tls");
   assert.equal(cert.lastAt, at("2026-09-14T09:15:00Z"));
 
-  // The hour holds 61 runs against 60 expected (both ends of the window count): availability is capped at full.
-  assert.equal(availability(pathOf(m, "node-hk~node-fra")), 1);
+  // The hour is its 60 whole minutes before the one in progress: a path that ran every minute heard 60 of 60.
+  const full = pathOf(m, "node-hk~node-fra");
+  assert.deepEqual([full.samples, full.expected], [60, 60]);
+  assert.equal(availability(full), 1);
+  for (const p of m.paths.filter((x) => x.samples > 0 && x.source !== "")) assert.equal(p.samples, p.expected, `${p.key} heard every run it expected`);
   const down = pathOf(m, "node-sh~node-hk");
   assert.equal(down.state, "down");
-  assert.equal(down.loss, 0.0492);
+  assert.equal(down.loss, 0.0333);
   assert.equal(down.p50Ms, 38);
   assert.deepEqual(down.prev, { p50Ms: 38, loss: 0 });
-  assert.equal(down.samples, 61);
+  assert.equal(down.samples, 60);
   assert.equal(down.expected, 60);
-  assert.equal(availability(down), (61 * (1 - 0.0492)) / 60);
+  assert.equal(availability(down), 1 - 0.0333);
   assert.equal(pathOf(m, "node-hk~node-fra").prev?.p50Ms, 158.8);
 });
 
@@ -201,8 +205,13 @@ test("golden matrix: the 7d window judges the same states with the same evidence
   // The week's median is the usual 40 ms although the path is degraded on its last 15 minutes.
   assert.equal(pathOf(week, "node-fra~node-jp").p50Ms, 40);
   assert.equal(pathOf(week, "node-fra~node-jp").p95Ms, 41.3);
-  assert.equal(pathOf(week, "node-sh~node-hk").loss, 0.0003);
-  assert.equal(pathOf(week, "node-sh~node-hk").samples, 10128);
+  // The week is its 168 whole hours before the one in progress: 10080 one-minute runs of 10080.
+  assert.equal(pathOf(week, "node-sh~node-hk").loss, 0);
+  assert.equal(pathOf(week, "node-sh~node-hk").samples, 10080);
+  assert.equal(pathOf(week, "node-sh~node-hk").expected, 10080);
+  assert.equal(pathOf(week, "node-fra~@mon-ping-jp").expected, 10080, "a path that measured nothing still expected the week's runs");
+  // The hourly certificate check's history starts inside the oldest hour, and its newest run sits in the hour in progress.
+  assert.deepEqual([pathOf(week, "_~@mon-cert").samples, pathOf(week, "_~@mon-cert").expected], [167, 168]);
   assert.equal(pathOf(week, "_~@mon-cert").prev, undefined, "the week before held no certificate run");
 });
 
@@ -247,7 +256,7 @@ test("golden attention: down, degraded by target, degraded by source, then the u
   const [down, degraded, bySource, unknown] = items;
   assert.ok(down?.kind === "down" && degraded?.kind === "degraded" && bySource?.kind === "degradedSource" && unknown?.kind === "unknown");
   assert.equal(down.measuredBy, 2);
-  assert.equal(down.worstLoss, 0.0492);
+  assert.equal(down.worstLoss, 0.0333);
   assert.equal(down.verdict?.kind, "path");
   assert.equal(degraded.measuredBy, 3);
   assert.equal(degraded.verdict?.kind, "target");
@@ -287,15 +296,21 @@ test("golden attention: down, degraded by target, degraded by source, then the u
 test("golden series: buckets, the 7-day baseline and the previous hour read as the chart draws them", () => {
   const s = seriesFromResponse(GOLDEN_SERIES);
   assert.equal(s.stepSec, 60);
-  assert.equal(s.from, at("2026-09-14T08:47:00Z") / 1000);
+  assert.equal(s.from, at("2026-09-14T08:48:00Z") / 1000);
   assert.equal(s.to, NOW / 1000);
-  // The window starts on a step and runs to now, so it holds 60 whole steps and the one in progress.
-  assert.equal(s.points.length, 61);
+  // An hour at a one-minute step holds 60 steps, the last of them the one in progress at now.
+  assert.equal(s.points.length, 60);
   assert.equal(s.points[0]!.t, s.from);
   assert.equal(s.points.at(-1)!.t, s.to);
   assert.equal(s.points.filter((p) => p.missing).length, 0, "no step is a gap");
-  // The step in progress expected no whole run yet but heard one: it is drawn, not hatched.
-  assert.deepEqual([s.points.at(-1)!.n, s.points.at(-1)!.expected, s.points.at(-1)!.missing], [1, 0, false]);
+  // The step in progress expects the run it has heard, never fewer: 1 of 1, drawn, not hatched.
+  assert.deepEqual([s.points.at(-1)!.n, s.points.at(-1)!.expected, s.points.at(-1)!.missing], [1, 1, false]);
+  assert.deepEqual(
+    s.points.flatMap((p, i) => (stepInProgress(s, p) ? [i] : [])),
+    [59],
+    "the readout and the table mark the newest step as in progress",
+  );
+  assert.ok(s.points.every((p) => p.n === p.expected), "every step heard what it expected");
   assert.ok(s.points.every((p) => p.p50Ms === 140 && p.loss === 0 && p.sent === 1 && p.lost === 0));
   assert.deepEqual(methodStarts(s), [{ t: s.from, method: "tcp" }]);
   assert.deepEqual(methodMarkers(s), []);
@@ -325,19 +340,22 @@ test("golden series: buckets, the 7-day baseline and the previous hour read as t
 
   assert.equal(s.previousOffsetSec, 3600);
   assert.equal(s.previous?.length, s.points.length, "one previous entry per bucket");
-  assert.deepEqual(s.previous?.slice(0, 49), Array(49).fill(52));
-  assert.deepEqual(s.previous?.slice(49), Array(12).fill(140));
+  assert.deepEqual(s.previous?.slice(0, 48), Array(48).fill(52));
+  assert.deepEqual(s.previous?.slice(48), Array(12).fill(140));
 
   // The scale holds the series (140 ms) and so the trigger (130 ms); the comparison adds nothing higher.
   assert.equal(chartCeilingMs(s), 140);
   assert.equal(chartCeilingMs(s, true), 140);
   assert.ok(laneLayout(chartCeilingMs(s)).msMax >= 140);
   const [xs, floor, p50, p95, loss] = chartColumns(s.points);
-  assert.equal(xs.length, 61);
+  assert.equal(xs.length, 60);
   assert.ok(floor.every((v) => v === 140) && p50.every((v) => v === 140) && p95.every((v) => v === 140));
   assert.ok(loss.every((v) => v === null), "nothing was lost, so no loss bar");
   const stats = seriesStats(s.points);
-  assert.deepEqual([stats.samples, stats.expected, stats.loss, stats.availability, stats.p50Ms, stats.p95Ms], [61, 60, 0, 1, 140, 140]);
+  // The sheet's runs figure for the whole chart reads what the matrix says for the hour: 60 of 60.
+  assert.deepEqual([stats.samples, stats.expected, stats.loss, stats.availability, stats.p50Ms, stats.p95Ms], [60, 60, 0, 1, 140, 140]);
+  const cell = pathOf(matrixOf(), "node-hk~node-jp");
+  assert.deepEqual([stats.samples, stats.expected], [cell.samples, cell.expected]);
 
   // The same read without compare=previous carries no previous period, and the chart draws none.
   const { previous: _previous, ...plain }: PathSeriesResponse = GOLDEN_SERIES;

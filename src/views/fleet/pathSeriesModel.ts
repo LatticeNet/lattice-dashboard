@@ -318,6 +318,28 @@ export interface GapRun {
   buckets: number;
 }
 
+/**
+ * Whether a point is the step in progress: the last step of a series, which
+ * ends after the series' `to`. The server counts its runs as they arrive and
+ * expects the runs certainly due so far, never fewer than it has heard, so a
+ * step in progress that has heard nothing yet expects nothing yet.
+ */
+export function stepInProgress(series: Pick<PathSeries, "to" | "stepSec">, point: Pick<SeriesPoint, "t">): boolean {
+  return series.stepSec > 0 && Number.isFinite(series.to) && point.t + series.stepSec > series.to;
+}
+
+/**
+ * What the readout says of a step that heard no run: a gap ("noData") when
+ * runs were due, "notYet" for the step in progress before its first run is
+ * due, and "notExpected" for a step that expected none (a paused path).
+ * Undefined for a step that heard a run.
+ */
+export function emptyStepNote(point: Pick<SeriesPoint, "n" | "missing">, inProgress: boolean): "noData" | "notYet" | "notExpected" | undefined {
+  if (point.missing) return "noData";
+  if (point.n > 0) return undefined;
+  return inProgress ? "notYet" : "notExpected";
+}
+
 /** Runs of missing buckets, for the hatch across both lanes. */
 export function gapRuns(series: Pick<PathSeries, "points" | "stepSec">): GapRun[] {
   const runs: GapRun[] = [];
