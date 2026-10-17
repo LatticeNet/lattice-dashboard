@@ -387,8 +387,30 @@ test("an every-node check draws only the sources with news and counts the rest",
   const check = m.checks[0]!;
   assert.equal(check.fannedOut, NODES.length - 0 > CHECK_FAN);
   assert.equal(check.sourceIds.length, NODES.length, "every listed node runs it");
-  assert.deepEqual(check.summary, { up: 7, failing: 1, stale: 0, none: 1 });
+  assert.deepEqual(check.summary, { up: 7, degraded: 0, failing: 1, stale: 0, none: 1 });
   assert.deepEqual(m.edges.filter((e) => e.kind === "check").map((e) => [e.from, e.state]).sort(), [["hk", "failing"], ["us4", "none"]]);
+});
+
+test("a check edge reads degraded where its newest run passes on a path the matrix judges degraded (design 29 D13)", () => {
+  const latest = ["sh", "hk", "de"].map((id) => ({ node_id: id, at: ago(5_000), success: id !== "de", fail_streak: id === "de" ? 1 : 0, since: ago(60_000) }));
+  const web = monitor({ id: "web", name: "web", type: "tcp", target: "203.0.113.9:443", node_ids: ["sh", "hk", "de"], latest });
+  // The check's own matrix row: degraded from sh and from de (whose newest run failed), up from hk.
+  const checkPath = (source: string, state: string) => ({ source, target: "203.0.113.9:443", monitor_id: "web", managed: false, method: "tcp", state, samples: 60, expected: 60, ...(state === "degraded" ? { reason: "degraded_latency" } : {}) });
+  const matrix = matrixOf([...PATHS, checkPath("sh", "degraded"), checkPath("hk", "up"), checkPath("de", "degraded")]);
+  const m = buildTopology(input({ matrix, monitors: [web] }));
+  assert.equal(edge(m, "check:web:sh").state, "degraded");
+  assert.equal(edge(m, "check:web:hk").state, "up");
+  assert.equal(edge(m, "check:web:de").state, "failing", "a failed newest run stays failing");
+  assert.deepEqual(m.checks[0]!.summary, { up: 1, degraded: 1, failing: 1, stale: 0, none: 0 });
+  assert.deepEqual(edgeStyle(edge(m, "check:web:sh")), { color: "--warning", stroke: "solid", width: 1.75 });
+  // Without the matrix (not read yet) the newest run is all there is.
+  assert.equal(edge(buildTopology(input({ matrix: undefined, monitors: [web] })), "check:web:sh").state, "up");
+  // The check card and the edge label have words for it in both locales.
+  for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
+    const word = (key: string) => key.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined), messages);
+    assert.match(String(word("fleet.monitoring.topology.check.degraded")), /\{n\}.*\{total\}|\{total\}.*\{n\}/);
+    assert.equal(typeof word("fleet.monitoring.topology.state.degraded"), "string");
+  }
 });
 
 /* ---- Layers, control plane, incidents ---- */

@@ -2583,6 +2583,8 @@ export default {
           from: "from {n} node | from {n} nodes",
           summary: "{up} of {total} up",
           failing: "failing on {n} of {total}",
+          // Design 29 D13: the newest runs pass, but the control plane judges some of the check's paths degraded.
+          degraded: "degraded on {n} of {total}",
           disabled: "disabled",
           fanned: "{n} passing sources not drawn",
         },

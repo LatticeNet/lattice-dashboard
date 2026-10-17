@@ -2557,6 +2557,7 @@ export default {
           from: "来自 {n} 个节点 | 来自 {n} 个节点",
           summary: "{total} 个中 {up} 个正常",
           failing: "{total} 个中 {n} 个失败",
+          degraded: "{total} 个中 {n} 个劣化",
           disabled: "已停用",
           fanned: "{n} 个正常的源未画出",
         },

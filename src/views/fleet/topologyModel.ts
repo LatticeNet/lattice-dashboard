@@ -12,7 +12,9 @@
  *                   state's tone, nothing else (design 29 D13)
  *   chains          relay line to exit node (GET /api/network/lines/chains)
  *   checks          operator monitors, from the nodes that run them (or the
- *                   control plane, for a certificate watch) to their target
+ *                   control plane, for a certificate watch) to their target;
+ *                   a source whose newest run passes on a path the matrix
+ *                   judges degraded reads degraded, as the Checks list does
  *
  * Layout, left to right as traffic leaves the fleet: the control plane and
  * the drawn probe sources in a narrow left column (they are few; the picker
@@ -32,7 +34,7 @@ import { nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 import { REGION_ORDER, regionOf, regionRank, type RegionKey } from "@/lib/regions";
 import type { QueryValue } from "@/components/common/tableUrlState";
 import { quietAfterMs } from "@/views/fleet/latencyModel";
-import { displayState, reasonCode, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
+import { cellKey, displayState, reasonCode, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
 
 export { REGION_ORDER, regionOf, regionRank, quietAfterMs, type RegionKey };
 
@@ -92,7 +94,8 @@ export const checkEndpoint = (monitorId: string) => `@check:${monitorId}`;
  */
 export type ProbeState = PathDisplay;
 export type ChainState = "converged" | "pending" | "drifted" | "failed";
-export type CheckState = "up" | "failing" | "stale" | "none";
+/** `degraded`: the newest run passed, but the control plane judges the path degraded (design 29 D13). */
+export type CheckState = "up" | "degraded" | "failing" | "stale" | "none";
 export type TopoEdgeKind = "probe" | "chain" | "check";
 export type TopoEdgeState = ProbeState | ChainState | CheckState;
 
@@ -230,7 +233,7 @@ function parseTime(value: string | undefined): number | undefined {
 const SEVERITY: Record<TopoEdgeKind, Record<string, number>> = {
   probe: { down: 0, degraded: 1, unknown: 4, up: 7, paused: 8 },
   chain: { failed: 0, drifted: 1, pending: 4, converged: 7 },
-  check: { failing: 0, stale: 2, none: 4, up: 7 },
+  check: { failing: 0, degraded: 1, stale: 2, none: 4, up: 7 },
 };
 
 export function edgeSeverity(kind: TopoEdgeKind, state: TopoEdgeState): number {
@@ -515,7 +518,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         serverEvaluated,
         assignAll: !!monitor.assign_all && !serverEvaluated,
         sourceIds,
-        summary: { up: 0, failing: 0, stale: 0, none: 0 },
+        summary: { up: 0, degraded: 0, failing: 0, stale: 0, none: 0 },
         fannedOut: false,
       };
       const perSource = sourceIds.map((sourceId) => {
@@ -523,6 +526,9 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         const at = parseTime(result?.at);
         let state: CheckState = "none";
         if (result && at !== undefined) state = now - at > staleAfter ? "stale" : result.success ? "up" : "failing";
+        // Degraded takes the warning tone wherever a path state is drawn (design 29 D13): a passing run on a
+        // path the control plane judges degraded is not a green up. A check's path sits in its own matrix row.
+        if (state === "up" && !serverEvaluated && matrix?.cells.get(cellKey(`@${monitor.id}`, sourceId))?.state === "degraded") state = "degraded";
         check.summary[state] += 1;
         return { sourceId, result, at, state };
       });
@@ -589,7 +595,7 @@ export function edgesOf(model: Pick<TopologyModel, "edges">, id: string): TopoEd
 const LIVE: Record<TopoEdgeKind, ReadonlySet<string>> = {
   probe: new Set(["up", "degraded", "down"]),
   chain: new Set(["converged", "pending", "drifted", "failed"]),
-  check: new Set(["up", "failing"]),
+  check: new Set(["up", "degraded", "failing"]),
 };
 
 export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
@@ -723,6 +729,8 @@ export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state">): EdgeStyle {
       switch (edge.state) {
         case "up":
           return { color: "--success", stroke: "solid", width: 1.25 };
+        case "degraded":
+          return { color: "--warning", stroke: "solid", width: 1.75 };
         case "failing":
           return { color: "--destructive", stroke: "solid", width: 2 };
         case "stale":

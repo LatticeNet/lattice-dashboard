@@ -306,6 +306,7 @@ function checkLine(check: TopoCheck): { text: string; tone: string } {
   if (!check.enabled) return { text: t("fleet.monitoring.topology.check.disabled"), tone: "text-muted-foreground" };
   const total = check.sourceIds.length;
   if (check.summary.failing > 0) return { text: t("fleet.monitoring.topology.check.failing", { n: check.summary.failing, total }), tone: "text-destructive" };
+  if (check.summary.degraded > 0) return { text: t("fleet.monitoring.topology.check.degraded", { n: check.summary.degraded, total }), tone: "text-warning-text" };
   return { text: t("fleet.monitoring.topology.check.summary", { up: check.summary.up, total }), tone: check.summary.up === total ? "text-muted-foreground" : "text-warning-text" };
 }
 
@@ -741,7 +742,7 @@ const cardStyle = computed(() => {
           :key="c.check.id"
           type="button"
           class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-          :class="[dimmed(c.check.id) && 'opacity-35', c.check.summary.failing && c.check.enabled ? 'border-destructive/50' : 'border-border']"
+          :class="[dimmed(c.check.id) && 'opacity-35', !c.check.enabled ? 'border-border' : c.check.summary.failing ? 'border-destructive/50' : c.check.summary.degraded ? 'border-warning/50' : 'border-border']"
           :style="{ left: `${c.box.x}px`, top: `${c.box.y}px`, width: `${c.box.w}px`, height: `${c.box.h}px` }"
           data-testid="topology-check"
           :aria-label="`${c.check.name}, ${c.check.type}, ${c.check.target}, ${checkLine(c.check).text}`"
