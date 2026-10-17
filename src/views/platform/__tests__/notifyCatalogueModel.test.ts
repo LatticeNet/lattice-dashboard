@@ -34,8 +34,8 @@ const CONTRACT: [type: string, category: string, severity: string, recovery: boo
   ["monitor.down", "monitors", "warning", false, "activity"],
   ["monitor.recovered", "monitors", "info", true, "heart-pulse"],
   // Design 29 D13: placed after monitor.recovered, glyphs apart from the monitor's.
-  ["path.degraded", "monitors", "warning", false, "signal-low"],
-  ["path.recovered", "monitors", "info", true, "signal-high"],
+  ["path.degraded", "monitors", "warning", false, "trending-down"],
+  ["path.recovered", "monitors", "info", true, "trending-up"],
   ["agent.stalled", "agents", "warning", false, "hourglass"],
   ["agent.recovered", "agents", "info", true, "bot"],
   ["ssh.login", "ssh", "notice", false, "key-round"],

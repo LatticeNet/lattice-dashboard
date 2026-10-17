@@ -29,8 +29,8 @@ import {
   Server,
   ServerOff,
   ShieldAlert,
-  SignalHigh,
-  SignalLow,
+  TrendingDown,
+  TrendingUp,
   Webhook,
 } from "lucide-vue-next";
 
@@ -44,8 +44,8 @@ const ICONS: Record<NotifyIconName, Component> = {
   power: Power,
   activity: Activity,
   "heart-pulse": HeartPulse,
-  "signal-low": SignalLow,
-  "signal-high": SignalHigh,
+  "trending-down": TrendingDown,
+  "trending-up": TrendingUp,
   hourglass: Hourglass,
   bot: Bot,
   "key-round": KeyRound,
