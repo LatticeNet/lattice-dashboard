@@ -119,12 +119,23 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
  * results fail but no path of the check is down and one is unknown for a
  * reason that is not a pause, the check reads unmeasured with that reason,
  * as its paths do, rather than down.
+ *
+ * From M3 (design 29 D13) the newest runs can pass on a path the control
+ * plane judges degraded. A check whose results read up, with no down path
+ * and at least one degraded one, reads degraded on N of its M judged paths,
+ * so the list never shows a degraded path's check as a green "up".
  */
 export function withPathVerdict(
   health: MonitorHealth,
   paths: readonly { source?: string; state: string; reason?: string }[],
   latest: readonly { node_id?: string; success: boolean; reason?: string }[] = [],
 ): MonitorHealth {
+  if (health.kind === "up") {
+    const degraded = paths.filter((p) => p.state === "degraded").length;
+    if (!degraded || paths.some((p) => p.state === "down")) return health;
+    const judged = paths.filter((p) => p.state === "up" || p.state === "degraded").length;
+    return { kind: "degraded", degraded, total: Math.max(degraded, judged), latencyMs: health.latencyMs, lastAt: health.lastAt };
+  }
   if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
   const unknown = paths.filter((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
   if (!unknown.length) return health;

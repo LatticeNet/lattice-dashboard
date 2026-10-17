@@ -177,6 +177,14 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; titl
         tone: "destructive",
         textClass: "text-destructive font-medium",
       };
+    case "degraded":
+      // Amber means degraded wherever a path state is drawn (design 29 D13), here as on Paths.
+      return {
+        text: state.total > 1 ? t("fleet.monitoring.checks.degradedOn", { n: state.degraded, total: state.total }) : t("fleet.monitoring.paths.state.degraded"),
+        detail: state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined,
+        tone: "warning",
+        textClass: "text-warning-text font-medium",
+      };
     case "stale":
       return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
     case "unmeasured":

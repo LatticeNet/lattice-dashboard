@@ -1661,6 +1661,8 @@ export default {
         },
         paused: "paused",
         downOn: "down on {n} of {total}",
+        // Design 29 D13: the newest runs pass, but the control plane judges some of the check's paths degraded.
+        degradedOn: "degraded on {n} of {total}",
         certLeft: "{n} d left",
         certExpired: "expired",
         noneRunning: "none running",
@@ -2236,7 +2238,7 @@ export default {
           id: "Monitor id",
           type: "tcp, http, icmp or tls",
           target: "What the monitor checks",
-          status: "failing, stale, unmeasured, none, unread, up, disabled",
+          status: "failing, degraded, stale, unmeasured, none, unread, up, disabled",
           node: "Names of the nodes it runs on",
           checks: "How many nodes run it",
           interval: "How often it checks, such as interval>5m",

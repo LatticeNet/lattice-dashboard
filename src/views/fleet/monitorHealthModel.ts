@@ -44,17 +44,24 @@ export type MonitorHealth =
   | { kind: "stale"; lastAt: number }
   /** `reasons` counts the distinct reasons when there is more than one; `reason` is then empty. */
   | { kind: "unmeasured"; total: number; reason: string; reasons?: number; lastAt: number }
+  /**
+   * The newest runs pass but the control plane judges `degraded` of the
+   * check's `total` judged paths degraded (design 29 D13): a warning, never
+   * up. Only checksModel.withPathVerdict gives it, from the matrix.
+   */
+  | { kind: "degraded"; degraded: number; total: number; latencyMs?: number; lastAt: number }
   | { kind: "up"; total: number; latencyMs?: number; lastAt: number };
 
-/** Failing first, then what cannot be trusted, then what is fine. */
+/** Failing first, then the warnings (degraded, then what cannot be trusted), then what is fine. */
 const RANK: Record<MonitorHealth["kind"], number> = {
   failing: 0,
-  stale: 1,
-  unmeasured: 2,
-  none: 3,
-  unread: 4,
-  up: 5,
-  disabled: 6,
+  degraded: 1,
+  stale: 2,
+  unmeasured: 3,
+  none: 4,
+  unread: 5,
+  up: 6,
+  disabled: 7,
 };
 
 export function healthRank(health: MonitorHealth): number {

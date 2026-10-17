@@ -39,6 +39,9 @@ import {
   draftDegradedProblems,
   type CheckDraft,
 } from "../checksModel.ts";
+import { applyQuery, compileQuery } from "@/lib/query/engine";
+import { healthRank } from "../monitorHealthModel.ts";
+import { monitoringQuerySchema } from "../monitoringQuery.ts";
 import { ALERT_POLICIES, DEGRADED_BOUNDS, canonicalRule, defaultDegradedDraft, degradedDraftFrom, degradedEdit, degradedProblems, effectiveAlert, pagesDown } from "../degradedRuleModel.ts";
 import { rowsFromHeaders, startReplace } from "../checkHeadersModel.ts";
 
@@ -411,6 +414,27 @@ test("a check whose failing source reads unknown on its path reads unmeasured, n
   assert.deepEqual(withPathVerdict(failing, []), failing, "no paths read: the results decide");
   const up = { kind: "up" as const, total: 1, lastAt: 5 };
   assert.equal(withPathVerdict(up, [{ state: "unknown", reason: "icmp_filtered" }]), up);
+});
+
+test("M3: a check whose runs pass reads degraded on N of its judged paths, never a green up", () => {
+  const up = { kind: "up" as const, total: 3, latencyMs: 356, lastAt: 5 };
+  // Degraded from two of three sources: the third is up; an unknown or paused path is not judged.
+  assert.deepEqual(withPathVerdict(up, [{ state: "degraded" }, { state: "degraded" }, { state: "up" }, { state: "unknown", reason: "results_stopped" }]), { kind: "degraded", degraded: 2, total: 3, latencyMs: 356, lastAt: 5 });
+  assert.deepEqual(withPathVerdict(up, [{ state: "degraded" }]), { kind: "degraded", degraded: 1, total: 1, latencyMs: 356, lastAt: 5 });
+  assert.equal(withPathVerdict(up, [{ state: "up" }, { state: "up" }]), up, "no degraded path, still up");
+  assert.equal(withPathVerdict(up, [{ state: "degraded" }, { state: "down" }]), up, "a down path the newest runs have left behind keeps the results' word");
+  assert.equal(withPathVerdict(up, []), up, "no paths read (an older server): the results decide");
+  // A failing check stays failing whatever its paths' quality.
+  const failing = { kind: "failing" as const, failing: 1, total: 2, lastAt: 5 };
+  assert.equal(withPathVerdict(failing, [{ state: "degraded" }, { state: "up" }]), failing);
+  // Degraded sorts with the warnings: after failing, before stale.
+  assert.ok(healthRank({ kind: "failing", failing: 1, total: 1, lastAt: 0 }) < healthRank({ kind: "degraded", degraded: 1, total: 1, lastAt: 0 }));
+  assert.ok(healthRank({ kind: "degraded", degraded: 1, total: 1, lastAt: 0 }) < healthRank({ kind: "stale", lastAt: 0 }));
+  assert.ok(healthRank({ kind: "degraded", degraded: 1, total: 1, lastAt: 0 }) < healthRank({ kind: "up", total: 1, lastAt: 0 }));
+  // The Checks query finds them by status.
+  const rows = [monitor({ id: "a" }), monitor({ id: "b" })];
+  const schema = monitoringQuerySchema({ health: (m) => (m.id === "a" ? withPathVerdict(up, [{ state: "degraded" }]) : up), allNodeNames: () => [], nodeName: (id) => id, serverEvaluated: () => false });
+  assert.deepEqual(applyQuery(rows, compileQuery("status:degraded", schema).query).map((m) => m.id), ["a"]);
 });
 
 test("the verdict names the reason on the failing sources' paths, or counts reasons that differ", () => {
