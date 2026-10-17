@@ -805,29 +805,36 @@ function targetList(paths: readonly PathItem[]): string {
   return [...new Set(paths.map((p) => p.targetName))].map(quoteQueryValue).join(",");
 }
 
+/**
+ * Show's query lists exactly the paths the item counts, so every name and
+ * reason in it matches whole (`:=`): `target:tyo-3` would also find the
+ * check "tyo-3 web" from the same source, and `source:hk-edge` a source
+ * named "hk-edge-2".
+ */
 export function attentionQuery(item: PathAttention): string {
   switch (item.kind) {
     case "down":
-      return `state:down target:${quoteQueryValue(item.targetName)}`;
-    // A source item lists its own targets, exactly: the source's other bad paths carry a different verdict
-    // (the target) and sit in another item, so `source:` alone would list more than the item counts.
+      return `state:down target:=${quoteQueryValue(item.targetName)}`;
+    // A source item lists its own targets: the source's other bad paths carry a different verdict
+    // (the target) and sit in another item, so the source alone would list more than the item counts.
     case "downSource":
-      return `state:down source:${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
+      return `state:down source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "degraded":
-      return `state:degraded target:${quoteQueryValue(item.targetName)}`;
+      return `state:degraded target:=${quoteQueryValue(item.targetName)}`;
     case "degradedSource":
-      return `state:degraded source:${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
+      return `state:degraded source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "offline":
-      return `state:unknown source:${quoteQueryValue(item.sourceName)}`;
+      return `state:unknown source:=${quoteQueryValue(item.sourceName)}`;
     case "unknown":
-      return `state:unknown reason:${quoteQueryValue(item.reason)}`;
+      return `state:unknown reason:=${quoteQueryValue(item.reason)}`;
     case "paused":
       return "state:paused";
   }
 }
 
+/** A reach line's query: the source's paths, matched by its whole name, in one state or all. */
 export function reachQuery(reach: SourceReach, state?: PathDisplay): string {
-  const parts = [`source:${quoteQueryValue(reach.name)}`];
+  const parts = [`source:=${quoteQueryValue(reach.name)}`];
   if (state) parts.push(`state:${state}`);
   return parts.join(" ");
 }
