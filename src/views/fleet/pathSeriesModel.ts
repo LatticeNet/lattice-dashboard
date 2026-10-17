@@ -465,6 +465,109 @@ export function baselineGuides(baseline: SeriesBaseline | null | undefined): { k
   return out;
 }
 
+export type GuideKind = "median" | "trigger";
+
+/** A drawn line's pieces in pixels: x0, y0, x1, y1. A point with no drawn neighbour is a piece of no length. */
+export type LinePiece = [number, number, number, number];
+
+/** The pieces of a line drawn without spanning gaps: a null or undefined value breaks it, as the chart's line breaks. */
+export function linePieces(values: readonly { x: number; y: number | null | undefined }[]): LinePiece[] {
+  const out: LinePiece[] = [];
+  let prev: { x: number; y: number } | undefined;
+  for (const v of values) {
+    if (v.y === null || v.y === undefined || !Number.isFinite(v.y)) {
+      prev = undefined;
+      continue;
+    }
+    out.push(prev ? [prev.x, prev.y, v.x, v.y] : [v.x, v.y, v.x, v.y]);
+    prev = { x: v.x, y: v.y };
+  }
+  return out;
+}
+
+/** How many pieces cross a box: a steep drop through a label counts, not only the points that land in it. */
+export function piecesCrossing(pieces: readonly LinePiece[], box: { x0: number; x1: number; y0: number; y1: number }): number {
+  let n = 0;
+  for (const [ax, ay, bx, by] of pieces) {
+    if (Math.max(ax, bx) < box.x0 || Math.min(ax, bx) > box.x1) continue;
+    if (Math.max(ay, by) < box.y0 || Math.min(ay, by) > box.y1) continue;
+    n += 1;
+  }
+  return n;
+}
+
+export interface GuideLabelSlot {
+  kind: GuideKind;
+  /** The label box's top, in the same pixels as the lines. */
+  top: number;
+  /** Set when the label could not stack clear of the other one and sits beside it, to its left, on its own line's side. */
+  beside: boolean;
+}
+
+/**
+ * Where each guide's label sits (design 29 D13: labelled once at the right
+ * edge). A label hugs its line, above or below, unless the data drawn there
+ * (`covered`, which the chart counts from the lines it plots under the
+ * label) would cross it; it then steps away from the line, at most
+ * `maxOffset` pixels, to the nearest clear place. It stays nearer its own
+ * line than the other one and never straddles the other line, never leaves
+ * the latency lane ([laneTop, laneBottom]) and never overlaps the other
+ * label. Scoring is the data it covers first, then its distance from the
+ * line, then above before below. When no placement keeps the two labels
+ * apart (lines a few pixels apart in a short lane), the median label moves
+ * beside the trigger's, to its left.
+ *
+ * The chart also draws the labels beneath the series, so whatever data a
+ * label cannot avoid still paints over it: a label never hides a bucket.
+ */
+export function placeGuideLabels(
+  lines: readonly { kind: GuideKind; y: number }[],
+  opts: { h: number; gap: number; laneTop: number; laneBottom: number; maxOffset?: number; covered: (kind: GuideKind, top: number, bottom: number) => number },
+): GuideLabelSlot[] {
+  const { h, gap, laneTop, laneBottom, covered } = opts;
+  const maxOffset = Math.max(0, Math.floor(opts.maxOffset ?? 2 * h));
+  type Option = { top: number; score: number };
+  const options = (line: { kind: GuideKind; y: number }, other: { y: number } | undefined): Option[] => {
+    const out: Option[] = [];
+    for (let d = 0; d <= maxOffset; d++) {
+      for (const below of [false, true]) {
+        const top = below ? line.y + gap + d : line.y - gap - h - d;
+        if (top < laneTop || top + h > laneBottom) continue;
+        if (other) {
+          const centre = top + h / 2;
+          if (other.y >= top && other.y <= top + h) continue;
+          if (Math.abs(centre - other.y) <= Math.abs(centre - line.y)) continue;
+        }
+        out.push({ top, score: covered(line.kind, top, top + h) * 10_000 + d * 2 + (below ? 1 : 0) });
+      }
+    }
+    return out;
+  };
+  const clamp = (top: number) => Math.min(Math.max(top, laneTop), Math.max(laneTop, laneBottom - h));
+  const best = (line: { kind: GuideKind; y: number }, other?: { y: number }) => {
+    const opts = options(line, other);
+    if (!opts.length) return clamp(line.y - gap - h);
+    return opts.reduce((a, b) => (b.score < a.score ? b : a)).top;
+  };
+  if (lines.length < 2) return lines.map((line) => ({ kind: line.kind, top: best(line), beside: false }));
+  const [a, b] = lines as [{ kind: GuideKind; y: number }, { kind: GuideKind; y: number }];
+  let pick: { a: number; b: number; s: number } | undefined;
+  const optsB = options(b, a);
+  for (const oa of options(a, b)) {
+    for (const ob of optsB) {
+      if (Math.abs(oa.top - ob.top) < h) continue;
+      const s = oa.score + ob.score;
+      if (!pick || s < pick.s) pick = { a: oa.top, b: ob.top, s };
+    }
+  }
+  if (pick) return [
+    { kind: a.kind, top: pick.a, beside: false },
+    { kind: b.kind, top: pick.b, beside: false },
+  ];
+  // No placement keeps them apart: each takes its own best place and the median steps aside.
+  return [a, b].map((line) => ({ kind: line.kind, top: best(line), beside: line.kind === "median" }));
+}
+
 /**
  * The latency the chart's scale must cover: the series, its guides (so the
  * trigger is always on the chart) and the previous period when it is drawn.

@@ -1554,6 +1554,7 @@ export default {
           openTarget: "目标节点",
           clearing: "正在恢复",
           compare: "与上一周期对比",
+          compareKey: "点线：前一个等长时段的 p50",
           baselinePending: "这条路径有了 {needed} 小时的历史才会判断是否劣化（目前 {hours} 小时）。",
           baselineDrift: "7 天基线会跟着路径变化：持续数天的劣化会慢慢变成它的平常水平，之后这条路径又会显示为通。",
         },

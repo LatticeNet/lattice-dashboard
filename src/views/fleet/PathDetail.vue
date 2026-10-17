@@ -162,7 +162,7 @@ interface Figure {
   label: string;
   value: string;
   sub?: string;
-  tone?: "destructive";
+  tone?: "destructive" | "warning";
 }
 
 const figures = computed<Figure[]>(() => {
@@ -187,8 +187,9 @@ const figures = computed<Figure[]>(() => {
       key: "loss",
       label: t("fleet.monitoring.paths.stats.loss"),
       value: stats.samples > 0 && stats.loss !== undefined ? formatLoss(stats.loss) : none,
-      // A stray lost run in a week is not an alarm; a loss of one percent or more is, on a path that measures.
-      tone: measured && (stats.loss ?? 0) >= 0.01 ? "destructive" : undefined,
+      // A stray lost run in a week is not an alarm; a loss of one percent or more is, on a path that measures. From a
+      // server that judges degraded, the loss takes the path's state tone (D13: amber means degraded), never a red of its own.
+      tone: measured && (stats.loss ?? 0) >= 0.01 ? lossTone.value : undefined,
       sub: delta.loss !== undefined ? formatDeltaLoss(delta.loss) : undefined,
     },
     { key: "availability", label: t("fleet.monitoring.paths.stats.availability"), value: measured && stats.availability !== undefined ? formatAvailability(stats.availability) : none },
@@ -233,6 +234,9 @@ const tone = computed<"success" | "warning" | "destructive" | "muted">(() => {
   const state = props.path?.state;
   return state === "up" ? "success" : state === "degraded" ? "warning" : state === "down" ? "destructive" : "muted";
 });
+
+/** A lossy window's tone: the M1 red on a server that does not judge degraded, else the path's state tone (down, degraded) or none. */
+const lossTone = computed<"destructive" | "warning" | undefined>(() => (!props.judgesDegraded ? "destructive" : props.path?.state === "down" ? "destructive" : props.path?.state === "degraded" ? "warning" : undefined));
 
 /* ---- Degraded (design 29 D13) ---- */
 
@@ -375,7 +379,7 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
       <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
         <div v-for="f in figures" :key="f.key" class="min-w-0">
           <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>
-          <dd :class="cn('font-mono font-medium tabular', f.tone === 'destructive' && 'text-destructive')">{{ f.value }}</dd>
+          <dd :class="cn('font-mono font-medium tabular', f.tone === 'destructive' && 'text-destructive', f.tone === 'warning' && 'text-warning-text')">{{ f.value }}</dd>
           <dd v-if="f.sub" class="font-mono text-[11px] text-muted-foreground tabular">{{ f.sub }}</dd>
         </div>
         <!-- The degraded rule's triggers: the loss trigger has no guide on the chart, so the stats say both. -->
@@ -427,10 +431,15 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
         :height="compact ? 200 : 228"
         :label="$t('fleet.monitoring.paths.sheet.chartLabel', { path: title, window: windowLong(window) })"
         :unmeasured-note="unmeasuredNote"
+        :loss-tone="lossTone === 'warning' ? 'warning' : 'destructive'"
         :compare="comparing"
         :class="seriesQuery.refreshing.value && 'opacity-70'"
         @zoom="(range) => (zoom = range)"
       />
+      <!-- The overlay's key: the dotted line has no label on the canvas. -->
+      <p v-if="comparing && series?.previous" class="flex items-center gap-2 text-xs text-muted-foreground" data-testid="path-compare-key">
+        <span class="inline-block w-5 shrink-0 border-t-2 border-dotted border-foreground/50" aria-hidden="true" />{{ $t('fleet.monitoring.paths.sheet.compareKey') }}
+      </p>
       <p v-if="pendingNote" class="text-xs text-muted-foreground" data-testid="path-baseline-pending">{{ pendingNote }}</p>
       <p v-if="path?.state === 'degraded'" class="text-xs text-muted-foreground" data-testid="path-baseline-drift">{{ $t('fleet.monitoring.paths.sheet.baselineDrift') }}</p>
       <details v-if="series && series.points.length" class="group rounded-md border border-border" data-testid="path-table">

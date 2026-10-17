@@ -1575,6 +1575,7 @@ export default {
           openTarget: "Target node",
           clearing: "clearing",
           compare: "Compare with the previous period",
+          compareKey: "Dotted line: p50 over the previous period of the same length",
           baselinePending: "Degraded is judged once this path has {needed} hours of history ({hours} h so far).",
           baselineDrift: "The 7-day baseline follows the path: a degradation that lasts for days slowly becomes its usual level, and the path then reads up again.",
         },

@@ -21,7 +21,10 @@ import {
   laneLayout,
   methodAt,
   earlierMethods,
+  linePieces,
   methodMarkers,
+  piecesCrossing,
+  placeGuideLabels,
   seriesCeilingMs,
   seriesFromLatency,
   seriesFromResponse,
@@ -382,4 +385,68 @@ test("previous: one entry per point, aligned by bucket; a step the console fille
   const plain = m3Series();
   delete plain.previous;
   assert.equal(seriesFromResponse(plain).previous, undefined, "not asked, not there");
+});
+
+test("guide labels: above their line by default, below when the data runs there, never over each other", () => {
+  const lane = { h: 13, gap: 1, laneTop: 0, laneBottom: 200 };
+  const none = () => 0;
+  // Far apart, nothing under them: both above their lines.
+  assert.deepEqual(placeGuideLabels([{ kind: "median", y: 150 }, { kind: "trigger", y: 60 }], { ...lane, covered: none }), [
+    { kind: "median", top: 136, beside: false },
+    { kind: "trigger", top: 46, beside: false },
+  ]);
+  // The newest p50 runs just above the trigger (a degraded path): its label goes below the line, clear of the data.
+  const overTrigger = (kind: string, top: number, bottom: number) => (kind === "trigger" && top < 60 && bottom > 40 ? 5 : 0);
+  assert.deepEqual(placeGuideLabels([{ kind: "median", y: 150 }, { kind: "trigger", y: 60 }], { ...lane, covered: overTrigger })[1], { kind: "trigger", top: 61, beside: false });
+  // A line along the top of the lane: its label cannot go above, so it goes below.
+  assert.deepEqual(placeGuideLabels([{ kind: "trigger", y: 5 }], { ...lane, covered: none }), [{ kind: "trigger", top: 6, beside: false }]);
+  // Lines 8 px apart: stacked so the boxes do not overlap (trigger above its line, median below its own).
+  const close = placeGuideLabels([{ kind: "median", y: 108 }, { kind: "trigger", y: 100 }], { ...lane, covered: none });
+  assert.ok(Math.abs(close[0]!.top - close[1]!.top) >= 13, "the boxes do not overlap");
+  assert.deepEqual(close, [
+    { kind: "median", top: 109, beside: false },
+    { kind: "trigger", top: 86, beside: false },
+  ]);
+  // A lane too short to stack them: the median steps beside the trigger's label.
+  const short = placeGuideLabels([{ kind: "median", y: 20 }, { kind: "trigger", y: 14 }], { h: 13, gap: 1, laneTop: 0, laneBottom: 30, covered: none });
+  assert.deepEqual(short.map((s) => [s.kind, s.beside]), [["median", true], ["trigger", false]]);
+  for (const s of short) assert.ok(s.top >= 0 && s.top + 13 <= 30, "inside the lane");
+  assert.deepEqual(placeGuideLabels([], { ...lane, covered: none }), []);
+});
+
+test("guide labels: data on both sides of a line moves its label to the nearest clear place, still nearer its own line", () => {
+  const lane = { h: 13, gap: 1, laneTop: 0, laneBottom: 200 };
+  // A week of p50 and the previous period run in a band from 136 to 165 px around the median line at 150.
+  const band = (kind: string, top: number, bottom: number) => (kind === "median" && top <= 165 && bottom >= 136 ? 5 : 0);
+  const [median, trigger] = placeGuideLabels([{ kind: "median", y: 150 }, { kind: "trigger", y: 60 }], { ...lane, covered: band });
+  assert.deepEqual(median, { kind: "median", top: 122, beside: false }, "14 px above the line clears the band; below would need 15");
+  assert.deepEqual(trigger, { kind: "trigger", top: 46, beside: false });
+  // Never as far as the other line: with the trigger 30 px above, the label cannot climb out of the band, so it stays on its line.
+  const near = placeGuideLabels([{ kind: "median", y: 150 }, { kind: "trigger", y: 120 }], { ...lane, laneBottom: 170, covered: band });
+  const m = near.find((s) => s.kind === "median")!;
+  assert.ok(Math.abs(m.top + 6.5 - 150) < Math.abs(m.top + 6.5 - 120), "nearer its own line than the trigger's");
+  assert.ok(!(120 >= m.top && 120 <= m.top + 13), "never across the trigger line");
+  // Within maxOffset only: a band wider than the reach leaves the label beside its line, under the data.
+  const wide = (kind: string, top: number, bottom: number) => (kind === "median" && top <= 199 && bottom >= 90 ? 5 : 0);
+  assert.deepEqual(placeGuideLabels([{ kind: "median", y: 150 }], { ...lane, covered: wide }), [{ kind: "median", top: 136, beside: false }]);
+});
+
+test("line pieces: gaps break the line; a steep drop crosses a box its points miss", () => {
+  const pieces = linePieces([
+    { x: 0, y: 10 },
+    { x: 10, y: 12 },
+    { x: 20, y: null },
+    { x: 30, y: 50 },
+    { x: 40, y: 150 },
+  ]);
+  assert.deepEqual(pieces, [
+    [0, 10, 0, 10],
+    [0, 10, 10, 12],
+    [30, 50, 30, 50],
+    [30, 50, 40, 150],
+  ], "the null at x 20 leaves x 10 and x 30 unjoined");
+  // A label from y 90 to 103 between x 32 and 38: neither point lands in it, the drop from 50 to 150 crosses it.
+  assert.equal(piecesCrossing(pieces, { x0: 32, x1: 38, y0: 90, y1: 103 }), 1);
+  assert.equal(piecesCrossing(pieces, { x0: 12, x1: 28, y0: 0, y1: 200 }), 0, "nothing is drawn across the gap");
+  assert.equal(piecesCrossing(pieces, { x0: 0, x1: 10, y0: 20, y1: 40 }), 0);
 });
