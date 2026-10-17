@@ -99,10 +99,11 @@ export default {
       /** An agent update plan's stale reason, read from the server's English (approvalsModel.describeAgentUpdateStale). */
       staleWhy: {
         changed: "The update policy changed after this plan was written: {changes}.",
-        change: "{field} {planned} → {current}",
+        change: "{field} {planned}\u00a0→ {current}",
         listSeparator: "; ",
         none: "(none)",
         flag: { true: "on", false: "off" },
+        bytes: "{n} bytes",
         fields: {
           current_version: "current version",
           target_version: "target version",

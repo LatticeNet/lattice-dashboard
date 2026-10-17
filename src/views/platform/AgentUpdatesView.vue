@@ -1007,7 +1007,7 @@ const deleteImpact = computed(() => {
           <span v-if="staleApprovalCount(row.nodeId)" class="block text-xs text-warning-text">{{ $t('platform.agentUpdates.staleApprovalBadge', { count: staleApprovalCount(row.nodeId) }) }}</span>
         </template>
         <template #cell-last_fetch="{ row }">
-          <AgentFetchReadout v-if="row.policy?.last_fetch" :fetch="row.policy.last_fetch" class="w-[7.5rem] md:w-auto md:min-w-44 md:max-w-64" />
+          <AgentFetchReadout v-if="row.policy?.last_fetch" :fetch="row.policy.last_fetch" class="w-[7.5rem] md:w-auto md:min-w-44 md:max-w-72" />
           <span v-else-if="cellsOf(row).policy === 'notRead'" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
           <span v-else-if="row.policy" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.noFetch') }}</span>
           <span v-else class="text-xs text-muted-foreground">-</span>

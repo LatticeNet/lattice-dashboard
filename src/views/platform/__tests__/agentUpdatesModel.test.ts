@@ -6,6 +6,7 @@ import {
   bulkButtonState,
   bulkPlan,
   compareAgentVersion,
+  fetchAttemptReading,
   fetchExitReading,
   fetchKindKey,
   fetchRate,
@@ -139,7 +140,30 @@ test("a failure keeps its stage and leads with the source that delivered most", 
     stage: "fetch",
   });
   assert.deepEqual([readout.outcome, readout.stage, readout.stageKnown, readout.exitCode], ["failed", "fetch", true, 28]);
-  assert.deepEqual(readout.sources.map((source) => source.kind), ["up"], "the control plane delivered nothing, so it is in the fetch list only");
+  assert.deepEqual(
+    readout.sources.map((source) => [source.kind, source.bytes, source.lastExit, source.lastReading]),
+    [
+      ["up", 3_000_000, 28, "cut"],
+      ["cp", 0, 7, "other"],
+    ],
+    "the control plane delivered nothing and comes last, with why",
+  );
+});
+
+test("exit 28 is a cutoff only in a first pass with more than one source", () => {
+  const walk = {
+    fetches: [
+      { source: 1, kind: "cp.gz", exit_code: 28, bytes: 524_288, seconds: 30 },
+      { source: 2, kind: "up", exit_code: 28, bytes: 589_824, seconds: 30 },
+      { second_pass: true, kind: "cp.gz", exit_code: 28, bytes: 2_097_152, seconds: 420 },
+    ],
+    exit_code: 28,
+    stage: "fetch",
+  };
+  assert.deepEqual(walk.fetches.map((fetch) => fetchAttemptReading(walk, fetch)), ["cut", "cut", "timeout"]);
+  const alone = { fetches: [{ source: 1, kind: "cp", exit_code: 28, bytes: 9_000_000, seconds: 480 }], exit_code: 28, stage: "fetch" };
+  assert.equal(fetchAttemptReading(alone, alone.fetches[0]!), "timeout", "a single source runs without the cutoff");
+  assert.equal(fetchReadout(walk).sources[0]?.lastReading, "timeout", "a source's last fetch decides its reading");
 });
 
 test("a source kind reads under a key without a dot, and an unknown kind has none", () => {
@@ -184,4 +208,9 @@ test("a fetch time keeps its seconds past the first minute", () => {
 test("an approval id reads by its token, not by the kind every approval shares", () => {
   assert.equal(idToken("approval_k3v7q2mzx5c4b6na"), "k3v7q2mz");
   assert.equal(idToken("k3v7q2mzx5c4b6na"), "k3v7q2mz");
+});
+
+test("an exit status of 0 short of done is a failure that keeps its status", () => {
+  const readout = fetchReadout({ fetches: [{ source: 1, kind: "cp", exit_code: 0, bytes: 9, seconds: 1 }], exit_code: 0, stage: "fetch" });
+  assert.deepEqual([readout.outcome, readout.exitCode, readout.stage], ["failed", 0, "fetch"]);
 });

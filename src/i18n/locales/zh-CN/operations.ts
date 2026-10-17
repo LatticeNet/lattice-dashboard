@@ -98,10 +98,11 @@ export default {
       /** agent 更新计划过时的原因，从服务端的英文原因解析而来(approvalsModel.describeAgentUpdateStale)。 */
       staleWhy: {
         changed: "这份计划写好之后，更新策略变了：{changes}。",
-        change: "{field} {planned} → {current}",
+        change: "{field} {planned}\u00a0→ {current}",
         listSeparator: "；",
         none: "（空）",
         flag: { true: "开启", false: "关闭" },
+        bytes: "{n} 字节",
         fields: {
           current_version: "当前版本",
           target_version: "目标版本",

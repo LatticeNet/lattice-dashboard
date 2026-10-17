@@ -218,9 +218,9 @@ export function fetchKindKey(kind: string): string | undefined {
  * What a fetcher's exit status says, for the statuses that mean one thing
  * whichever fetcher ran. The summary does not say whether curl or wget ran,
  * and their numbers overlap (wget 4 is a network failure, curl 4 a missing
- * feature), so only the ones wget never uses get words: 28 is curl's time or
- * speed limit, which is how the walk leaves a slow source; 22 an HTTP error;
- * 33 a server that ignored the range; 124 the timeout wrapped around wget.
+ * feature), so only the ones wget never uses get words: 22 an HTTP error, 33
+ * a server that ignored the range, 124 the timeout wrapped around wget, and
+ * 28 curl's time or speed limit, read by fetchAttemptReading.
  */
 export type FetchExitReading = "finished" | "cut" | "http" | "range" | "timeout" | "other";
 
@@ -241,6 +241,23 @@ export function fetchExitReading(code: number): FetchExitReading {
   }
 }
 
+/**
+ * fetchExitReading for one fetch of a record. curl's 28 is the speed cutoff
+ * or the fetch's share of the budget only in a first pass that had more than
+ * one source; that is how the walk leaves a slow source, and it reads "cut
+ * off". A second-pass fetch, and the only source of a walk, run without the
+ * cutoff and with everything that is left, so there 28 means the budget ran
+ * out. A walk's first pass names every source it could use, since a source
+ * gets at least half of what is left, so one first-pass fetch means one
+ * usable source.
+ */
+export function fetchAttemptReading(record: FetchRecordLike, attempt: FetchAttemptLike): FetchExitReading {
+  const reading = fetchExitReading(attempt.exit_code);
+  if (reading !== "cut") return reading;
+  const firstPass = (record.fetches ?? []).filter((fetch) => !fetch.second_pass).length;
+  return attempt.second_pass || firstPass <= 1 ? "timeout" : "cut";
+}
+
 export interface FetchSourceTotal {
   kind: string;
   /** What every fetch from this source added to its file. */
@@ -250,6 +267,10 @@ export interface FetchSourceTotal {
   fetches: number;
   /** A fetch from this source completed its file. */
   finished: boolean;
+  /** The exit status of this source's last fetch, which says why one that delivered nothing did. */
+  lastExit: number;
+  /** fetchAttemptReading of that last fetch. */
+  lastReading: FetchExitReading;
 }
 
 export interface FetchReadout {
@@ -260,10 +281,10 @@ export interface FetchReadout {
   stageKnown: boolean;
   exitCode: number;
   /**
-   * One entry per source that delivered bytes: the one that completed its
-   * file first, then by bytes delivered, so the first entry is the source
-   * that delivered. A source that delivered nothing is in the fetch list
-   * only.
+   * One entry per source the walk tried: the one that completed its file
+   * first, then by bytes delivered, so the first entry is the source that
+   * delivered and a source that delivered nothing (a control plane the node
+   * could not reach) comes last.
    */
   sources: FetchSourceTotal[];
 }
@@ -275,17 +296,18 @@ export function fetchReadout(record: FetchRecordLike): FetchReadout {
   for (const fetch of fetches) {
     let total = byKind.get(fetch.kind);
     if (!total) {
-      total = { kind: fetch.kind, bytes: 0, seconds: 0, fetches: 0, finished: false, clockless: false };
+      total = { kind: fetch.kind, bytes: 0, seconds: 0, fetches: 0, finished: false, lastExit: 0, lastReading: "finished", clockless: false };
       byKind.set(fetch.kind, total);
     }
     total.bytes += Math.max(0, fetch.bytes);
     total.fetches += 1;
+    total.lastExit = fetch.exit_code;
+    total.lastReading = fetchAttemptReading(record, fetch);
     if (fetch.exit_code === 0) total.finished = true;
     if (typeof fetch.seconds === "number") total.seconds = (total.seconds ?? 0) + fetch.seconds;
     else total.clockless = true;
   }
   const sources = [...byKind.values()]
-    .filter((total) => total.bytes > 0)
     .map(({ clockless, ...total }) => (clockless ? { ...total, seconds: undefined } : total))
     .sort((a, b) => Number(b.finished) - Number(a.finished) || b.bytes - a.bytes);
   const succeeded = record.exit_code === 0 && record.stage === "done";
@@ -304,8 +326,9 @@ export function fetchRate(bytes: number, seconds: number | null | undefined): nu
 }
 
 /**
- * A fetch's time to the second: a download's minutes alone hide the
- * difference the cutoff is about. Units match formatDuration.
+ * A fetch's time to the second. formatDuration drops the seconds once there
+ * is a minute, and a download's minutes alone hide the difference the
+ * cutoff is about, so this keeps them on purpose; the unit letters match.
  */
 export function fetchSecondsText(seconds: number | null | undefined): string | undefined {
   if (typeof seconds !== "number" || seconds < 0) return undefined;

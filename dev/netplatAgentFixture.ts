@@ -91,24 +91,30 @@ function lastFetch(index: number): AgentUpdateFetch | undefined {
   return { ...line, approval_id: `approval_${"qrstuvwx"[index]}3v7q2mzx5c4b6na`, target_version: LATEST_AGENT, at: iso(-ageHours * HOUR) };
 }
 
-export const AGENT_POLICIES: AgentUpdatePolicy[] = NODES.filter((node) => node.id !== withoutPolicy).map((node, index) => ({
-  node_id: node.id,
-  enabled: true,
-  auto_plan: index % 5 === 0,
-  target_version: "latest",
-  binary_url: "",
-  sha256: "",
-  install_path: "",
-  service_name: "",
-  last_planned_version: node.agent_version === LATEST_AGENT ? LATEST_AGENT : undefined,
-  last_planned_at: node.agent_version === LATEST_AGENT ? iso(-(3 + (index % 9)) * DAY) : undefined,
-  last_applied_version: node.agent_version === LATEST_AGENT ? LATEST_AGENT : undefined,
-  last_applied_at: node.agent_version === LATEST_AGENT ? iso(-(3 + (index % 9)) * DAY + HOUR) : undefined,
-  last_error: node.id === failing ? "plan: download https://github.com/LatticeNet/lattice-node-agent/releases/download/v0.3.9/lattice-agent-linux-amd64: dial tcp: i/o timeout" : undefined,
-  last_fetch: lastFetch(index),
-  created_at: iso(-60 * DAY),
-  updated_at: iso(-3 * DAY),
-}));
+export const AGENT_POLICIES: AgentUpdatePolicy[] = NODES.filter((node) => node.id !== withoutPolicy).map((node, index) => {
+  const fetch = lastFetch(index);
+  // A node with a fetch record was planned for it, a quarter hour before the
+  // result landed.
+  const plannedAt = fetch?.at ? new Date(Date.parse(fetch.at) - 15 * 60_000).toISOString() : undefined;
+  return {
+    node_id: node.id,
+    enabled: true,
+    auto_plan: index % 5 === 0,
+    target_version: "latest",
+    binary_url: "",
+    sha256: "",
+    install_path: "",
+    service_name: "",
+    last_planned_version: fetch || node.agent_version === LATEST_AGENT ? LATEST_AGENT : undefined,
+    last_planned_at: plannedAt ?? (node.agent_version === LATEST_AGENT ? iso(-(3 + (index % 9)) * DAY) : undefined),
+    last_applied_version: node.agent_version === LATEST_AGENT ? LATEST_AGENT : undefined,
+    last_applied_at: node.agent_version === LATEST_AGENT ? iso(-(3 + (index % 9)) * DAY + HOUR) : undefined,
+    last_error: node.id === failing ? "plan: download https://github.com/LatticeNet/lattice-node-agent/releases/download/v0.3.9/lattice-agent-linux-amd64: dial tcp: i/o timeout" : undefined,
+    last_fetch: fetch,
+    created_at: iso(-60 * DAY),
+    updated_at: iso(-3 * DAY),
+  };
+});
 
 export const AGENT_RELEASE: AgentReleaseInfo = {
   repo: "LatticeNet/lattice-node-agent",
