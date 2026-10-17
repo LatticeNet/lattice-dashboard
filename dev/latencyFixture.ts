@@ -47,6 +47,8 @@ import type {
   Node,
 } from "@/lib/api/index";
 
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, effectiveAlert } from "@/views/fleet/degradedRuleModel";
+
 import { HOUR, MINUTE, NODES, NOW, PARAMS, iso, nodeByName } from "./fleetFixture";
 import { M2B, beaconEndpoint, beaconListening, beaconShape, beaconSourceGate, beaconTargetGate, runsBeaconClient } from "./beaconShapes";
 
@@ -467,6 +469,21 @@ export function seriesFor(plan: LatencyProbePlan, source: string, target: string
   return { source, target, monitor_id: `mon_lat_${target}`, window, bucket_sec: step / 1000, from: new Date(from).toISOString(), to: new Date(to).toISOString(), buckets };
 }
 
+/** Design 29 M3 (contract D13), read here as pathsFixture reads it: a server that judges degraded. */
+const M3_SERVER = PARAMS.get("m3") === "1" && PARAMS.get("paths") !== "old";
+
+/**
+ * What an M3 server adds to every generated check it lists (as its golden
+ * monitors.json shows): the path set's effective alert and run count, so the
+ * list says what the path set pages, and the version and assignment fields it
+ * always writes.
+ */
+function generatedFields(plan: LatencyProbePlan): Partial<MonitorView> {
+  if (!M3_SERVER) return {};
+  const after = plan.config.alert_after && plan.config.alert_after >= 1 && plan.config.alert_after <= ALERT_MAX_AFTER ? plan.config.alert_after : ALERT_DEFAULT_AFTER;
+  return { assign_all: false, alert: effectiveAlert(plan.config.alert, true), alert_after: after, version: 0 };
+}
+
 /** The tcp monitors the server generates from a plan, as GET /api/monitors lists them. */
 export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] {
   // The icmp checks of design 29 M2a, one per target, beside the tcp ones.
@@ -486,6 +503,7 @@ export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] 
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });
@@ -506,6 +524,7 @@ export function generatedLatencyMonitors(plan: LatencyProbePlan): MonitorView[] 
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });
@@ -522,11 +541,14 @@ function tcpGenerated(plan: LatencyProbePlan): MonitorView[] {
         name: `Latency to ${n.name}`,
         type: "tcp",
         target: n.endpoint!,
+        // Since M2a the server names the node a generated tcp check resolves its target from.
+        ...(M2A || M3_SERVER ? { target_node: n.node_id } : {}),
         interval_sec: plan.config.interval_sec,
         timeout_sec: plan.config.timeout_sec,
         node_ids: sources,
         enabled: sources.length > 0,
         managed_by: "latency",
+        ...generatedFields(plan),
         latest: [],
       } as MonitorView;
     });

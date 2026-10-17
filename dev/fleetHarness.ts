@@ -19,6 +19,8 @@
  * and the main is the only scroller. Routes the pages link to but this
  * harness does not render resolve to placeholders, so a link never throws.
  */
+// First: `?m3=golden` moves the clock to when the golden responses were taken, before any fixture reads it.
+import "./goldenClock";
 import { createApp, defineComponent, h } from "vue";
 import { createPinia } from "pinia";
 import { createRouter, createWebHistory, RouterView } from "vue-router";
