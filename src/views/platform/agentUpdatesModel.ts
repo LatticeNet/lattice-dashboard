@@ -173,3 +173,177 @@ export function tableErrorSource(state: {
   if (state.policiesRead && state.policiesFailed) return "policies";
   return null;
 }
+
+// ── the last fetch a node reported ───────────────────────────────────────────
+
+/** One fetch as `last_fetch.fetches` carries it (lattice-sdk model.AgentUpdateFetchAttempt). */
+export interface FetchAttemptLike {
+  source?: number;
+  second_pass?: boolean;
+  kind: string;
+  exit_code: number;
+  bytes: number;
+  seconds?: number | null;
+}
+
+/** A policy's `last_fetch` (lattice-sdk model.AgentUpdateFetch). */
+export interface FetchRecordLike {
+  fetches?: readonly FetchAttemptLike[] | null;
+  exit_code: number;
+  stage: string;
+}
+
+/**
+ * How the script ended. "kept" is a success with no fetch: a file an earlier
+ * attempt kept already held the pinned bytes.
+ */
+export type FetchOutcome = "installed" | "kept" | "failed";
+
+/** The stages the script names, in its order; any other is shown as it came. */
+export const FETCH_STAGES = ["prepare", "fetch", "verify", "unpack", "install", "done"] as const;
+export type FetchStage = (typeof FETCH_STAGES)[number];
+
+/**
+ * The source kinds the script names, with the message key each reads under:
+ * a message path splits on dots, so "cp.gz" cannot be a key itself. Any
+ * other kind is shown as it came.
+ */
+export const FETCH_KIND_KEYS: Readonly<Record<string, string>> = { cp: "cp", "cp.gz": "cpGz", up: "up" };
+
+export function fetchKindKey(kind: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(FETCH_KIND_KEYS, kind) ? FETCH_KIND_KEYS[kind] : undefined;
+}
+
+/**
+ * What a fetcher's exit status says, for the statuses that mean one thing
+ * whichever fetcher ran. The summary does not say whether curl or wget ran,
+ * and their numbers overlap (wget 4 is a network failure, curl 4 a missing
+ * feature), so only the ones wget never uses get words: 22 an HTTP error, 33
+ * a server that ignored the range, 124 the timeout wrapped around wget, and
+ * 28 curl's time or speed limit, read by fetchAttemptReading.
+ */
+export type FetchExitReading = "finished" | "cut" | "http" | "range" | "timeout" | "other";
+
+export function fetchExitReading(code: number): FetchExitReading {
+  switch (code) {
+    case 0:
+      return "finished";
+    case 28:
+      return "cut";
+    case 22:
+      return "http";
+    case 33:
+      return "range";
+    case 124:
+      return "timeout";
+    default:
+      return "other";
+  }
+}
+
+/**
+ * fetchExitReading for one fetch of a record. curl's 28 is the speed cutoff
+ * or the fetch's share of the budget only in a first pass that had more than
+ * one source; that is how the walk leaves a slow source, and it reads "cut
+ * off". A second-pass fetch, and the only source of a walk, run without the
+ * cutoff and with everything that is left, so there 28 means the budget ran
+ * out. A walk's first pass names every source it could use, since a source
+ * gets at least half of what is left, so one first-pass fetch means one
+ * usable source.
+ */
+export function fetchAttemptReading(record: FetchRecordLike, attempt: FetchAttemptLike): FetchExitReading {
+  const reading = fetchExitReading(attempt.exit_code);
+  if (reading !== "cut") return reading;
+  const firstPass = (record.fetches ?? []).filter((fetch) => !fetch.second_pass).length;
+  return attempt.second_pass || firstPass <= 1 ? "timeout" : "cut";
+}
+
+export interface FetchSourceTotal {
+  kind: string;
+  /** What every fetch from this source added to its file. */
+  bytes: number;
+  /** Their seconds added up; undefined when any of them ran without a clock. */
+  seconds?: number;
+  fetches: number;
+  /** A fetch from this source completed its file. */
+  finished: boolean;
+  /** The exit status of this source's last fetch, which says why one that delivered nothing did. */
+  lastExit: number;
+  /** fetchAttemptReading of that last fetch. */
+  lastReading: FetchExitReading;
+}
+
+export interface FetchReadout {
+  outcome: FetchOutcome;
+  /** The stage the script stopped in, as it came. */
+  stage: string;
+  /** Known stages get words; the rest are shown as they came. */
+  stageKnown: boolean;
+  exitCode: number;
+  /**
+   * One entry per source the walk tried: the one that completed its file
+   * first, then by bytes delivered, so the first entry is the source that
+   * delivered and a source that delivered nothing (a control plane the node
+   * could not reach) comes last.
+   */
+  sources: FetchSourceTotal[];
+}
+
+/** Read a node's last fetch into what its row and its sheet say. */
+export function fetchReadout(record: FetchRecordLike): FetchReadout {
+  const fetches = record.fetches ?? [];
+  const byKind = new Map<string, FetchSourceTotal & { clockless: boolean }>();
+  for (const fetch of fetches) {
+    let total = byKind.get(fetch.kind);
+    if (!total) {
+      total = { kind: fetch.kind, bytes: 0, seconds: 0, fetches: 0, finished: false, lastExit: 0, lastReading: "finished", clockless: false };
+      byKind.set(fetch.kind, total);
+    }
+    total.bytes += Math.max(0, fetch.bytes);
+    total.fetches += 1;
+    total.lastExit = fetch.exit_code;
+    total.lastReading = fetchAttemptReading(record, fetch);
+    if (fetch.exit_code === 0) total.finished = true;
+    if (typeof fetch.seconds === "number") total.seconds = (total.seconds ?? 0) + fetch.seconds;
+    else total.clockless = true;
+  }
+  const sources = [...byKind.values()]
+    .map(({ clockless, ...total }) => (clockless ? { ...total, seconds: undefined } : total))
+    .sort((a, b) => Number(b.finished) - Number(a.finished) || b.bytes - a.bytes);
+  const succeeded = record.exit_code === 0 && record.stage === "done";
+  return {
+    outcome: succeeded ? (fetches.length ? "installed" : "kept") : "failed",
+    stage: record.stage,
+    stageKnown: (FETCH_STAGES as readonly string[]).includes(record.stage),
+    exitCode: record.exit_code,
+    sources,
+  };
+}
+
+/** Bytes per second, when the fetch took a measurable time. */
+export function fetchRate(bytes: number, seconds: number | null | undefined): number | undefined {
+  return typeof seconds === "number" && seconds > 0 ? bytes / seconds : undefined;
+}
+
+/**
+ * A fetch's time to the second. formatDuration drops the seconds once there
+ * is a minute, and a download's minutes alone hide the difference the
+ * cutoff is about, so this keeps them on purpose; the unit letters match.
+ */
+export function fetchSecondsText(seconds: number | null | undefined): string | undefined {
+  if (typeof seconds !== "number" || seconds < 0) return undefined;
+  const whole = Math.round(seconds);
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+/**
+ * The part of a server id that tells two apart: ids are "<kind>_<base32>",
+ * so the first eight characters of the whole id are the kind, the same for
+ * every approval.
+ */
+export function idToken(id: string, length = 8): string {
+  return id.replace(/^[a-z]+_/, "").slice(0, length);
+}

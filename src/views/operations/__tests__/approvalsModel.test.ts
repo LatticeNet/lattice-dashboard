@@ -27,6 +27,7 @@ import {
   isApprovalStuck,
   type ApprovalInboxItem,
   AGENT_UPDATE_STALE_FIELDS,
+  agentUpdateStaleValueKind,
   describeAgentUpdateStale,
 } from "../approvalsModel.ts";
 import enOperations from "../../../i18n/locales/en/operations.ts";
@@ -394,6 +395,25 @@ test("a stale agent update reason reads into fields, causes and the rest verbati
   assert.deepEqual(
     describeAgentUpdateStale("agent update policy changed since this approval was planned; current policy is invalid: unknown binary source; re-plan before approving").other,
     ["current policy is invalid: unknown binary source"],
+  );
+});
+
+test("the stale reason names every field the server's change summary can list, S1 and S3 included", () => {
+  // lattice-server agentUpdatePayloadChangeSummary at #205: a plan made before
+  // compression against a policy that now resolves to the gzip form.
+  const detail = describeAgentUpdateStale(
+    "agent update policy changed since this approval was planned; changed fields: resume_download planned=false current=true; " +
+      "compressed_sha256 planned= current=5d0f3c2a9b8e7d6c...; compressed_size planned=0 current=5552813; binary_size planned=0 current=14037154; re-plan before approving",
+  );
+  assert.deepEqual(detail.other, [], "nothing falls through to the verbatim tail");
+  assert.deepEqual(
+    detail.changes.map((change) => [change.field, change.planned, change.current, agentUpdateStaleValueKind(change.field)]),
+    [
+      ["resume_download", "false", "true", "flag"],
+      ["compressed_sha256", "", "5d0f3c2a9b8e7d6c...", "text"],
+      ["compressed_size", "0", "5552813", "bytes"],
+      ["binary_size", "0", "14037154", "bytes"],
+    ],
   );
 });
 

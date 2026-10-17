@@ -3212,8 +3212,43 @@ export interface AgentUpdatePolicy {
   last_applied_version?: string;
   last_applied_at?: string;
   last_error?: string;
+  /** What the node's last reported update download did; absent until a task result carried a fetch summary. */
+  last_fetch?: AgentUpdateFetch | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The parsed "lattice-agent-fetch v1" line an agent update script prints on
+ * every exit path (design 31, lattice-sdk model.AgentUpdateFetch). It comes
+ * from the node: display it, decide nothing on it.
+ */
+export interface AgentUpdateFetch {
+  /** The approval whose task printed the line. */
+  approval_id: string;
+  target_version?: string;
+  /** When the control plane received the task result. */
+  at?: string;
+  /** In the order the script made them; absent when no fetch ran. */
+  fetches?: AgentUpdateFetchAttempt[] | null;
+  /** The script's exit status; 0 with stage "done" is an installed binary. */
+  exit_code: number;
+  /** prepare, fetch, verify, unpack, install or done; accept any other. */
+  stage: string;
+}
+
+export interface AgentUpdateFetchAttempt {
+  /** The source's place in the first pass, from 1; absent on a second-pass fetch. */
+  source?: number;
+  second_pass?: boolean;
+  /** cp, cp.gz or up; accept any other. */
+  kind: string;
+  /** curl's or wget's exit status, or 124 when timeout stopped wget. */
+  exit_code: number;
+  /** What this fetch added to its file. */
+  bytes: number;
+  /** Absent when the node had no usable clock. */
+  seconds?: number;
 }
 
 export interface AgentUpdatePolicyUpsertRequest {
