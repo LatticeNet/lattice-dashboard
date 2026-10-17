@@ -495,7 +495,10 @@ function finite(value: number | undefined | null): number | undefined {
 export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {}): PathsMatrix {
   const sourceById = new Map<string, PathSourceView>((response.sources ?? []).map((s) => [s.node_id, s]));
   const targetById = new Map<string, PathTargetView>((response.targets ?? []).map((t) => [t.node_id, t]));
-  const sources: PathColumn[] = (response.sources ?? []).map((s) => ({ nodeId: s.node_id, name: s.name || s.node_id }));
+  // The server lists the control plane as a source too (node id empty, named "Control plane" in English); the
+  // console's own label wins, so it reads in the page's language like every other place that names it.
+  const controlPlane = (sent: string | undefined) => names.controlPlane ?? (sent || "control plane");
+  const sources: PathColumn[] = (response.sources ?? []).map((s) => ({ nodeId: s.node_id, name: s.node_id ? s.name || s.node_id : controlPlane(s.name) }));
   const seenSources = new Set(sources.map((s) => s.nodeId));
   const rows = new Map<string, PathRow>();
   for (const target of response.targets ?? []) {
@@ -517,7 +520,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     const source = raw.source ?? "";
     if (!seenSources.has(source)) {
       seenSources.add(source);
-      sources.push({ nodeId: source, name: source ? sourceById.get(source)?.name || names.nodeName?.(source) || source : (names.controlPlane ?? "control plane") });
+      sources.push({ nodeId: source, name: source ? sourceById.get(source)?.name || names.nodeName?.(source) || source : controlPlane(undefined) });
     }
     const operatorRow = !raw.managed || !raw.target_node;
     const rowKey = operatorRow ? `@${raw.monitor_id}` : raw.target_node!;

@@ -177,6 +177,18 @@ test("matrix: a source the server did not list still gets a column; the control 
   assert.equal(m.paths[0]!.key, "_~@mon_tls");
 });
 
+test("matrix: the control plane the server lists as a source is named in the console's words", () => {
+  // The server sends it with no node id and its English name, first in its name order.
+  const tls = { source: "", target: "example.com:443", monitor_id: "mon_tls", managed: false, method: "tls", state: "up", samples: 24, expected: 24 };
+  const r = response({ paths: [tls] });
+  r.sources = [{ node_id: "", name: "Control plane", region: "" }, ...r.sources];
+  const zh = buildPathsMatrix(r, { controlPlane: "控制面" });
+  assert.deepEqual(zh.sources.map((s) => [s.nodeId, s.name]), [["", "控制面"], ["sh", "cd-hs-sh"]]);
+  assert.equal(zh.paths[0]!.sourceName, "控制面");
+  // Without a label of its own the console keeps the server's name.
+  assert.equal(buildPathsMatrix(r).sources[0]!.name, "Control plane");
+});
+
 test("matrix: two checks in one cell show the worse state", () => {
   const base = response().paths[0]!;
   const m = buildPathsMatrix(response({ paths: [base, { ...base, monitor_id: "mon_latb_hk", method: "beacon", state: "down" }] }));
