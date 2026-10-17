@@ -2509,6 +2509,12 @@ export default {
         card: {
           pair: "{from} → {to}",
           p50: "p50",
+          summary: {
+            down: "{of} 个源中 {n} 个不通",
+            degraded: "{of} 个源中 {n} 个劣化",
+            up: "{of} 个源中 {n} 个通",
+            upAll: "全部 {of} 个源都通",
+          },
           p95: "p95",
           loss: "丢包",
           heard: "收到",

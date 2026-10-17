@@ -2534,6 +2534,13 @@ export default {
         card: {
           pair: "{from} → {to}",
           p50: "p50",
+          // A target row with several sources drawn: how many of them read its worst live state.
+          summary: {
+            down: "down from {n} of {of}",
+            degraded: "degraded from {n} of {of}",
+            up: "up from {n} of {of}",
+            upAll: "up from all {of}",
+          },
           p95: "p95",
           loss: "loss",
           heard: "heard",

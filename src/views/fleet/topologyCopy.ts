@@ -6,7 +6,7 @@
 import { formatAge } from "@/lib/format";
 
 import { formatLoss, formatMs } from "./latencyModel";
-import type { ProbeState, TopoEdge, TopoLastSample, TopoNode } from "./topologyModel";
+import type { ProbeState, RowSummary, TopoEdge, TopoLastSample, TopoNode } from "./topologyModel";
 
 type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string;
 
@@ -70,6 +70,25 @@ export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
       return { text: stateLabel(t, edge), tone: "text-destructive" };
     default:
       return { text: stateLabel(t, edge), tone: "text-muted-foreground" };
+  }
+}
+
+/**
+ * A target row's value with several sources drawn: "down from 1 of 4",
+ * "degraded from 2 of 4", "up from all 4", in the speaking state's ink. With
+ * no live path the row says the state alone ("unknown", "paused").
+ */
+export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
+  const { state, n, of } = summary;
+  const tone = PROBE_INK[state];
+  switch (state) {
+    case "down":
+    case "degraded":
+      return { text: t(`fleet.monitoring.topology.value.summary.${state}`, { n, of }), tone };
+    case "up":
+      return { text: n === of ? t("fleet.monitoring.topology.value.summary.upAll", { of }) : t("fleet.monitoring.topology.value.summary.up", { n, of }), tone };
+    default:
+      return { text: t(`fleet.monitoring.topology.value.${state}`), tone };
   }
 }
 

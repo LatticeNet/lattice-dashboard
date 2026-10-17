@@ -33,6 +33,7 @@ import {
   readsFor,
   regionOf,
   rowProbe,
+  rowSummary,
   type TopoReadStatus,
   type TopoReadStatuses,
   type TopologyInput,
@@ -226,6 +227,17 @@ function nineSources(): TopologyInput {
   return input({ plan: p, matrix: matrixOf(paths, sources), chains: [], layer: "probes" });
 }
 
+/** nineSources with its paths changed before the matrix is built. */
+function withPaths(change: (p: PathView) => PathView): TopologyInput {
+  const sources = NINE.map((id) => ({ node_id: id, name: `src-${id}` }));
+  const paths: PathView[] = [];
+  NINE.forEach((source, i) => {
+    paths.push(change(probe(source, "hk", { state: i === 1 ? "down" : "up", p50_ms: 30 + i })));
+    paths.push(change(probe(source, "de", { state: i === 2 ? "degraded" : "up", p50_ms: 240 + i, reason: i === 2 ? "degraded_latency" : undefined })));
+  });
+  return { ...nineSources(), matrix: matrixOf(paths, sources) };
+}
+
 test("by default the first four sources in the path set's order are drawn, each with its own fan", () => {
   const m = buildTopology(nineSources());
   assert.equal(DEFAULT_DRAWN_SOURCES, 4);
@@ -261,6 +273,27 @@ test("a target row carries one mark per drawn source, in the picker's order", ()
     { source: "s1", state: "up" },
   ]);
   assert.deepEqual(rowMarks(m, "jp"), [{ source: "s3", state: undefined }, { source: "s2", state: undefined }, { source: "s1", state: undefined }], "no path, no state");
+});
+
+test("several sources: a target row summarises across them; one failing source does not read as the node down", () => {
+  const m = buildTopology({ ...nineSources(), drawnSources: ["s1", "s2", "s3", "s4"] });
+  // hk: s2 is down, s1, s3 and s4 reach it.
+  assert.deepEqual(rowSummary(m, "hk"), { state: "down", n: 1, of: 4 });
+  // de: s3 is degraded, the rest up.
+  assert.deepEqual(rowSummary(m, "de"), { state: "degraded", n: 1, of: 4 });
+  // Every drawn source up: the row says so across all of them, not the slowest one's p50.
+  const up = buildTopology({ ...nineSources(), drawnSources: ["s1", "s4", "s5"] });
+  assert.deepEqual(rowSummary(up, "hk"), { state: "up", n: 3, of: 3 });
+  // A source whose path went unknown is counted among those with a path, not among the up ones.
+  const stale = { state: "unknown", reason: "results_stopped", samples: 0 };
+  const unknownOne = withPaths((p) => (p.source === "s4" && p.target_node === "hk" ? { ...p, ...stale } : p));
+  assert.deepEqual(rowSummary(buildTopology({ ...unknownOne, drawnSources: ["s1", "s4", "s5"] }), "hk"), { state: "up", n: 2, of: 3 });
+  // Nothing live: the worst of the rest speaks.
+  const dead = withPaths((p) => (p.target_node === "hk" ? { ...p, ...stale } : p));
+  assert.equal(rowSummary(buildTopology({ ...dead, drawnSources: ["s1", "s4"] }), "hk")!.state, "unknown");
+  // One source drawn: no summary, the edge's own value speaks.
+  assert.equal(rowSummary(buildTopology({ ...nineSources(), drawnSources: ["s2"] }), "hk"), undefined);
+  assert.equal(rowSummary(m, "jp"), undefined, "no path into the row");
 });
 
 test("?topo.sources= round trips: ids comma separated, the default written as nothing", () => {

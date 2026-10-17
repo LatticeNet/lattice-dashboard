@@ -617,6 +617,31 @@ export function rowProbe(model: Pick<TopologyModel, "edges">, nodeId: string): {
   return { edge: worstLive(into), count: into.length };
 }
 
+/** A target row's word across its drawn sources: the state that speaks for it and how many of them read it. */
+export interface RowSummary {
+  /** The worst live state among the paths into the row, else the worst of the rest. */
+  state: ProbeState;
+  /** Drawn sources whose path reads that state. */
+  n: number;
+  /** Drawn sources with a path into the row. */
+  of: number;
+}
+
+/**
+ * With several sources drawn, a target row summarises across them ("down
+ * from 1 of 4") rather than printing its worst edge: the worst edge alone
+ * made one failing source read as the node being down while three others
+ * reach it, and a p50 without its source said nothing true. Undefined with
+ * one drawn source, whose edge says it all, and for a row no path enters.
+ */
+export function rowSummary(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
+  if (model.drawnSourceIds.length < 2) return undefined;
+  const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
+  if (into.length === 0) return undefined;
+  const state = worstLive(into).state as ProbeState;
+  return { state, n: into.filter((e) => e.state === state).length, of: into.length };
+}
+
 /**
  * A target row's marks: one per drawn source, in the picker's order, so the
  * fans that overlap on the row stay readable; undefined where that source has

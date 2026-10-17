@@ -33,6 +33,7 @@ import {
   neighbourhood,
   rowMarks,
   rowProbe,
+  rowSummary,
   worstLive,
   type LayoutEdge,
   type ProbeState,
@@ -43,7 +44,7 @@ import {
   type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
-import { PROBE_INK, PROBE_MARK, edgeValue, freshnessDot, freshnessText, lastSampleText, stateLabel } from "./topologyCopy";
+import { PROBE_INK, PROBE_MARK, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -260,7 +261,9 @@ const rowValues = computed(() => {
     const node = row.node;
     const probe = rowProbe(props.model, node.id);
     const marks = several && probe ? rowMarks(props.model, node.id).map((m) => ({ ...m, name: nodeName(m.source) })) : [];
-    if (probe) out.set(node.id, { ...edgeValue(t, probe.edge), marks });
+    // Several sources: the row summarises across them; one source: its edge's own value (p50 or state).
+    const summary = rowSummary(props.model, node.id);
+    if (probe) out.set(node.id, { ...(summary ? rowSummaryValue(t, summary) : edgeValue(t, probe.edge)), marks });
     else if (node.probeTarget === "not_probeable" && probes) out.set(node.id, { text: t("fleet.monitoring.topology.value.notProbed"), tone: "text-muted-foreground", marks: [] });
   }
   return out;
