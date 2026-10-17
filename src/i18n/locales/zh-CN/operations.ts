@@ -101,6 +101,7 @@ export default {
         change: "{field} {planned} → {current}",
         listSeparator: "；",
         none: "（空）",
+        flag: { true: "开启", false: "关闭" },
         fields: {
           current_version: "当前版本",
           target_version: "目标版本",
@@ -110,6 +111,10 @@ export default {
           sha256: "校验值",
           install_path: "安装路径",
           service_name: "服务名",
+          resume_download: "断点续传",
+          compressed_sha256: "压缩包校验值",
+          compressed_size: "压缩包大小",
+          binary_size: "二进制大小",
         },
         causes: {
           policyMissing: "这台节点已经没有更新策略。",

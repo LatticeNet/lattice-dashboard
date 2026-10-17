@@ -434,8 +434,13 @@ export const STALE: ApprovalView = {
   action: "update-agent",
   plan: agentPlan("sgp-edge-01", "0.3.6", "0.3.8"),
   status: "pending",
+  // The wording lattice-server writes since #205 (design 31 S3): a plan made
+  // before the target was held compressed, against a policy that now
+  // resolves to a newer version served gzip-compressed and resumable.
   reason:
-    "agent update approval is stale; target_version planned=0.3.8 current=0.3.9-alpha.7; re-plan before approving",
+    "agent update policy changed since this approval was planned; changed fields: target_version planned=0.3.8 current=0.3.9-alpha.7; " +
+    "resume_download planned=false current=true; compressed_sha256 planned= current=5d0f3c2a9b8e7d6c...; compressed_size planned=0 current=5552813; " +
+    "binary_size planned=0 current=14037154; re-plan before approving",
   stale: true,
   stale_code: "agent_update_policy_changed",
   actor_id: "lattice-server",

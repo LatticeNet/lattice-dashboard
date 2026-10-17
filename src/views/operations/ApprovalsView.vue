@@ -81,6 +81,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import ApprovalReview from "./ApprovalReview.vue";
 import {
   UNKNOWN_WRITER,
+  agentUpdateStaleValueKind,
   approvalWaitLabelKey,
   describeAgentUpdateStale,
   groupApprovalsIntoEvents,
@@ -88,6 +89,7 @@ import {
   isApprovalStuck,
   partitionBatchResults,
   runWithConcurrency,
+  type AgentUpdateStaleField,
   type ApprovalEventGroup,
 } from "./approvalsModel";
 import {
@@ -376,6 +378,13 @@ function isStale(approval?: ApprovalView): boolean {
  * same parts as sentences, and anything it cannot place is quoted as the
  * server wrote it. The raw text stays available through staleRaw.
  */
+function staleValue(field: AgentUpdateStaleField, value: string): string {
+  const kind = agentUpdateStaleValueKind(field);
+  if (!value || (kind === "bytes" && value === "0")) return t("operations.approvals.staleWhy.none");
+  if (kind === "flag" && (value === "true" || value === "false")) return t(`operations.approvals.staleWhy.flag.${value}`);
+  return value;
+}
+
 function staleReason(approval?: ApprovalView): string {
   if (!approval || approval.plugin !== "agentupdate") return "";
   const raw = approval.reason?.trim() ?? "";
@@ -388,8 +397,8 @@ function staleReason(approval?: ApprovalView): string {
       .map((change) =>
         t("operations.approvals.staleWhy.change", {
           field: t(`operations.approvals.staleWhy.fields.${change.field}`),
-          planned: change.planned || t("operations.approvals.staleWhy.none"),
-          current: change.current || t("operations.approvals.staleWhy.none"),
+          planned: staleValue(change.field, change.planned),
+          current: staleValue(change.field, change.current),
         }),
       )
       .join(t("operations.approvals.staleWhy.listSeparator"));

@@ -102,6 +102,7 @@ export default {
         change: "{field} {planned} → {current}",
         listSeparator: "; ",
         none: "(none)",
+        flag: { true: "on", false: "off" },
         fields: {
           current_version: "current version",
           target_version: "target version",
@@ -111,6 +112,10 @@ export default {
           sha256: "checksum",
           install_path: "install path",
           service_name: "service name",
+          resume_download: "resumable download",
+          compressed_sha256: "compressed checksum",
+          compressed_size: "compressed size",
+          binary_size: "binary size",
         },
         causes: {
           policyMissing: "This node no longer has an update policy.",

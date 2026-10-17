@@ -453,9 +453,12 @@ export function countApprovalInbox<T extends ApprovalInboxItem>(
 // ── Why an agent update plan went stale ─────────────────────────────────────
 
 /**
- * The fields lattice-server compares when it decides an agent update plan no
+ * The fields lattice-server names when it decides an agent update plan no
  * longer matches the node's policy (agentUpdatePayloadChangeSummary), in the
- * order it lists them.
+ * order it lists them. The server compares the whole resolved payload, and
+ * the summary names every field of it but the node id, which cannot differ:
+ * resume_download since S1 of design 31, the compressed digest and both
+ * sizes since S3.
  */
 export const AGENT_UPDATE_STALE_FIELDS = [
   "current_version",
@@ -466,8 +469,23 @@ export const AGENT_UPDATE_STALE_FIELDS = [
   "sha256",
   "install_path",
   "service_name",
+  "resume_download",
+  "compressed_sha256",
+  "compressed_size",
+  "binary_size",
 ] as const;
 export type AgentUpdateStaleField = (typeof AGENT_UPDATE_STALE_FIELDS)[number];
+
+/**
+ * How a stale field's value reads. The sizes are byte counts the server
+ * prints as 0 when a plan pins none (a plan made before compression), and
+ * resume_download is a Go bool.
+ */
+export function agentUpdateStaleValueKind(field: AgentUpdateStaleField): "bytes" | "flag" | "text" {
+  if (field === "compressed_size" || field === "binary_size") return "bytes";
+  if (field === "resume_download") return "flag";
+  return "text";
+}
 
 export type AgentUpdateStaleCause = "policyMissing" | "policyDisabled" | "nodeMissing" | "payloadInvalid" | "payloadChanged";
 
