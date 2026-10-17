@@ -378,10 +378,14 @@ function baseMs(node: Node | undefined): number {
   }
 }
 
-/** What happened on a pair, by target name. */
+/**
+ * What happened on a pair, by target name. On `?paths=` the paths harness
+ * (dev/pathsFixture.ts) makes VIRCS lossy, degraded on M3, so the rollups the
+ * Map reads beside it say lossy too rather than all failing.
+ */
 function behaviour(targetName: string): "normal" | "lossy" | "failing" | "partial" | "dark" {
   if (targetName === "[Metix]-Aaitr-ATT-VDS") return "lossy";
-  if (targetName === "[Metix]-VIRCS-ATT-VDS") return "failing";
+  if (targetName === "[Metix]-VIRCS-ATT-VDS") return PARAMS.has("paths") ? "lossy" : "failing";
   if (targetName === "[cd]-cloudcone-la") return "partial";
   if (LAST_KNOWN.has(targetName)) return "dark";
   return "normal";

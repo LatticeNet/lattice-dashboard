@@ -124,26 +124,46 @@ export function checkGroup(monitor: Pick<MonitorView, "managed_by">): CheckGroup
  * plane judges degraded. A check whose results read up, with no down path
  * and at least one degraded one, reads degraded on N of its M judged paths,
  * so the list never shows a degraded path's check as a green "up".
+ *
+ * A path degraded on loss loses runs by definition, so its newest run often
+ * fails while the control plane, under alert_after, still judges it degraded
+ * rather than down. The failing branch therefore reads the failing sources'
+ * own paths first: one degraded makes the check degraded, as the up branch
+ * does; otherwise one unknown for a reason names that reason. Another path's
+ * unknown reason speaks for the check only when a failing source has no path
+ * of its own (or the results name no failing source), so a check two
+ * sources measure never reads "not measured", and the row does not flip
+ * between amber and red or grey as runs arrive.
  */
 export function withPathVerdict(
   health: MonitorHealth,
   paths: readonly { source?: string; state: string; reason?: string }[],
-  latest: readonly { node_id?: string; success: boolean; reason?: string }[] = [],
+  latest: readonly { node_id?: string; success: boolean; reason?: string; latency_ms?: number }[] = [],
 ): MonitorHealth {
-  if (health.kind === "up") {
+  const degradedOf = (latencyMs: number | undefined, lastAt: number): MonitorHealth | undefined => {
     const degraded = paths.filter((p) => p.state === "degraded").length;
-    if (!degraded || paths.some((p) => p.state === "down")) return health;
+    if (!degraded) return undefined;
     const judged = paths.filter((p) => p.state === "up" || p.state === "degraded").length;
-    return { kind: "degraded", degraded, total: Math.max(degraded, judged), latencyMs: health.latencyMs, lastAt: health.lastAt };
-  }
-  if (health.kind !== "failing" || paths.length === 0 || paths.some((p) => p.state === "down")) return health;
+    return { kind: "degraded", degraded, total: Math.max(degraded, judged), latencyMs, lastAt };
+  };
+  if (paths.some((p) => p.state === "down")) return health;
+  if (health.kind === "up") return degradedOf(health.latencyMs, health.lastAt) ?? health;
+  if (health.kind !== "failing" || paths.length === 0) return health;
   const unknown = paths.filter((p) => p.state === "unknown" && p.reason && !isChosenUnknown(p.reason));
-  if (!unknown.length) return health;
-  // The reason that explains the failing results is the one on the paths of the sources that fail. When none of
-  // those paths carries one (a failing source the matrix reads up), the check's other unknown paths speak for it.
   const failing = new Set(latest.filter((l) => !l.success && !l.reason).map((l) => l.node_id ?? ""));
-  const own = unknown.filter((p) => p.source !== undefined && failing.has(p.source));
-  const reasons = [...new Set((own.length ? own : unknown).map((p) => p.reason!))];
+  const own = paths.filter((p) => p.source !== undefined && failing.has(p.source));
+  // A failing source the control plane judges degraded rather than down: the check reads degraded, with the passing runs' latency.
+  if (own.some((p) => p.state === "degraded")) {
+    const passed = latest.filter((l) => l.success && !l.reason && l.latency_ms !== undefined && Number.isFinite(l.latency_ms)).map((l) => l.latency_ms!);
+    return degradedOf(passed.length ? passed.reduce((sum, v) => sum + v, 0) / passed.length : undefined, health.lastAt) ?? health;
+  }
+  // The reason that explains the failing results is the one on the failing sources' own paths. Another path's reason speaks for
+  // the check only when a failing source has no path in the matrix, or the results name none.
+  const ownUnknown = unknown.filter((p) => own.includes(p));
+  const pathless = failing.size === 0 || [...failing].some((id) => !own.some((p) => p.source === id));
+  const speaking = ownUnknown.length ? ownUnknown : pathless ? unknown : [];
+  if (!speaking.length) return health;
+  const reasons = [...new Set(speaking.map((p) => p.reason!))];
   return reasons.length === 1
     ? { kind: "unmeasured", total: health.total, reason: reasons[0]!, lastAt: health.lastAt }
     : { kind: "unmeasured", total: health.total, reason: "", reasons: reasons.length, lastAt: health.lastAt };

@@ -424,7 +424,7 @@ test("M3: a check whose runs pass reads degraded on N of its judged paths, never
   assert.equal(withPathVerdict(up, [{ state: "up" }, { state: "up" }]), up, "no degraded path, still up");
   assert.equal(withPathVerdict(up, [{ state: "degraded" }, { state: "down" }]), up, "a down path the newest runs have left behind keeps the results' word");
   assert.equal(withPathVerdict(up, []), up, "no paths read (an older server): the results decide");
-  // A failing check stays failing whatever its paths' quality.
+  // Without the newest results to name the failing source, a failing check keeps the results' word.
   const failing = { kind: "failing" as const, failing: 1, total: 2, lastAt: 5 };
   assert.equal(withPathVerdict(failing, [{ state: "degraded" }, { state: "up" }]), failing);
   // Degraded sorts with the warnings: after failing, before stale.
@@ -446,6 +446,47 @@ test("the verdict names the reason on the failing sources' paths, or counts reas
   const latest = [{ node_id: "sh", success: false }];
   assert.deepEqual(withPathVerdict(failing, paths, latest), { kind: "unmeasured", total: 1, reason: "icmp_filtered", lastAt: 5 }, "not the first unknown path's reason");
   assert.deepEqual(withPathVerdict(failing, paths), { kind: "unmeasured", total: 1, reason: "", reasons: 2, lastAt: 5 }, "two reasons and no failing source to choose by");
+});
+
+test("M3: a loss-degraded path whose newest run failed reads degraded, never not measured and never down", () => {
+  // A path degraded on loss loses runs, so its newest run often fails while the matrix, under alert_after, holds it degraded.
+  const failing = { kind: "failing" as const, failing: 1, total: 3, lastAt: 5 };
+  const lossy = [
+    { source: "sh", state: "degraded", reason: "degraded_loss" },
+    { source: "hk", state: "degraded", reason: "degraded_loss" },
+    { source: "volc", state: "unknown", reason: "results_stopped" },
+  ];
+  const latest = [
+    { node_id: "sh", success: false },
+    { node_id: "hk", success: true, latency_ms: 343 },
+    { node_id: "volc", success: true, latency_ms: 90 },
+  ];
+  // With a stale sibling: the check does not borrow volc's "results stopped" while sh and hk measure it.
+  assert.deepEqual(withPathVerdict(failing, lossy, latest), { kind: "degraded", degraded: 2, total: 2, latencyMs: 216.5, lastAt: 5 });
+  // The same check a minute later, when sh's newest run passed: the row does not change state.
+  const up = { kind: "up" as const, total: 3, latencyMs: 216.5, lastAt: 5 };
+  assert.deepEqual(withPathVerdict(up, lossy, latest.map((l) => ({ ...l, success: true }))), { kind: "degraded", degraded: 2, total: 2, latencyMs: 216.5, lastAt: 5 });
+  // Without the sibling: degraded, not a red "down on 1 of 2".
+  const two = [lossy[0]!, { source: "hk", state: "up" }];
+  assert.deepEqual(withPathVerdict({ ...failing, total: 2 }, two, latest.slice(0, 2)), { kind: "degraded", degraded: 1, total: 2, latencyMs: 343, lastAt: 5 });
+  // Every source failing: degraded with no latency to show.
+  assert.deepEqual(withPathVerdict({ kind: "failing", failing: 1, total: 1, lastAt: 5 }, [lossy[0]!], [latest[0]!]), { kind: "degraded", degraded: 1, total: 1, latencyMs: undefined, lastAt: 5 });
+  // A failing source degraded beside another failing source unknown: one source measures it, so it is not "not measured".
+  const mixed = [lossy[0]!, { source: "mk", state: "unknown", reason: "agent_too_old" }];
+  assert.equal(withPathVerdict(failing, mixed, [{ node_id: "sh", success: false }, { node_id: "mk", success: false }]).kind, "degraded");
+  // A down path still keeps it down.
+  assert.deepEqual(withPathVerdict(failing, [...lossy, { source: "fra", state: "down" }], latest), failing);
+});
+
+test("another path's unknown reason speaks for a failing check only when a failing source has no path of its own", () => {
+  const failing = { kind: "failing" as const, failing: 1, total: 2, lastAt: 5 };
+  const stale = { source: "volc", state: "unknown", reason: "results_stopped" };
+  // The failing source's own path reads up (one failure, under alert_after): its results speak, not volc's reason.
+  assert.deepEqual(withPathVerdict(failing, [{ source: "sh", state: "up" }, stale], [{ node_id: "sh", success: false }]), failing);
+  // The failing source has no path in the matrix: the check's other unknown path speaks for it.
+  assert.deepEqual(withPathVerdict(failing, [{ source: "hk", state: "up" }, stale], [{ node_id: "sh", success: false }]), { kind: "unmeasured", total: 2, reason: "results_stopped", lastAt: 5 });
+  // The failing source's own path is unknown: its reason, as before.
+  assert.deepEqual(withPathVerdict(failing, [{ source: "sh", state: "unknown", reason: "icmp_filtered" }, stale], [{ node_id: "sh", success: false }]), { kind: "unmeasured", total: 2, reason: "icmp_filtered", lastAt: 5 });
 });
 
 test("a check's sources: its own and every source its paths name, with how many measure nothing", () => {
