@@ -7,7 +7,7 @@ import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
 import { buildPathsMatrix } from "../pathsModel.ts";
-import { edgeValue, rowSummaryValue } from "../topologyCopy.ts";
+import { checkLineValue, edgeValue, rowSummaryValue } from "../topologyCopy.ts";
 import {
   CHECK_FAN,
   DEFAULT_DRAWN_SOURCES,
@@ -323,9 +323,32 @@ test("the row summary's words exist in both locales, under the keys the copy rea
       if (summary.state !== "unknown" && summary.state !== "paused") assert.match(v.text, new RegExp(String(summary.of)));
     }
   }
-  const en = (key: string, named: Record<string, unknown> = {}) => (key.endsWith("summary.down") ? `down from ${named.n} of ${named.of}` : key.endsWith("summary.upAll") ? `up from all ${named.of}` : key);
+  const en = (key: string, named: Record<string, unknown> = {}) => {
+    const leaf = key.split(".").pop()!;
+    const state = leaf.replace(/All$/, "");
+    return leaf.endsWith("All") ? `${state} from all ${named.of}` : `${state} from ${named.n} of ${named.of}`;
+  };
   assert.deepEqual(rowSummaryValue(en, { state: "down", n: 1, of: 4 }), { text: "down from 1 of 4", tone: "text-destructive" });
+  // Every drawn source reading the state says "all", whichever state it is.
+  assert.deepEqual(rowSummaryValue(en, { state: "down", n: 4, of: 4 }), { text: "down from all 4", tone: "text-destructive" });
+  assert.deepEqual(rowSummaryValue(en, { state: "degraded", n: 3, of: 3 }), { text: "degraded from all 3", tone: "text-warning-text" });
+  assert.deepEqual(rowSummaryValue(en, { state: "degraded", n: 2, of: 3 }), { text: "degraded from 2 of 3", tone: "text-warning-text" });
   assert.deepEqual(rowSummaryValue(en, { state: "up", n: 4, of: 4 }), { text: "up from all 4", tone: "text-foreground" });
+});
+
+test("a check card's line: red when failing, amber only when degraded, muted when the rest are only stale, silent or paused", () => {
+  const t = (key: string, named: Record<string, unknown> = {}) => `${key.split(".").pop()} ${Object.values(named).join("/")}`;
+  const check = (summary: Partial<Record<"up" | "degraded" | "failing" | "stale" | "none", number>>, enabled = true) => {
+    const s = { up: 0, degraded: 0, failing: 0, stale: 0, none: 0, ...summary };
+    const total = s.up + s.degraded + s.failing + s.stale + s.none;
+    return { enabled, sourceIds: Array.from({ length: total }, (_, i) => `n${i}`), summary: s };
+  };
+  assert.deepEqual(checkLineValue(t, check({ up: 2, failing: 1 })), { text: "failing 1/3", tone: "text-destructive" });
+  assert.deepEqual(checkLineValue(t, check({ up: 2, degraded: 1, stale: 1 })), { text: "degraded 1/4", tone: "text-warning-text" });
+  // Two pass and the others are stale or have no result: that is unknown, never amber.
+  assert.deepEqual(checkLineValue(t, check({ up: 2, stale: 1, none: 1 })), { text: "summary 2/4", tone: "text-muted-foreground" });
+  assert.deepEqual(checkLineValue(t, check({ up: 3 })), { text: "summary 3/3", tone: "text-muted-foreground" });
+  assert.deepEqual(checkLineValue(t, check({ up: 3 }, false)), { text: "disabled ", tone: "text-muted-foreground" });
 });
 
 test("?topo.sources= round trips: ids comma separated, the default written as nothing", () => {

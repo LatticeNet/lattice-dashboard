@@ -33,6 +33,12 @@
 import { PARAMS } from "./fleetFixture";
 
 export const M2B = PARAMS.get("m2b") ?? "";
+/**
+ * The server with the monitoring follow-ups (with `?m3=1`): the beacon view
+ * carries `replan` and the paths read `beacon_replans`. `?replans=0` keeps the
+ * M3 server before them, so the console works the re-plan out from the sources.
+ */
+export const REPLANS = !!M2B && PARAMS.get("m3") === "1" && PARAMS.get("replans") !== "0";
 
 /** Agents older than M2b: no responder and no beacon client (the latency fixture's too-old agents). */
 export const BEACON_TOO_OLD = new Set(["[cd]-volcengine-shanghai", "[Metix]-mkcloud-hr-iplc"]);

@@ -33,7 +33,7 @@ import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState"
 import type { QueryField, QuerySchema } from "@/lib/query/engine";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
-import { isReachabilityCheck } from "@/views/fleet/beaconModel";
+import { isReachabilityCheck, readBeaconReplans, type BeaconReplanItem } from "@/views/fleet/beaconModel";
 import { triangulate, verdictFor, type Triangulation, type Verdict } from "@/views/fleet/triangulationModel";
 import { isTarget, latencySources, quietAfterMs } from "@/views/fleet/latencyModel";
 
@@ -302,6 +302,37 @@ export function displayState(path: { state: PathState; reason?: string }): PathD
   return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
 }
 
+/** The ink a path's loss is drawn in: see lossTone. */
+export type LossTone = "destructive" | "warning" | "ink" | "muted";
+
+/**
+ * The ink for a path's loss bars and figures. State tones are the only
+ * saturated colour (design 29 D13), so a loss takes its path's tone where
+ * the state is down (red) or degraded (amber); on an up path a loss is a
+ * figure, not a state, and takes the foreground ink; on a path that reads
+ * unknown or paused it is muted, since what it holds is not an outage.
+ * Undefined (no path read) is ink.
+ */
+export function lossTone(state: PathDisplay | undefined): LossTone {
+  switch (state) {
+    case "down":
+      return "destructive";
+    case "degraded":
+      return "warning";
+    case "unknown":
+    case "paused":
+      return "muted";
+    default:
+      return "ink";
+  }
+}
+
+/** The text class a loss figure takes in each tone; ink adds none, so the figure keeps its row's ink. */
+export const LOSS_TEXT: Readonly<Record<LossTone, string>> = { destructive: "text-destructive", warning: "text-warning-text", ink: "", muted: "text-muted-foreground" };
+
+/** The CSS colour token a loss bar is filled with in each tone. */
+export const LOSS_FILL: Readonly<Record<LossTone, string>> = { destructive: "--destructive", warning: "--warning", ink: "--foreground", muted: "--muted-foreground" };
+
 /**
  * A multi-packet run's echoes for the runs list (design 29 M2a): how many
  * were sent and lost and each RTT that came back, rounded to a tenth of a
@@ -465,6 +496,14 @@ export interface PathsMatrix {
   judgesDegraded: boolean;
   /** When the degraded evaluator last ran; undefined before its first run, or on a server that does not judge it. */
   degradedAt?: number;
+  /** The nodes whose beacon needs a change plan, by node id (empty from a server that does not say). */
+  replans: Map<string, BeaconReplanItem>;
+  /**
+   * The read carried `beacon_replans` (a server with the monitoring
+   * follow-ups, which always sends it): that server also omits a beacon
+   * view's `replan` when no plan is needed, so its absence is an answer.
+   */
+  replansKnown: boolean;
 }
 
 export interface MatrixNames {
@@ -581,6 +620,8 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     counts,
     judgesDegraded: judges,
     degradedAt: judges ? epoch(response.degraded_at) : undefined,
+    replans: readBeaconReplans(response.beacon_replans),
+    replansKnown: response.beacon_replans !== undefined,
   };
 }
 
@@ -682,6 +723,12 @@ export type PathAttention =
   | { kind: "degradedSource"; source: string; sourceName: string; paths: PathItem[]; verdict: Verdict }
   /** A source whose agent is offline: one line for every path it cannot run. */
   | { kind: "offline"; source: string; sourceName: string; paths: PathItem[] }
+  /**
+   * A target whose beacon needs a change plan (the server's beacon_replans):
+   * the paths that wait on it (firewall_pending, beacon_source_pending), and
+   * none when only NetGuard's allow set is wider than the sources that use it.
+   */
+  | { kind: "replan"; nodeId: string; targetName: string; replan: BeaconReplanItem; paths: PathItem[] }
   | { kind: "unknown"; reason: string; paths: PathItem[] }
   /** Paths the operator paused: listed as information, never as a problem. */
   | { kind: "paused"; paths: PathItem[] };
@@ -691,10 +738,12 @@ export type PathAttention =
  * (one entry per target, its sources inside), the down paths triangulation
  * places on a source's network (one entry per source), then the same two for
  * degraded paths, then each source whose agent is offline (one entry for all
- * the paths it cannot run), then the other unknown paths grouped by reason,
- * and the paused paths last as one entry. A fleet whose five NAT targets all
- * read "not probeable" gets one line for them, not five. Each down and
- * degraded entry carries its verdict, the lead path's.
+ * the paths it cannot run), then each target whose beacon needs a change plan
+ * (its waiting paths inside, so the entry's action is the plan), then the
+ * other unknown paths grouped by reason, and the paused paths last as one
+ * entry. A fleet whose five NAT targets all read "not probeable" gets one
+ * line for them, not five. Each down and degraded entry carries its verdict,
+ * the lead path's.
  */
 export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation = triangulate(matrix)): PathAttention[] {
   const down = new Map<string, PathItem[]>();
@@ -702,6 +751,7 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   const degraded = new Map<string, PathItem[]>();
   const degradedBySource = new Map<string, PathItem[]>();
   const offline = new Map<string, PathItem[]>();
+  const waiting = new Map<string, PathItem[]>();
   const unknown = new Map<string, PathItem[]>();
   const paused: PathItem[] = [];
   const measuredBy = new Map<string, number>();
@@ -716,6 +766,8 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
     else if (shown === "unknown") {
       const reason = reasonCode(path.reason) ?? path.reason ?? "no_results";
       if (reason === "agent_offline") push(offline, path.source, path);
+      // A path waiting on its target's change plan sits with that plan, whose entry offers it.
+      else if ((reason === "firewall_pending" || reason === "beacon_source_pending") && path.targetNode && matrix.replans.has(path.targetNode)) push(waiting, path.targetNode, path);
       else push(unknown, reason, path);
     }
   }
@@ -749,6 +801,14 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   const offlineItems = [...offline.entries()]
     .map(([source, paths]) => ({ kind: "offline" as const, source, sourceName: paths[0]!.sourceName, paths: [...paths].sort(byTarget) }))
     .sort((a, b) => b.paths.length - a.paths.length || a.sourceName.localeCompare(b.sourceName));
+  // Targets with waiting paths first, by how many wait; a plan that only narrows NetGuard's allow set after them.
+  const targetNameOf = (nodeId: string, replan: BeaconReplanItem) => matrix.rows.find((r) => r.nodeId === nodeId)?.name || replan.name;
+  const replanItems = [...matrix.replans.values()]
+    .map((replan) => {
+      const paths = [...(waiting.get(replan.nodeId) ?? [])].sort(byTarget);
+      return { kind: "replan" as const, nodeId: replan.nodeId, targetName: targetNameOf(replan.nodeId, replan), replan, paths };
+    })
+    .sort((a, b) => b.paths.length - a.paths.length || a.targetName.localeCompare(b.targetName));
   const unknownItems = [...unknown.entries()]
     .map(([reason, paths]) => ({ kind: "unknown" as const, reason, paths: [...paths].sort(byTarget) }))
     .sort((a, b) => b.paths.length - a.paths.length || a.reason.localeCompare(b.reason));
@@ -759,6 +819,7 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
     ...degradedItems,
     ...sourceItems("degradedSource", degradedBySource),
     ...offlineItems,
+    ...replanItems,
     ...unknownItems,
     ...pausedItems,
   ];
@@ -825,6 +886,8 @@ export function attentionQuery(item: PathAttention): string {
       return `state:degraded source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "offline":
       return `state:unknown source:=${quoteQueryValue(item.sourceName)}`;
+    case "replan":
+      return `state:unknown target:=${quoteQueryValue(item.targetName)} reason:=${item.replan.reason}`;
     case "unknown":
       return `state:unknown reason:=${quoteQueryValue(item.reason)}`;
     case "paused":

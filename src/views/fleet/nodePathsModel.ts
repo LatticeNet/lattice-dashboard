@@ -72,3 +72,19 @@ export function stateCounts(paths: readonly PathItem[]): Record<PathDisplay, num
   for (const p of paths) out[displayState(p)] += 1;
   return out;
 }
+
+/**
+ * The figures a degraded row shows beside its reason: the evidence the
+ * reason is about (design 29 D13), the median over the last 15 minutes for
+ * latency and the loss over the last hour for loss, from the evaluation that
+ * found it. Never the window's own p50: a 24-hour median beside "slower than
+ * usual" reads as the usual figure, not the slow one. Empty when the server
+ * sent no evidence, and for any other state.
+ */
+export function degradedFigures(path: Pick<PathItem, "state" | "degraded">): { latencyMs?: number; loss?: number } {
+  if (path.state !== "degraded" || !path.degraded) return {};
+  const out: { latencyMs?: number; loss?: number } = {};
+  if (path.degraded.latency) out.latencyMs = path.degraded.latency.p50Ms;
+  if (path.degraded.loss) out.loss = path.degraded.loss.value;
+  return out;
+}

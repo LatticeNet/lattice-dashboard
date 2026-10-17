@@ -13,6 +13,12 @@
  * admit, the NetGuard companion and its ruleset hash, the findings, and the
  * plan text with its SHA-256. A plan a finding blocks (409) is refused with
  * the findings, in the form.
+ *
+ * Opened for a re-plan (the server's replan: sources that use the beacon and
+ * are not admitted, or that NetGuard still admits after they left), the form
+ * says first, in plain words, who cannot measure the node until the plan is
+ * approved; its fields open on the applied settings, so untouched they file
+ * exactly the server's request.
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -28,6 +34,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import ScriptView from "@/components/common/ScriptView.vue";
+import BeaconReplanNote from "./BeaconReplanNote.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +56,7 @@ import {
   plannedSettings,
   readBeaconPlan,
   refusalField,
+  replanNames,
   refusedFindings,
   settingsRows,
   shortHash,
@@ -56,6 +64,7 @@ import {
   type BeaconForm,
   type BeaconFormField,
   type BeaconFormProblem,
+  type BeaconReplanItem,
   type EndpointAddress,
 } from "./beaconModel";
 
@@ -64,6 +73,8 @@ const props = defineProps<{
   action: BeaconPlanAction;
   node: Pick<Node, "id" | "name" | "internal_ip" | "public_ip">;
   view: BeaconView;
+  /** Why the sources need this change plan, when it was opened for one. */
+  replan?: BeaconReplanItem;
 }>();
 const emit = defineEmits<{ close: []; filed: [approvalId: string] }>();
 
@@ -166,6 +177,7 @@ const keySources = computed(() =>
     .sort((a, b) => a.localeCompare(b)),
 );
 const changed = computed(() => (isChange.value ? changedSettings(form.value, props.view, props.node) : []));
+const replanFor = computed(() => (isChange.value && props.replan ? { item: props.replan, names: replanNames(props.replan, props.view) } : undefined));
 const limits = DEFAULT_BEACON_LIMITS;
 
 const canSubmit = computed(() => !pending.value && planned.value.problems.length === 0);
@@ -263,6 +275,8 @@ const NOTE = "rounded-md px-2.5 py-2 text-xs";
   <ObjectSheet :open="open" :title="title" :subtitle="stage === 'filed' ? approvalId : node.id" mono-subtitle @close="requestClose">
     <!-- ───── The form, and what the plan will ask ───── -->
     <form v-if="stage === 'form'" id="beacon-plan" class="space-y-6 text-sm" data-testid="beacon-plan-form" @submit.prevent="submit">
+      <!-- Why this plan: who cannot measure the node until it is approved. -->
+      <BeaconReplanNote v-if="replanFor" :item="replanFor.item" :target="name" :names="replanFor.names" :action="false" tone="warning" />
       <template v-if="action !== 'disable'">
         <fieldset :class="SECTION">
           <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.beacon.plan.step.where') }}</legend>

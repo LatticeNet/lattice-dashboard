@@ -66,6 +66,8 @@ const props = defineProps<{
   /** The node a generated check reaches, by check id: a path.degraded row's link to its path (design 29 D13). */
   monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
   now: number;
+  /** The server judges degraded (design 29 D13): a degraded path under a policy that pages on it opens an incident too, and the empty state says so. */
+  degraded?: boolean;
 }>();
 const emit = defineEmits<{ refresh: [] }>();
 
@@ -485,7 +487,7 @@ function coverageText(window: MaintenanceWindow): string {
           />
           <div v-else tabindex="-1" class="space-y-1 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" data-incidents-empty>
             <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>
-            <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ $t('fleet.keepalive.empty.explain') }}</p>
+            <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ degraded ? $t('fleet.keepalive.empty.explainDegraded') : $t('fleet.keepalive.empty.explain') }}</p>
           </div>
           <!-- Pending conditions are not incidents yet, so Active leaves them out; say how many and offer them. -->
           <p v-if="response && filter === 'active' && counts.pending > 0" class="flex flex-wrap items-center gap-x-2 border-t border-border px-4 py-1.5 text-xs text-muted-foreground" data-testid="incidents-pending-note">

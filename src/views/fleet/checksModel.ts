@@ -70,10 +70,16 @@ export function takesNodeTarget(kind: string): boolean {
   return kind === "icmp" || kind === "tcp" || kind === "beacon";
 }
 
-/** Bounds the server enforces on a check. */
+/**
+ * Bounds every save of a check meets, a create and an edit alike: lattice-sdk
+ * model.MonitorIntervalMinSec, MonitorIntervalMaxSec and MonitorTimeoutMaxSec
+ * (lattice-sdk 5863aec, which lattice-server's validMonitorTiming reads). The
+ * timeout is also shorter than the interval. The path set has its own bounds
+ * (latencyModel).
+ */
 export const CHECK_MIN_INTERVAL_SEC = 10;
 export const CHECK_MAX_INTERVAL_SEC = 86400;
-export const CHECK_MAX_TIMEOUT_SEC = 300;
+export const CHECK_MAX_TIMEOUT_SEC = 60;
 export { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER };
 
 /**
@@ -700,4 +706,32 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
 /** A note that keeps a node out of the target picker: its beacon cannot answer until the node itself changes. */
 export function unpickableNote(resolution: NodeTargetResolution | undefined): boolean {
   return resolution?.state === "resolved" && (resolution.note === "beacon_refused" || resolution.note === "beacon_agent_too_old");
+}
+
+/** The source the operator picked on a check sheet: the check and the source. */
+export interface PickedSource {
+  check: string;
+  source: string;
+}
+
+/**
+ * The source a check sheet shows, and the pick it keeps. The operator's pick
+ * holds while the sheet steps aside for another (the change plan a source
+ * waits on, the editor) and comes back on the same check, so the operator
+ * returns to the source they left; a sheet opened on another check forgets
+ * it. A source still listed stays shown; a pick the check no longer lists,
+ * or no pick, falls back to the sheet's default (`fallback`).
+ */
+export function sheetSource(
+  openId: string | null,
+  sources: readonly string[],
+  current: string | undefined,
+  picked: PickedSource | null,
+  fallback: () => string | undefined,
+): { source: string | undefined; picked: PickedSource | null } {
+  if (!openId) return { source: undefined, picked };
+  const keep = picked && picked.check === openId ? picked : null;
+  if (current !== undefined && sources.includes(current)) return { source: current, picked: keep };
+  if (keep && sources.includes(keep.source)) return { source: keep.source, picked: keep };
+  return { source: fallback(), picked: keep };
 }

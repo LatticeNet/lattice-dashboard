@@ -22,6 +22,7 @@ import type {
   BeaconPlan,
   BeaconPlanAction,
   BeaconPlanRequest,
+  BeaconReplan,
   BeaconSettings,
   BeaconSourceView,
   BeaconView,
@@ -633,4 +634,162 @@ export function isReachabilityCheck(monitor: { id?: string; monitor_id?: string;
   if (!monitor) return false;
   const id = monitor.id ?? monitor.monitor_id ?? "";
   return monitor.managed_by === BEACON_MANAGED_BY || id.startsWith(BEACON_REACH_PREFIX);
+}
+
+/* ------------------------------------------------------------------ */
+/* A change plan the sources need (lattice-sdk model.BeaconReplan)      */
+/* ------------------------------------------------------------------ */
+
+/** Why a beacon needs a change plan: NetGuard's allow set, or (without NetGuard) the source set the target holds keys for. */
+export type BeaconReplanReason = "firewall_pending" | "beacon_source_pending";
+
+export interface BeaconReplanItem {
+  nodeId: string;
+  name: string;
+  reason: BeaconReplanReason;
+  /** Sources that use the beacon and are not admitted yet, as node ids; empty when this session may read none of them. */
+  added: string[];
+  /** Under NetGuard, sources it still admits that no longer use the beacon. */
+  removed: string[];
+  /** An open plan that may already settle it: review that rather than file another. */
+  pendingApprovalId?: string;
+  /** The plan request, as the server words it: a change that keeps the port, bind address and endpoint. */
+  request: BeaconPlanRequest;
+}
+
+function replanReason(raw: string | undefined, exposure?: string): BeaconReplanReason {
+  if (raw === "firewall_pending" || raw === "beacon_source_pending") return raw;
+  return exposure === "netguard" ? "firewall_pending" : "beacon_source_pending";
+}
+
+/** The server's word that a node's beacon needs a change plan, read; undefined for anything that is not one. */
+export function readBeaconReplan(raw: BeaconReplan | null | undefined): BeaconReplanItem | undefined {
+  if (!raw || typeof raw !== "object" || !raw.node_id) return undefined;
+  const request: BeaconPlanRequest = raw.request && raw.request.node_id === raw.node_id ? { ...raw.request } : { node_id: raw.node_id, action: "change" };
+  return {
+    nodeId: raw.node_id,
+    name: raw.name || raw.node_id,
+    reason: replanReason(raw.reason),
+    added: [...(raw.added ?? [])],
+    removed: [...(raw.removed ?? [])],
+    pendingApprovalId: raw.pending_approval_id || undefined,
+    request,
+  };
+}
+
+/** Every node of a paths read whose beacon needs a change plan, by node id. */
+export function readBeaconReplans(raw: readonly BeaconReplan[] | null | undefined): Map<string, BeaconReplanItem> {
+  const out = new Map<string, BeaconReplanItem>();
+  for (const entry of raw ?? []) {
+    const item = readBeaconReplan(entry);
+    if (item) out.set(item.nodeId, item);
+  }
+  return out;
+}
+
+/**
+ * Whether a node's beacon needs a change plan, from its view: the server's
+ * `replan` when it sends one. The field is omitted when no plan is needed,
+ * so its absence is an answer from a server known to send it (`known`: the
+ * paths read carried `beacon_replans`, PathsMatrix.replansKnown). From a
+ * server before it, or when nothing says which server this is, the same rule
+ * is worked out from the sources (the server's beaconReplanFor): a current
+ * source the applied plan did not approve, or under NetGuard an approved
+ * source no longer current, whose addresses the allow set still admits.
+ * Undefined while the beacon is off or nothing differs.
+ */
+export function replanOf(view: Pick<BeaconView, "node_id" | "state" | "exposure" | "sources" | "pending_approval_id" | "replan"> | undefined, name = "", known = false): BeaconReplanItem | undefined {
+  if (!view) return undefined;
+  if (view.replan) {
+    const item = readBeaconReplan(view.replan);
+    return item ? { ...item, name: name || item.name } : undefined;
+  }
+  if (known || view.replan === null) return undefined;
+  if (!beaconEnabled(view)) return undefined;
+  const netguard = view.exposure === "netguard";
+  const sources = [...(view.sources ?? [])].sort((a, b) => (a.name || a.node_id).localeCompare(b.name || b.node_id) || a.node_id.localeCompare(b.node_id));
+  const added = sources.filter((s) => s.current && !s.approved).map((s) => s.node_id);
+  const removed = netguard ? sources.filter((s) => s.approved && !s.current).map((s) => s.node_id) : [];
+  if (!added.length && !removed.length) return undefined;
+  return {
+    nodeId: view.node_id,
+    name: name || view.node_id,
+    reason: replanReason(undefined, view.exposure),
+    added,
+    removed,
+    pendingApprovalId: view.pending_approval_id || undefined,
+    request: { node_id: view.node_id, action: "change" },
+  };
+}
+
+/**
+ * What the re-plan action does once the page has read the node's beacon
+ * again: the paths read it was offered from may be older than a plan filed
+ * since (in another tab, by another operator, or through the node's Beacon
+ * card), so the fresh view decides. A plan that already waits is the one to
+ * review (a second one beside it would only be refused as stale once the
+ * first applies); a beacon that needs no plan any more is said to; otherwise
+ * the change plan sheet opens on the fresh word.
+ */
+export type ReplanStep =
+  | { kind: "plan"; item: BeaconReplanItem }
+  | { kind: "waits"; item: BeaconReplanItem; approvalId: string }
+  | { kind: "settled" };
+
+export function replanStep(view: Parameters<typeof replanOf>[0], name = "", known = false): ReplanStep {
+  const item = replanOf(view, name, known);
+  if (!item) return { kind: "settled" };
+  const approvalId = item.pendingApprovalId || view?.pending_approval_id || undefined;
+  return approvalId ? { kind: "waits", item: { ...item, pendingApprovalId: approvalId }, approvalId } : { kind: "plan", item };
+}
+
+/**
+ * The surface a re-plan action was asked from: the Monitoring layer and the
+ * sheet it had open (a check, a path). The beacon read the action starts is
+ * dropped when this has changed by the time it returns: a plan sheet never
+ * opens over a surface the operator already left.
+ */
+export function replanSurface(layer: string, query: { open?: unknown; path?: unknown }): string {
+  const one = (v: unknown) => (typeof v === "string" ? v : Array.isArray(v) && typeof v[0] === "string" ? v[0] : "");
+  return JSON.stringify([layer, one(query.open), one(query.path)]);
+}
+
+/** The sources a re-plan names, by name: the view's names first, then the caller's, then the id. */
+export function replanNames(item: Pick<BeaconReplanItem, "added" | "removed">, view?: Pick<BeaconView, "sources">, nameOf?: (nodeId: string) => string | undefined): { added: string[]; removed: string[] } {
+  const known = new Map((view?.sources ?? []).map((s) => [s.node_id, s.name]));
+  const name = (id: string) => known.get(id) || nameOf?.(id) || id;
+  return { added: item.added.map(name), removed: item.removed.map(name) };
+}
+
+/**
+ * The scopes this session lacks to file the change plan (D12): monitor:admin,
+ * node:admin and network:plan, and netguard:admin when NetGuard manages the
+ * node, which firewall_pending says. Empty when it may file it.
+ */
+export function replanMissingScopes(item: Pick<BeaconReplanItem, "reason">, scopes: BeaconScopes): string[] {
+  return beaconActions({ state: "listening", exposure: item.reason === "firewall_pending" ? "netguard" : "internet" }, scopes).missing;
+}
+
+/** One sentence to translate: its key, its named values, and the count that picks its plural form. */
+export interface CopyLine {
+  key: string;
+  params: Record<string, string>;
+  n: number;
+}
+
+/**
+ * What to say of a re-plan, in plain words: who cannot measure the target
+ * until a change plan is approved (the firewall's words under NetGuard, the
+ * key's otherwise), then who NetGuard still admits that no longer uses the
+ * beacon. A plan needed for sources this session may not read is said
+ * without their names. The `claim` form is the attention list's one line.
+ */
+export function replanLines(item: Pick<BeaconReplanItem, "reason">, names: { added: string[]; removed: string[] }, target: string, form: "sentence" | "claim" = "sentence"): CopyLine[] {
+  const base = form === "claim" ? "fleet.monitoring.beacon.replan.claim." : "fleet.monitoring.beacon.replan.";
+  const kind = item.reason === "firewall_pending" ? "firewall" : "plan";
+  const out: CopyLine[] = [];
+  if (names.added.length) out.push({ key: `${base}${kind}`, params: { target, names: names.added.join(", ") }, n: names.added.length });
+  else if (!names.removed.length) out.push({ key: `${base}${kind}Unnamed`, params: { target }, n: 1 });
+  if (names.removed.length) out.push({ key: `${base}removed`, params: { target, names: names.removed.join(", ") }, n: names.removed.length });
+  return form === "claim" ? out.slice(0, 1) : out;
 }

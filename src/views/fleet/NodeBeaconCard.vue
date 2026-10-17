@@ -25,7 +25,9 @@ let beaconRouteMissing = false;
  * key epoch and its last rotation, the last signed request); the exposure,
  * always printed (NetGuard admits only the approved sources, or the port is
  * open to the internet, as D3 requires the console to say); the
- * reachability check's verdict; sources the beacon does not admit yet; the
+ * reachability check's verdict; the change plan the sources need (sources
+ * that use the beacon and are not admitted yet, or that NetGuard still
+ * admits after they left), in plain words and with its one action; the
  * sources; and the actions. Enable, change and turn off are plans filed
  * here and decided in Approvals; rotating the keys is an audited action
  * behind a confirm. A session without the scopes reads everything and is
@@ -50,6 +52,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 import BeaconPlanSheet from "./BeaconPlanSheet.vue";
+import BeaconReplanNote from "./BeaconReplanNote.vue";
 import {
   agentHasResponder,
   beaconActions,
@@ -65,6 +68,8 @@ import {
   nodeRefusesBeacon,
   notListeningCause,
   reachState,
+  replanNames,
+  replanOf,
   waitingSources,
 } from "./beaconModel";
 import { isMissingRoute } from "./pathsModel";
@@ -208,7 +213,7 @@ const companionClosed = computed(() => {
   const kind = companionState.value?.kind;
   if (kind === "applying") return true;
   if (kind === "applied") return false;
-  return companion.value?.kind === "denied" || !waiting.value.length;
+  return companion.value?.kind === "denied" || (!waiting.value.length && !replan.value);
 });
 
 /** The approved sources NetGuard admits, counted for the exposure line. */
@@ -254,7 +259,11 @@ const reachLine = computed(() => {
   }
 });
 
-const waitingNames = computed(() => waiting.value.map((s) => s.name || s.node_id).join(", "));
+/** The change plan the sources need: the server's word, or the same rule from the sources on a server before it. */
+const replan = computed(() => {
+  const item = replanOf(view.value, name.value);
+  return item ? { item, names: replanNames(item, view.value) } : undefined;
+});
 const sourceRows = computed(() => [
   ...sources.value.active.map((s) => ({ s, status: "active" as const })),
   ...sources.value.waiting.map((s) => ({ s, status: "waiting" as const })),
@@ -279,8 +288,11 @@ watch(
 
 const sheetOpen = ref(false);
 const sheetAction = ref<BeaconPlanAction>("enable");
-function openPlan(action: BeaconPlanAction): void {
+/** Opened from the re-plan note, the change plan says why first. */
+const sheetForReplan = ref(false);
+function openPlan(action: BeaconPlanAction, forReplan = false): void {
   sheetAction.value = action;
+  sheetForReplan.value = forReplan;
   sheetOpen.value = true;
 }
 function onFiled(): void {
@@ -418,24 +430,17 @@ const DD_TEXT = "min-w-0 text-xs break-words";
             <p v-if="companion?.kind === 'denied'" class="break-words text-foreground/80" data-testid="beacon-companion-denied">{{ $t('fleet.monitoring.beacon.companion.denied') }}</p>
           </div>
 
-          <!-- Sources that use the beacon but are not admitted yet: firewall pending under NetGuard. -->
-          <div v-if="waiting.length" :class="cn(NOTE, 'space-y-1.5 bg-warning/10 text-warning-text')" role="status" data-testid="beacon-waiting">
-            <p class="break-words">
-              {{ view.firewall_pending || view.exposure === 'netguard'
-                ? $t('fleet.monitoring.beacon.waiting.firewall', { names: waitingNames }, waiting.length)
-                : $t('fleet.monitoring.beacon.waiting.plan', { names: waitingNames }, waiting.length) }}
-            </p>
-            <!-- A plan already waits: review it rather than file another. -->
-            <RouterLink
-              v-if="view.pending_approval_id"
-              :to="{ name: 'approvals', query: { open: view.pending_approval_id } }"
-              class="inline-block font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
-              data-testid="beacon-waiting-review"
-            >{{ $t('fleet.monitoring.beacon.waiting.review') }}</RouterLink>
-            <button v-else-if="actions.change" type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" data-testid="beacon-waiting-plan" @click="openPlan('change')">
-              {{ $t('fleet.monitoring.beacon.waiting.action') }}
-            </button>
-          </div>
+          <!-- The change plan the sources need: who cannot measure this node until it is approved, and its one action. -->
+          <BeaconReplanNote
+            v-if="replan"
+            :item="replan.item"
+            :target="name"
+            :names="replan.names"
+            :can-plan="actions.change"
+            tone="warning"
+            data-testid="beacon-waiting"
+            @plan="openPlan('change', true)"
+          />
 
           <!-- Who may send, and who does. -->
           <section v-if="enabled" class="space-y-1.5" data-testid="beacon-sources">
@@ -482,7 +487,16 @@ const DD_TEXT = "min-w-0 text-xs break-words";
     </CardContent>
   </Card>
 
-  <BeaconPlanSheet v-if="view" :open="sheetOpen" :action="sheetAction" :node="node" :view="view" @close="sheetOpen = false" @filed="onFiled" />
+  <BeaconPlanSheet
+    v-if="view"
+    :open="sheetOpen"
+    :action="sheetAction"
+    :node="node"
+    :view="view"
+    :replan="sheetForReplan ? replan?.item : undefined"
+    @close="sheetOpen = false"
+    @filed="onFiled"
+  />
   <ConfirmDialog
     v-if="view"
     v-model:open="rotateOpen"

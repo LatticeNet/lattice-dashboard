@@ -318,6 +318,28 @@ export interface GapRun {
   buckets: number;
 }
 
+/**
+ * Whether a point is the step in progress: the last step of a series, which
+ * ends after the series' `to`. The server counts its runs as they arrive and
+ * expects the runs certainly due so far, never fewer than it has heard, so a
+ * step in progress that has heard nothing yet expects nothing yet.
+ */
+export function stepInProgress(series: Pick<PathSeries, "to" | "stepSec">, point: Pick<SeriesPoint, "t">): boolean {
+  return series.stepSec > 0 && Number.isFinite(series.to) && point.t + series.stepSec > series.to;
+}
+
+/**
+ * What the readout says of a step that heard no run: a gap ("noData") when
+ * runs were due, "notYet" for the step in progress before its first run is
+ * due, and "notExpected" for a step that expected none (a paused path).
+ * Undefined for a step that heard a run.
+ */
+export function emptyStepNote(point: Pick<SeriesPoint, "n" | "missing">, inProgress: boolean): "noData" | "notYet" | "notExpected" | undefined {
+  if (point.missing) return "noData";
+  if (point.n > 0) return undefined;
+  return inProgress ? "notYet" : "notExpected";
+}
+
 /** Runs of missing buckets, for the hatch across both lanes. */
 export function gapRuns(series: Pick<PathSeries, "points" | "stepSec">): GapRun[] {
   const runs: GapRun[] = [];
@@ -483,6 +505,31 @@ export function linePieces(values: readonly { x: number; y: number | null | unde
     prev = { x: v.x, y: v.y };
   }
   return out;
+}
+
+/**
+ * Where the previous period's label goes. The guides are labelled on the
+ * canvas, and so is the dotted previous line: once, at the start of the part
+ * in view, so it names the line where the line begins. It sits above the
+ * line, or below it when that crosses fewer of the drawn lines (`covered`)
+ * or above would leave the latency lane; it never runs past the plot's
+ * right edge. Undefined when no previous step is in view.
+ */
+export function placePreviousLabel(
+  line: readonly { x: number; y: number | null | undefined }[],
+  opts: { w: number; h: number; gap: number; left: number; right: number; laneTop: number; laneBottom: number; covered: (box: { x0: number; x1: number; y0: number; y1: number }) => number },
+): { x: number; top: number } | undefined {
+  const start = line.find((p) => p.y !== null && p.y !== undefined && Number.isFinite(p.y) && p.x >= opts.left && p.x <= opts.right);
+  if (!start) return undefined;
+  const y = start.y as number;
+  const x = Math.max(opts.left + opts.gap, Math.min(start.x + opts.gap, opts.right - opts.w - opts.gap));
+  const box = (top: number) => ({ x0: x, x1: x + opts.w, y0: top, y1: top + opts.h });
+  const above = y - opts.gap - opts.h;
+  const below = y + opts.gap;
+  const fits = (top: number) => top >= opts.laneTop && top + opts.h <= opts.laneBottom;
+  if (fits(above) && (!fits(below) || opts.covered(box(above)) <= opts.covered(box(below)))) return { x, top: above };
+  if (fits(below)) return { x, top: below };
+  return { x, top: Math.max(opts.laneTop, Math.min(above, opts.laneBottom - opts.h)) };
 }
 
 /** How many pieces cross a box: a steep drop through a label counts, not only the points that land in it. */

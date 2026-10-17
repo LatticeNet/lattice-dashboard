@@ -243,23 +243,37 @@ function failsMinute(shape: Shape, minute: number, share: number): boolean {
 /** Beacon paths to NAT targets were TCP until two days ago, failing on the unmapped port. */
 const BEACON_SWITCH_AGE = 2 * 86400;
 
-/**
- * One path's buckets over a window, as the server's pathSeriesFor lays them
- * out: the window starts on a step boundary and runs to now (`to` is now, not
- * a step), so the last bucket is the step in progress. That step expects the
- * whole minutes it covers and has heard the runs already due (a run lands at
- * the half minute, as resultsFor stamps them), so it can hear one run while
- * expecting none, as the golden series' last bucket does (1 of 0).
- */
-function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step: number; from: number; to: number; buckets: PathBucket[] } {
-  const step = expectedStepSeconds(window, 60, FINE_DAYS);
-  const to = NOW / 1000 - offsetSec;
+/** The resolution of the tier a matrix window reads (the server's pathMatrixTier): raw minutes up to an hour, five minutes below 3d, hours from 3d. */
+function matrixResolution(window: MonitorWindow): number {
   const span = WINDOW_SECONDS[window];
-  const from = Math.floor((to - span) / step) * step;
+  return span <= 3600 ? 60 : span < 72 * 3600 ? 300 : 3600;
+}
+
+/**
+ * One path's buckets over a window, as the server lays them out.
+ *
+ * A series (pathSeriesFrom): as many steps as fit in the span,
+ * ceil(span/step), the last of them the step in progress at now (`to` is now,
+ * not a step), so an hour at a minute is 60 buckets. The step in progress
+ * expects the runs certainly due over the part that has passed, and never
+ * fewer than it has heard (pathInProgressExpected; a run lands at the half
+ * minute, as resultsFor stamps them), so the golden series' last bucket reads
+ * 1 of 1.
+ *
+ * A matrix window (`whole`, pathWindowBounds): the span's whole buckets of the
+ * window's tier, ending where the bucket in progress begins, so a path that
+ * ran every interval reads as many runs as it expected.
+ */
+function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0, whole = false): { step: number; from: number; to: number; buckets: PathBucket[] } {
+  const step = expectedStepSeconds(window, 60, FINE_DAYS);
+  const span = WINDOW_SECONDS[window];
+  const res = matrixResolution(window);
+  const to = whole ? Math.floor((NOW / 1000 - offsetSec) / res) * res : NOW / 1000 - offsetSec;
+  const from = whole ? to - span : Math.floor(to / step) * step - (Math.ceil(span / step) - 1) * step;
   const perBucket = Math.max(1, Math.round(step / 60));
   const buckets: PathBucket[] = [];
   const now = NOW / 1000;
-  for (let t = from; t <= to; t += step) {
+  for (let t = from; whole ? t < to : t <= to; t += step) {
     const age = now - t;
     const covered = Math.min(step, to - t);
     const runs = covered >= step ? perBucket : Math.min(perBucket, Math.floor((covered + 30) / 60));
@@ -287,6 +301,8 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
       buckets.push({ t, n: 0, expected, fail: 0 });
       continue;
     }
+    // The step in progress never expects fewer runs than it has heard.
+    const heardExpected = Math.max(expected, runs);
     // A stray failed run now and then, never in the newest minutes (a check's state reads its newest run).
     let failShare = j > 0.997 && age > 600 ? 1 / runs : 0;
     if (behaviourNow === "nat") failShare = 1;
@@ -307,7 +323,7 @@ function bucketsFor(shape: Shape, window: MonitorWindow, offsetSec = 0): { step:
     if (shape.recent === "loss") fail = Math.min(runs, fail + spell(0.075, 52 * 60));
     if (shape.recent === "both") fail = Math.min(runs, fail + spell(0.26, 48 * 60));
     if (shape.recent === "sourceDown" && age < 3 * 3600) fail = runs;
-    const bucket: PathBucket = { t, n: runs, expected, fail, loss: fail / runs };
+    const bucket: PathBucket = { t, n: runs, expected: heardExpected, fail, loss: fail / runs };
     if (packets) {
       // Every echo of a failed run is lost; a run that came back may still lose one now and then.
       const sent = runs * packets;
@@ -628,11 +644,13 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
 /* ---- The matrix ---- */
 
 function pathFrom(shape: Shape, window: MonitorWindow, base: Omit<PathView, "state" | "samples" | "expected">, unknownReason?: string, downReason?: string, rule?: MonitorDegradedRule): PathView {
-  const now = bucketsFor(shape, window);
-  const prev = bucketsFor(shape, window, WINDOW_SECONDS[window]);
+  // The window's figures are its whole buckets before the one in progress; the newest run may sit in that one.
+  const now = bucketsFor(shape, window, 0, true);
+  const prev = bucketsFor(shape, window, WINDOW_SECONDS[window], true);
+  const series = bucketsFor(shape, window);
   const stats = seriesStats(seriesFromResponse({ window, step_seconds: now.step, from: now.from, to: now.to, buckets: now.buckets }).points);
   const prevStats = seriesStats(seriesFromResponse({ window, step_seconds: prev.step, from: prev.from, to: prev.to, buckets: prev.buckets }).points);
-  const last = [...now.buckets].reverse().find((b) => b.n > 0);
+  const last = [...series.buckets].reverse().find((b) => b.n > 0);
   // As the server sends a cell: every figure present, null where nothing was measured, and an empty reason.
   const path: PathView = {
     ...base,

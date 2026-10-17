@@ -1391,6 +1391,8 @@ export interface PathsResponse {
    * degraded, which is how the console tells the two apart.
    */
   degraded_at?: string | null;
+  /** The nodes this session may read whose beacon needs a change plan; always present (often empty) from a server with the monitoring follow-ups. */
+  beacon_replans?: BeaconReplan[] | null;
 }
 
 /** One bucket of a path series. `n` 0 with `expected` above 0 is a bucket with no data. */
@@ -1791,6 +1793,28 @@ export interface BeaconSourceView {
   reason?: string;
 }
 
+/**
+ * A node's beacon needs a change plan (lattice-sdk model.BeaconReplan): the
+ * sources that use it now differ from the ones its applied plan approved in
+ * a way only an approved plan settles. Nothing re-plans on its own. `request`
+ * is the body of the POST /api/nodes/beacon/plan that files it: a change that
+ * keeps the port, bind address and endpoint and re-plans the source set (and,
+ * under NetGuard, the allow set) from the sources current when it is filed.
+ */
+export interface BeaconReplan {
+  node_id: string;
+  name: string;
+  /** firewall_pending when NetGuard manages the node, else beacon_source_pending. */
+  reason: string;
+  /** Sources using the beacon now that the applied plan did not approve, as node ids; only those this session may read. */
+  added: string[] | null;
+  /** Under NetGuard, approved sources that no longer use the beacon and that NetGuard still admits. */
+  removed: string[] | null;
+  /** An open node.beacon approval for the node, which may already settle the difference. */
+  pending_approval_id?: string;
+  request: BeaconPlanRequest;
+}
+
 /** GET /api/nodes/beacon?node_id=. It never carries a key. */
 export interface BeaconView {
   node_id: string;
@@ -1810,6 +1834,8 @@ export interface BeaconView {
   pending_approval_id?: string;
   suggested_port?: number;
   version: number;
+  /** Present while the beacon needs a change plan (a server with the monitoring follow-ups; absent before). */
+  replan?: BeaconReplan | null;
 }
 
 export type RenewalCycle = "" | "monthly" | "quarterly" | "semiannual" | "annual" | "custom_days";

@@ -6,6 +6,7 @@
  * The attention list is worst first (design 29 D13): each target that is
  * down (its sources inside one line), the down paths triangulation places on
  * a source's network, the same two for degraded paths, offline sources,
+ * targets whose beacon needs a change plan (the plan is the line's action),
  * unknown paths grouped by reason, pauses last and never as a warning. Each
  * down and degraded line carries its verdict and what it rests on. The reach
  * strip is one line per source: how many of its paths are up, degraded, down
@@ -26,11 +27,13 @@ import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import { Button } from "@/components/ui/button";
 
+import { replanLines, replanNames } from "./beaconModel";
 import { formatLoss } from "./latencyModel";
 import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathDisplay, type PathItem, type SourceReach } from "./pathsModel";
 import { soleReporter, type Verdict } from "./triangulationModel";
 import { usePathsCopy } from "./pathsCopy";
 import type { PathsData } from "./usePathsData";
+import { useBeaconReplan } from "./useBeaconReplan";
 
 const props = defineProps<{
   owned: OwnedRoute;
@@ -69,6 +72,22 @@ function names(list: string[]): string {
 }
 
 const show = (q: string, path?: string) => ({ label: t("fleet.monitoring.overview.attention.show"), run: () => showInPaths(q, path) });
+
+const replans = useBeaconReplan();
+/**
+ * A beacon's change plan: the waiting plan's review when one waits, the plan
+ * itself for a session that may file it, else the node's Beacon card, which
+ * names the scopes it needs.
+ */
+function replanAction(item: Extract<PathAttention, { kind: "replan" }>): AttentionItem["action"] {
+  const r = item.replan;
+  if (r.pendingApprovalId) return { label: t("fleet.monitoring.beacon.replan.review"), to: { name: "approvals", query: { open: r.pendingApprovalId } } };
+  if (replans && replans.missing(r).length === 0) {
+    const opening = replans.opening.value === r.nodeId;
+    return { label: opening ? t("fleet.monitoring.beacon.replan.opening", { target: item.targetName }) : t("fleet.monitoring.beacon.replan.action"), run: () => replans.open(r) };
+  }
+  return { label: t("fleet.monitoring.beacon.replan.openBeacon", { target: item.targetName }), to: { name: "node-detail", params: { id: r.nodeId }, hash: "#node-beacon" } };
+}
 
 const items = computed(() => (matrix.value ? pathAttention(matrix.value, props.data.triangulation.value) : []));
 /**
@@ -150,6 +169,18 @@ function itemFor(item: PathAttention): AttentionItem {
         claim: t("fleet.monitoring.overview.attention.offline", { source: item.sourceName, n: item.paths.length }, item.paths.length),
         proof: [seen ? t("fleet.monitoring.overview.attention.lastSeen", { age: formatRelativeTime(seen) }) : "", names(item.paths.map((p) => p.targetName))].filter(Boolean).join(" · "),
         action: show(attentionQuery(item)),
+      };
+    }
+    case "replan": {
+      const who = replanNames(item.replan, undefined, (id) => replans?.nameOf(id) ?? matrix.value?.sources.find((s) => s.nodeId === id)?.name);
+      const [claim] = replanLines(item.replan, who, item.targetName, "claim");
+      // Waiting paths make it a warning; a plan that only narrows NetGuard's allow set is information.
+      return {
+        key: `replan:${item.nodeId}`,
+        tone: item.paths.length || who.added.length || !who.removed.length ? "warning" : "info",
+        claim: claim ? t(claim.key, claim.params, claim.n) : "",
+        proof: item.paths.length ? names(item.paths.map((p) => (matrix.value && matrix.value.sources.length > 1 ? `${p.targetName} (${p.sourceName})` : p.targetName))) : "",
+        action: replanAction(item),
       };
     }
     case "unknown":

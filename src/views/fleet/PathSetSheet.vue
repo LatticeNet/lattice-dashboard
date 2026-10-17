@@ -52,6 +52,7 @@ import {
   draftProblems,
   draftTargetReason,
   draftToConfig,
+  alertPagesLine,
   draftsDiffer,
   pathSetMethods,
   pathSetPreview,
@@ -273,8 +274,6 @@ const problemText = computed(() =>
 
 /** The policy in force: a path set nobody set reads Off, as the server reads it. */
 const alert = computed(() => effectiveAlert(draft.value.alert, true));
-/** The run count in force for the line below the field: a stored zero reads as two. */
-const alertAfterShown = computed(() => (draft.value.alertAfter > 0 ? draft.value.alertAfter : ALERT_DEFAULT_AFTER));
 function setAlert(next: "off" | "down" | "down_and_degraded"): void {
   // A path set stored without a policy already reads Off: choosing Off changes nothing to save.
   draft.value = { ...draft.value, alert: next === "off" && !base.value.alert ? "" : next };
@@ -288,8 +287,10 @@ function setAlertAfter(value: string | number | undefined): void {
  * that measures nothing, never pages, so "all N" would claim more than holds.
  */
 const alertLine = computed(() => {
-  if (alert.value === "off") return t("fleet.monitoring.pathSet.alertPages.off");
-  return t(`fleet.monitoring.pathSet.alertPages.${alert.value}`, { after: alertAfterShown.value });
+  const line = alertPagesLine(draft.value);
+  if (line.policy === "off") return t("fleet.monitoring.pathSet.alertPages.off");
+  // A count the save would refuse is not named: its error under the field says what is wrong.
+  return line.after === undefined ? t(`fleet.monitoring.pathSet.alertPages.${line.policy}Unset`) : t(`fleet.monitoring.pathSet.alertPages.${line.policy}`, { after: line.after });
 });
 const SECTION = "grid min-w-0 gap-2.5 border-0 p-0";
 const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground";

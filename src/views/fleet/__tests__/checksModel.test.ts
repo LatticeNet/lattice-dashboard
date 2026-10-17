@@ -37,6 +37,11 @@ import {
   usesNodeTarget,
   withPathVerdict,
   draftDegradedProblems,
+  CHECK_MAX_INTERVAL_SEC,
+  CHECK_MAX_TIMEOUT_SEC,
+  CHECK_MIN_INTERVAL_SEC,
+  sheetSource,
+  type PickedSource,
   type CheckDraft,
 } from "../checksModel.ts";
 import { applyQuery, compileQuery } from "@/lib/query/engine";
@@ -93,6 +98,24 @@ test("problems: target shape, cadence bounds, timeout under interval, sources, t
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alertAfter: 21 }), ["alertAfter"]);
   assert.deepEqual(draftProblems({ ...draftFromMonitor(monitor()), alert: "off", alertAfter: 0 }), [], "the count matters only when the check alerts");
   assert.equal(draftFromMonitor(monitor({ alert_after: undefined })).alertAfter, 2, "absent reads as the server's default");
+});
+
+test("timing bounds: the server's, which refuses a timeout over 60 s on every save", () => {
+  // lattice-sdk model.MonitorIntervalMinSec, MonitorIntervalMaxSec and MonitorTimeoutMaxSec, as literals:
+  // changing a bound here without the SDK (or the SDK without this) fails this test.
+  assert.deepEqual([CHECK_MIN_INTERVAL_SEC, CHECK_MAX_INTERVAL_SEC, CHECK_MAX_TIMEOUT_SEC], [10, 86400, 60]);
+  for (const type of ["tcp", "http", "tls"] as const) {
+    const base = { ...draftFromMonitor(monitor({ type, target: type === "http" ? "https://example.com/health" : "example.com:443" })), intervalSec: 120 };
+    assert.ok(!draftProblems({ ...base, timeoutSec: 60 }).includes("timeout"), `${type}: 60 s is the longest timeout`);
+    assert.ok(draftProblems({ ...base, timeoutSec: 61 }).includes("timeout"), `${type}: 61 s is refused as the server refuses it`);
+    assert.ok(draftProblems({ ...base, timeoutSec: 300 }).includes("timeout"), `${type}: the old 300 s bound is gone`);
+  }
+  // An interval at its bounds, with a timeout under it.
+  const at = { ...draftFromMonitor(monitor()), timeoutSec: 5 };
+  assert.deepEqual(draftProblems({ ...at, intervalSec: 10 }), []);
+  assert.deepEqual(draftProblems({ ...at, intervalSec: 9 }), ["interval"]);
+  assert.deepEqual(draftProblems({ ...at, intervalSec: 86400 }), []);
+  assert.deepEqual(draftProblems({ ...at, intervalSec: 86401 }), ["interval"]);
 });
 
 test("edit: only changed fields with the version; kind and target never ride an edit", () => {
@@ -629,4 +652,28 @@ test("thresholds diff: unchanged is not sent, a change replaces the rule whole, 
   assert.equal(buildUpdate(m, { ...d, degraded: defaultDegradedDraft() }).degraded, undefined, "never sent to a server that does not judge degraded");
   assert.equal(degradedEdit(undefined, { ...defaultDegradedDraft(), lossPercent: "2.0" }), undefined, "typing the default is no change");
   assert.equal(degradedEdit({ loss_percent: 2 }, defaultDegradedDraft()), undefined, "a stored default is the default");
+});
+
+test("a check sheet returns to the source the operator picked after a plan or the editor, and forgets it on another check", () => {
+  const sources = ["sh", "fsn", "hel"];
+  const worst = () => "sh";
+  // First open: no pick, the sheet's default.
+  let s = sheetSource("mon_beacon_jp", sources, undefined, null, worst);
+  assert.deepEqual(s, { source: "sh", picked: null });
+  // The operator picks hetzner-fsn (ChecksLayer records the pick), then plans the change: the sheet steps aside.
+  let picked: PickedSource | null = { check: "mon_beacon_jp", source: "fsn" };
+  s = sheetSource(null, [], "fsn", picked, worst);
+  assert.deepEqual(s, { source: undefined, picked });
+  // Cancel, Escape or Close after filing brings the same check back: on the source the operator left, not the default.
+  s = sheetSource("mon_beacon_jp", sources, s.source, s.picked, worst);
+  assert.deepEqual(s, { source: "fsn", picked });
+  // A source still listed stays shown as the rows refresh.
+  assert.equal(sheetSource("mon_beacon_jp", [...sources, "mk"], "fsn", picked, worst).source, "fsn");
+  // The picked source left the check: the default, and the pick waits in case it comes back on this check.
+  assert.deepEqual(sheetSource("mon_beacon_jp", ["sh", "hel"], undefined, picked, worst), { source: "sh", picked });
+  // Another check's sheet forgets the pick, so reopening the first one later starts from its default again.
+  s = sheetSource("mon_beacon_sg", ["fsn", "sh"], undefined, picked, () => "sh");
+  assert.deepEqual(s, { source: "sh", picked: null });
+  picked = s.picked;
+  assert.deepEqual(sheetSource("mon_beacon_jp", sources, undefined, picked, worst), { source: "sh", picked: null });
 });

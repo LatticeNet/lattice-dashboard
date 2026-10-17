@@ -16,7 +16,7 @@
  * the right edge, beneath the series so a label never hides a bucket; the
  * scale always covers the trigger. With `compare` on, the
  * previous period's p50 is a thin dotted line in the same ink, its empty steps
- * unjoined, and the readout adds its value.
+ * unjoined, labelled once where the line begins, and the readout adds its value.
  *
  * The crosshair snaps to buckets and carries the exact values. It follows the
  * pointer and the keyboard (Left and Right step a bucket, Home and End jump);
@@ -35,11 +35,13 @@ import "uplot/dist/uPlot.min.css";
 
 import { resolveColor, resolveFontFamily, rgba, watchTheme, type Rgba } from "@/lib/cssColor";
 import { formatLoss, formatMs } from "./latencyModel";
+import { LOSS_FILL, type LossTone } from "./pathsModel";
 import {
   baselineGuides,
   bucketIndexAt,
   chartCeilingMs,
   chartColumns,
+  emptyStepNote,
   gapRuns,
   laneLayout,
   methodAt,
@@ -47,6 +49,8 @@ import {
   methodMarkers,
   piecesCrossing,
   placeGuideLabels,
+  placePreviousLabel,
+  stepInProgress,
   stepIndex,
   visibleRange,
   LATENCY_LANE_START,
@@ -71,10 +75,10 @@ const props = withDefaults(
     unmeasuredNote?: string;
     /** Draw the previous period's p50 (the series carries it when the comparison is on). */
     compare?: boolean;
-    /** The loss bars' tone: the M1 red, or the warning tone on a degraded path (D13: amber means degraded). */
-    lossTone?: "destructive" | "warning";
+    /** The loss bars' tone (pathsModel lossTone): the path's state tone when it is down or degraded, the ink on an up path, muted on one that measured nothing. */
+    lossTone?: LossTone;
   }>(),
-  { compact: false, height: 240, compare: false, lossTone: "destructive" },
+  { compact: false, height: 240, compare: false, lossTone: "ink" },
 );
 
 const emit = defineEmits<{ zoom: [range: { from: number; to: number } | null] }>();
@@ -114,7 +118,7 @@ function readPalette(): Palette {
     border: resolveColor("--border"),
     card: resolveColor("--card"),
     tone: resolveColor(toneToken),
-    loss: resolveColor(props.unmeasuredNote ? "--muted-foreground" : props.lossTone === "warning" ? "--warning" : "--destructive"),
+    loss: resolveColor(LOSS_FILL[props.unmeasuredNote ? "muted" : props.lossTone]),
     dark: document.documentElement.classList.contains("dark"),
     mono: resolveFontFamily("--font-mono"),
     sans: getComputedStyle(document.body).fontFamily || "system-ui, sans-serif",
@@ -296,6 +300,44 @@ function drawGuideLabels(u: uPlot): void {
   ctx.restore();
 }
 
+/**
+ * The previous period's label ("previous p50"), once, where its dotted line
+ * begins in view, drawn beneath the series as the guide labels are, on the
+ * side of its line that the p50 crosses less.
+ */
+function drawPreviousLabel(u: uPlot): void {
+  const prev = previous.value;
+  if (!prev) return;
+  const ctx = u.ctx;
+  const { left, top, width, height } = u.bbox;
+  const px = uPlot.pxRatio;
+  const half = step.value / 2;
+  const laneBottom = u.valToPos(lanes.value.divider, "ms", true);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  ctx.font = `${10 * px}px ${colors().mono}`;
+  const text = t("fleet.monitoring.chart.previous");
+  const w = ctx.measureText(text).width + 8 * px;
+  const h = 13 * px;
+  const xs = points.value.map((p) => u.valToPos(p.t + half, "x", true));
+  const p50 = linePieces(points.value.map((p, i) => ({ x: xs[i]!, y: p.p50Ms === undefined ? null : u.valToPos(p.p50Ms, "ms", true) })));
+  const slot = placePreviousLabel(
+    points.value.map((_, i) => ({ x: xs[i]!, y: prev[i] == null ? null : u.valToPos(prev[i]!, "ms", true) })),
+    { w, h, gap: 3 * px, left, right: left + width, laneTop: top, laneBottom, covered: (box) => piecesCrossing(p50, box) },
+  );
+  if (slot) {
+    ctx.fillStyle = rgba(colors().card, 0.88);
+    ctx.fillRect(slot.x, slot.top, w, h);
+    ctx.fillStyle = rgba(colors().ink, 0.7);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(text, slot.x + 4 * px, slot.top + 12 * px);
+  }
+  ctx.restore();
+}
+
 function drawOverlay(u: uPlot): void {
   const ctx = u.ctx;
   const { left, top, width, height } = u.bbox;
@@ -462,7 +504,8 @@ function options(width: number): uPlot.Options {
         scale: "loss",
         stroke: "transparent",
         width: 0,
-        fill: () => rgba(colors().loss, colors().dark ? 0.6 : 0.5),
+        // A state tone at half strength; the ink of an up path's loss lighter still, so it reads as a figure, not an alarm.
+        fill: () => rgba(colors().loss, props.lossTone === "ink" ? (colors().dark ? 0.5 : 0.38) : colors().dark ? 0.6 : 0.5),
         points: { show: false },
         paths: uPlot.paths.bars!({ size: [0.7, 24, 1], gap: 2, radius: 0.2 }),
       },
@@ -472,7 +515,7 @@ function options(width: number): uPlot.Options {
     bands: [{ series: [3, 1], fill: () => rgba(colors().tone, colors().dark ? 0.22 : 0.16) }],
     hooks: {
       drawClear: [(u) => drawGaps(u)],
-      drawAxes: [(u) => drawGuideLabels(u)],
+      drawAxes: [(u) => drawGuideLabels(u), (u) => drawPreviousLabel(u)],
       draw: [(u) => drawOverlay(u)],
       setCursor: [
         (u) => {
@@ -628,8 +671,10 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   if (!p) return undefined;
   const start = new Date(p.t * 1000);
   const end = new Date((p.t + step.value) * 1000);
-  const time = `${dateTime.value.format(start)} → ${timeOnly.value.format(end)}`;
-  const runs = t("fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
+  // The step in progress runs to now, and its runs are counted so far.
+  const live = stepInProgress(props.series, p);
+  const time = `${dateTime.value.format(start)} → ${live ? t("fleet.monitoring.chart.now") : timeOnly.value.format(end)}`;
+  const runs = t(live ? "fleet.monitoring.chart.runsSoFar" : "fleet.monitoring.chart.runs", { n: p.n, expected: p.expected });
   const method = methodAt(props.series, p.t, props.method);
   const methodEntry: ReadoutEntry[] = [{ key: "method", label: t("fleet.monitoring.chart.method"), value: method.toUpperCase() }];
   // The previous period's p50 at this step, when the comparison is drawn; a gap now may have had runs then.
@@ -637,11 +682,13 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
   const previousEntry: ReadoutEntry[] = previous.value
     ? [{ key: "previous", label: t("fleet.monitoring.chart.previous"), value: prev !== null && prev !== undefined ? formatMs(prev) : t("fleet.monitoring.chart.previousNone"), tone: prev === null || prev === undefined ? "muted" : undefined }]
     : [];
-  if (p.missing) {
+  const empty = emptyStepNote(p, live);
+  if (empty === "noData") {
     return { time, note: t("fleet.monitoring.chart.noDataLong"), entries: [{ key: "runs", label: t("fleet.monitoring.chart.samples"), value: runs }, ...methodEntry, ...previousEntry] };
   }
-  if (p.n === 0) {
-    return { time, note: t("fleet.monitoring.chart.notExpected"), entries: methodEntry };
+  if (empty) {
+    // Before its first run is due the step in progress is not a pause: it says so, with the previous period's value.
+    return { time, note: t(empty === "notYet" ? "fleet.monitoring.chart.notYet" : "fleet.monitoring.chart.notExpected"), entries: empty === "notYet" ? [...methodEntry, ...previousEntry] : methodEntry };
   }
   const entries: ReadoutEntry[] = [];
   if (p.p50Ms !== undefined) {
@@ -651,7 +698,8 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
     if (p.maxMs !== undefined) entries.push({ key: "max", label: t("fleet.monitoring.chart.max"), value: formatMs(p.maxMs) });
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
-  const alarm = props.unmeasuredNote ? undefined : props.lossTone;
+  // Only a down or degraded path's loss reads in its state's tone; an up path's is a plain figure.
+  const alarm = props.unmeasuredNote || (props.lossTone !== "destructive" && props.lossTone !== "warning") ? undefined : props.lossTone;
   entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? alarm : undefined });
   // A multi-packet bucket counts its loss in packets, echoes for icmp and signed requests for a beacon; say how many.
   if (p.sent > p.n) entries.push({ key: "echoes", label: t(method === "beacon" ? "fleet.monitoring.chart.requests" : "fleet.monitoring.chart.echoes"), value: t("fleet.monitoring.chart.echoesValue", { lost: p.lost, sent: p.sent }), tone: p.lost > 0 ? alarm : undefined });

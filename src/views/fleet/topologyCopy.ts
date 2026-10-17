@@ -6,7 +6,7 @@
 import { formatAge } from "@/lib/format";
 
 import { formatLoss, formatMs } from "@/views/fleet/latencyModel";
-import type { ProbeState, RowSummary, TopoEdge, TopoLastSample, TopoNode } from "@/views/fleet/topologyModel";
+import type { ProbeState, RowSummary, TopoCheck, TopoEdge, TopoLastSample, TopoNode } from "@/views/fleet/topologyModel";
 
 type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string;
 
@@ -78,8 +78,9 @@ export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
 
 /**
  * A target row's value with several sources drawn: "down from 1 of 4",
- * "degraded from 2 of 4", "up from all 4", in the speaking state's ink. With
- * no live path the row says the state alone ("unknown", "paused").
+ * "degraded from 2 of 4", "up from 3 of 4", and "down from all 4" (likewise
+ * degraded and up) when every drawn source reads it, in the speaking state's
+ * ink. With no live path the row says the state alone ("unknown", "paused").
  */
 export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
   const { state, n, of } = summary;
@@ -87,12 +88,25 @@ export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
   switch (state) {
     case "down":
     case "degraded":
-      return { text: t(`fleet.monitoring.topology.value.summary.${state}`, { n, of }), tone };
     case "up":
-      return { text: n === of ? t("fleet.monitoring.topology.value.summary.upAll", { of }) : t("fleet.monitoring.topology.value.summary.up", { n, of }), tone };
+      return { text: n === of ? t(`fleet.monitoring.topology.value.summary.${state}All`, { of }) : t(`fleet.monitoring.topology.value.summary.${state}`, { n, of }), tone };
     default:
       return { text: t(`fleet.monitoring.topology.value.${state}`), tone };
   }
+}
+
+/**
+ * A check card's line: failing on N of M in red, degraded on N of M in amber,
+ * else how many of its sources pass, muted. Amber means degraded wherever a
+ * path state is shown (D13), so sources that are only stale, silent or paused
+ * beside the passing ones keep the muted ink, as unknown does everywhere.
+ */
+export function checkLineValue(t: Translate, check: Pick<TopoCheck, "enabled" | "sourceIds" | "summary">): EdgeValue {
+  if (!check.enabled) return { text: t("fleet.monitoring.topology.check.disabled"), tone: "text-muted-foreground" };
+  const total = check.sourceIds.length;
+  if (check.summary.failing > 0) return { text: t("fleet.monitoring.topology.check.failing", { n: check.summary.failing, total }), tone: "text-destructive" };
+  if (check.summary.degraded > 0) return { text: t("fleet.monitoring.topology.check.degraded", { n: check.summary.degraded, total }), tone: "text-warning-text" };
+  return { text: t("fleet.monitoring.topology.check.summary", { up: check.summary.up, total }), tone: "text-muted-foreground" };
 }
 
 /** "25s ago, 162 ms", "6d ago, failed", or "none yet". */

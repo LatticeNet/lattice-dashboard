@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 
 import { formatLoss, formatMs } from "./latencyModel";
 import { usePathsCopy } from "./pathsCopy";
+import { LOSS_TEXT, lossTone } from "./pathsModel";
 import {
   CONTROL_PLANE,
   edgeStyle,
@@ -44,7 +45,7 @@ import {
   type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
-import { PROBE_INK, PROBE_MARK, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
+import { PROBE_INK, PROBE_MARK, checkLineValue, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -303,11 +304,7 @@ function sourcePaths(node: TopoNode): number {
 }
 
 function checkLine(check: TopoCheck): { text: string; tone: string } {
-  if (!check.enabled) return { text: t("fleet.monitoring.topology.check.disabled"), tone: "text-muted-foreground" };
-  const total = check.sourceIds.length;
-  if (check.summary.failing > 0) return { text: t("fleet.monitoring.topology.check.failing", { n: check.summary.failing, total }), tone: "text-destructive" };
-  if (check.summary.degraded > 0) return { text: t("fleet.monitoring.topology.check.degraded", { n: check.summary.degraded, total }), tone: "text-warning-text" };
-  return { text: t("fleet.monitoring.topology.check.summary", { up: check.summary.up, total }), tone: check.summary.up === total ? "text-muted-foreground" : "text-warning-text" };
+  return checkLineValue(t, check);
 }
 
 function checkFrom(check: TopoCheck): string {
@@ -372,7 +369,8 @@ function probeRows(edge: TopoEdge): CardRow[] {
   rows.push({
     label: t("fleet.monitoring.topology.card.loss"),
     value: edge.loss !== undefined ? formatLoss(edge.loss) : t("common.misc.none"),
-    tone: (edge.loss ?? 0) > 0 ? "text-destructive" : undefined,
+    // A loss takes the path's state tone (down red, degraded amber); an up path's is a plain figure (D13).
+    tone: (edge.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(edge.state as ProbeState)] || undefined : undefined,
   });
   if (edge.expected) rows.push({ label: t("fleet.monitoring.topology.card.heard"), value: t("fleet.monitoring.topology.card.heardValue", { heard: edge.samples ?? 0, expected: edge.expected, window: props.windowLabel }) });
   rows.push({ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last?.ok === false ? "text-destructive" : undefined });
