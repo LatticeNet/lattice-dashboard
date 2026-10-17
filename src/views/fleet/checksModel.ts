@@ -707,3 +707,31 @@ export function switchDraftKind(draft: CheckDraft, next: MonitorType, stash?: Pi
 export function unpickableNote(resolution: NodeTargetResolution | undefined): boolean {
   return resolution?.state === "resolved" && (resolution.note === "beacon_refused" || resolution.note === "beacon_agent_too_old");
 }
+
+/** The source the operator picked on a check sheet: the check and the source. */
+export interface PickedSource {
+  check: string;
+  source: string;
+}
+
+/**
+ * The source a check sheet shows, and the pick it keeps. The operator's pick
+ * holds while the sheet steps aside for another (the change plan a source
+ * waits on, the editor) and comes back on the same check, so the operator
+ * returns to the source they left; a sheet opened on another check forgets
+ * it. A source still listed stays shown; a pick the check no longer lists,
+ * or no pick, falls back to the sheet's default (`fallback`).
+ */
+export function sheetSource(
+  openId: string | null,
+  sources: readonly string[],
+  current: string | undefined,
+  picked: PickedSource | null,
+  fallback: () => string | undefined,
+): { source: string | undefined; picked: PickedSource | null } {
+  if (!openId) return { source: undefined, picked };
+  const keep = picked && picked.check === openId ? picked : null;
+  if (current !== undefined && sources.includes(current)) return { source: current, picked: keep };
+  if (keep && sources.includes(keep.source)) return { source: keep.source, picked: keep };
+  return { source: fallback(), picked: keep };
+}

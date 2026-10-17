@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, multiPacket, withPathVerdict } from "./checksModel";
+import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, multiPacket, sheetSource, withPathVerdict, type PickedSource } from "./checksModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -395,13 +395,21 @@ function defaultSource(rows: SourceRow[]): string | undefined {
 }
 
 const chosenSource = ref<string | undefined>();
+/** The operator's pick, kept while the sheet steps aside for a plan or the editor (checksModel sheetSource). */
+let pickedSource: PickedSource | null = null;
 watch(
   () => [sheet.openId.value, sourceRows.value.map((r) => r.source).join(",")] as const,
   () => {
-    if (!sourceRows.value.some((r) => r.source === chosenSource.value)) chosenSource.value = defaultSource(sourceRows.value);
+    const next = sheetSource(sheet.openId.value, sourceRows.value.map((r) => r.source), chosenSource.value, pickedSource, () => defaultSource(sourceRows.value));
+    pickedSource = next.picked;
+    chosenSource.value = next.source;
   },
   { immediate: true },
 );
+function pickSource(source: string): void {
+  chosenSource.value = source;
+  pickedSource = sheet.openId.value ? { check: sheet.openId.value, source } : null;
+}
 const chosenRow = computed(() => sourceRows.value.find((r) => r.source === chosenSource.value));
 const chosenAddress = computed<PathAddress | undefined>(() => {
   const m = selected.value;
@@ -588,7 +596,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                 type="button"
                 :aria-pressed="row.source === chosenSource"
                 :class="cn('grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', row.source === chosenSource && 'bg-muted')"
-                @click="chosenSource = row.source"
+                @click="pickSource(row.source)"
               >
                 <span class="min-w-0">
                   <span class="block truncate font-medium">{{ row.name }}</span>
