@@ -126,7 +126,8 @@ export interface SystemMetricsStore {
   slots_per_series: number;
   tiers: SystemTier[];
   last_write: {
-    at: string;
+    /** Absent until the first write. */
+    at?: string;
     points: number;
     rows: number;
     refused: number;
