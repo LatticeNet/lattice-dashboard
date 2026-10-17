@@ -23,7 +23,7 @@ import { api, unwrap, type MonitorResult, type MonitorWindow } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
-import { formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
+import { formatDateTime, formatDateTimeRange, formatDuration, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { Badge } from "@/components/ui/badge";
@@ -162,6 +162,8 @@ interface Figure {
   label: string;
   value: string;
   sub?: string;
+  /** Zoomed: the window had a change line here, so its height stays and the chart below does not move under the pointer. */
+  holdSub?: boolean;
   tone?: "destructive" | "warning";
 }
 
@@ -175,12 +177,14 @@ const figures = computed<Figure[]>(() => {
       ? { p50Ms: props.path.p50Ms, p95Ms: props.path.p95Ms, jitterMs: props.path.jitterMs, loss: props.path.loss, availability: availability(props.path), samples: props.path.samples, expected: props.path.expected }
       : undefined;
   if (!stats) return [];
-  const delta = !zoomed && props.path ? pathDelta(props.path) : {};
+  // The change against the period before is the window's; a selected range has none, but keeps the line's height.
+  const windowDelta = props.path ? pathDelta(props.path) : {};
+  const delta = zoomed ? {} : windowDelta;
   const none = t("common.misc.none");
   // Nothing measured: no run counted, or the path reads unknown with a reason. Availability is then none, never 0%.
   const measured = stats.samples > 0 && !unmeasured.value;
   return [
-    { key: "p50", label: "p50", value: stats.p50Ms !== undefined ? formatMs(stats.p50Ms) : none, sub: delta.p50Ms !== undefined ? formatDeltaMs(delta.p50Ms) : undefined },
+    { key: "p50", label: "p50", value: stats.p50Ms !== undefined ? formatMs(stats.p50Ms) : none, sub: delta.p50Ms !== undefined ? formatDeltaMs(delta.p50Ms) : undefined, holdSub: windowDelta.p50Ms !== undefined },
     { key: "p95", label: "p95", value: stats.p95Ms !== undefined ? formatMs(stats.p95Ms) : none },
     { key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), value: stats.jitterMs !== undefined ? formatMs(stats.jitterMs) : none },
     {
@@ -191,6 +195,7 @@ const figures = computed<Figure[]>(() => {
       // server that judges degraded, the loss takes the path's state tone (D13: amber means degraded), never a red of its own.
       tone: measured && (stats.loss ?? 0) >= 0.01 ? lossTone.value : undefined,
       sub: delta.loss !== undefined ? formatDeltaLoss(delta.loss) : undefined,
+      holdSub: windowDelta.loss !== undefined,
     },
     { key: "availability", label: t("fleet.monitoring.paths.stats.availability"), value: measured && stats.availability !== undefined ? formatAvailability(stats.availability) : none },
     { key: "samples", label: t("fleet.monitoring.paths.stats.samples"), value: t("fleet.monitoring.paths.stats.samplesValue", { n: stats.samples, expected: stats.expected }) },
@@ -204,7 +209,7 @@ function formatAvailability(share: number): string {
 }
 
 const figuresCaption = computed(() => {
-  if (zoom.value) return t("fleet.monitoring.paths.stats.zoomed", { from: formatDateTime(zoom.value.from * 1000), to: formatDateTime(zoom.value.to * 1000) });
+  if (zoom.value) return t("fleet.monitoring.paths.stats.zoomed", formatDateTimeRange(zoom.value.from * 1000, zoom.value.to * 1000));
   const hasDelta = props.path?.prev && (props.path.prev.p50Ms !== undefined || props.path.prev.loss !== undefined);
   return hasDelta ? t("fleet.monitoring.paths.stats.windowDelta", { window: windowLong(props.window) }) : t("fleet.monitoring.paths.stats.window", { window: windowLong(props.window) });
 });
@@ -219,7 +224,7 @@ const figuresCaption = computed(() => {
 const mixedNote = computed(() => {
   const s = series.value;
   const current = props.path?.method;
-  if (zoom.value || !s || !current) return "";
+  if (!s || !current) return "";
   const mix = earlierMethods(s, current);
   if (!mix) return "";
   return t("fleet.monitoring.paths.stats.mixed", {
@@ -241,10 +246,13 @@ const lossTone = computed<"destructive" | "warning" | undefined>(() => (!props.j
 /* ---- Degraded (design 29 D13) ---- */
 
 const degradedLines = computed(() => (props.path?.state === "degraded" ? [...evidenceSentences(props.path.degraded), ...degradedTimes(props.path.degraded)] : []));
-/** The rule's triggers for the stats: the loss trigger has no guide (the loss lane is per bucket), so it is said here. */
+/**
+ * The rule's triggers for the stats: the loss trigger has no guide (the loss lane is per bucket), so it is said here.
+ * The rule does not depend on the selected range, and the guides stay on a zoomed chart, so neither do these.
+ */
 const triggers = computed(() => {
   const b = series.value?.baseline;
-  if (!b?.ready || zoom.value) return undefined;
+  if (!b?.ready) return undefined;
   const parts: string[] = [];
   if (b.triggerLoss !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLoss", { trigger: formatShare(b.triggerLoss), baseline: formatShare(b.loss ?? 0) }));
   if (b.triggerP50Ms !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLatency", { trigger: formatMs(b.triggerP50Ms), baseline: formatMs(b.p50Ms) }));
@@ -365,8 +373,9 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
     </p>
 
     <section v-if="figures.length" class="space-y-1.5" :aria-label="figuresCaption">
+      <!-- The caption wraps in its own column rather than pushing the window control under it, so a zoom's longer caption does not move the chart. -->
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <p class="text-xs text-muted-foreground">{{ figuresCaption }}</p>
+        <p class="min-w-0 flex-1 basis-64 text-xs text-muted-foreground" data-testid="path-stats-caption">{{ figuresCaption }}</p>
         <WindowControl
           v-if="offered && offered.length"
           :model-value="window"
@@ -375,12 +384,14 @@ const tableMethod = (t: number) => (series.value ? methodAt(series.value, t, pro
           @update:model-value="(w) => emit('window', w)"
         />
       </div>
-      <p v-if="mixedNote" class="text-xs break-words text-muted-foreground" data-testid="path-stats-mixed">{{ mixedNote }}</p>
+      <!-- The note is about the window's figures, so a selected range hides it, keeping its height: the note invites that drag, and the chart must stay under the pointer. -->
+      <p v-if="mixedNote" :class="cn('text-xs break-words text-muted-foreground', zoom && 'invisible')" :aria-hidden="zoom ? 'true' : undefined" data-testid="path-stats-mixed">{{ mixedNote }}</p>
       <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-md border border-border p-3" data-testid="path-stats">
         <div v-for="f in figures" :key="f.key" class="min-w-0">
           <dt class="text-xs text-muted-foreground">{{ f.label }}</dt>
           <dd :class="cn('font-mono font-medium tabular', f.tone === 'destructive' && 'text-destructive', f.tone === 'warning' && 'text-warning-text')">{{ f.value }}</dd>
           <dd v-if="f.sub" class="font-mono text-[11px] text-muted-foreground tabular">{{ f.sub }}</dd>
+          <dd v-else-if="f.holdSub" class="invisible font-mono text-[11px] tabular" aria-hidden="true" data-testid="path-stats-held">&nbsp;</dd>
         </div>
         <!-- The degraded rule's triggers: the loss trigger has no guide on the chart, so the stats say both. -->
         <div v-if="triggers" class="col-span-3 min-w-0 border-t border-border pt-2" data-testid="path-triggers">

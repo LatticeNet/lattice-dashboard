@@ -115,6 +115,24 @@ export function formatDateTime(input?: string | number | Date): string {
   });
 }
 
+/**
+ * A range's two ends as briefly as they still read unambiguously: no year
+ * when both ends fall in the current year, and the end's date only when it
+ * is not the start's day. "Oct 17, 02:27 AM" to "02:52 AM". A path sheet's
+ * zoomed caption uses it, so the caption stays one line where the window's
+ * did and the chart under it does not move when a drag ends.
+ */
+export function formatDateTimeRange(from: number, to: number, now: number = Date.now()): { from: string; to: string } {
+  const a = new Date(from);
+  const b = new Date(to);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return { from: NO_VALUE, to: NO_VALUE };
+  const thisYear = new Date(now).getFullYear();
+  const time = { hour: "2-digit", minute: "2-digit" } as const;
+  const date = { ...(a.getFullYear() === thisYear && b.getFullYear() === thisYear ? {} : { year: "numeric" as const }), month: "short", day: "numeric", ...time } as const;
+  const sameDay = a.toDateString() === b.toDateString();
+  return { from: a.toLocaleString(activeLocale, date), to: b.toLocaleString(activeLocale, sameDay ? time : date) };
+}
+
 const MONEY = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /**

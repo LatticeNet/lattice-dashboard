@@ -680,10 +680,10 @@ const floatStyle = computed(() => {
 
 <template>
   <div class="space-y-1.5">
-    <!-- Phone: the values in a fixed row above the chart, never under the finger. -->
+    <!-- Phone: the values in a fixed row above the chart, never under the finger. Its height holds the time and the values (two lines of them with the comparison), so the first tap does not push the chart down under the finger. -->
     <div
       v-if="compact"
-      class="min-h-11 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs"
+      :class="['rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs', previous ? 'min-h-[5.125rem]' : 'min-h-16']"
       data-testid="path-chart-readout-fixed"
       aria-hidden="true"
     >
