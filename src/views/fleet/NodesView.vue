@@ -63,6 +63,8 @@ import {
   compareNodeIdentity,
   isNodesLayout,
   lastSeenMillis,
+  metricCellKind,
+  metricSortValue,
   nameParts,
   nodeGroupByCodec,
   nodeGroupKey,
@@ -322,9 +324,9 @@ const SORT_VALUE: Record<string, (node: Node) => unknown> = {
   address: (node) => node.public_ip ?? "",
   agent: (node) => node.agent_version ?? "",
   lastSeen: (node) => lastSeenMillis(node),
-  cpu: (node) => shownPercent(node.metrics?.cpu_percent) ?? -1,
-  memory: (node) => ratioPercent(node.metrics?.memory_used, node.metrics?.memory_total) ?? -1,
-  disk: (node) => ratioPercent(node.metrics?.disk_used, node.metrics?.disk_total) ?? -1,
+  cpu: (node) => metricSortValue(node, shownPercent(node.metrics?.cpu_percent)),
+  memory: (node) => metricSortValue(node, ratioPercent(node.metrics?.memory_used, node.metrics?.memory_total)),
+  disk: (node) => metricSortValue(node, ratioPercent(node.metrics?.disk_used, node.metrics?.disk_total)),
   tags: (node) => (node.tags ?? []).join(" "),
   hostname: (node) => node.host_facts?.hostname ?? "",
   role: (node) => node.role ?? "",
@@ -491,10 +493,14 @@ const rotatedOpen = computed({
  * offline six days, read "10%" in full weight beside a live fleet.
  */
 function metricCell(node: Node, value: number | undefined): { text: string; title?: string; stale: boolean } {
-  if (value === undefined) return { text: "", stale: false };
-  if (isReporting(node)) return { text: `${value}%`, stale: false };
-  // Nothing was ever measured: no "last known 0%" for a node that never sent one.
-  if (!hasMetricSample(node.metrics)) return { text: NO_VALUE, stale: false };
+  switch (metricCellKind(node, value)) {
+    case "blank":
+      return { text: "", stale: false };
+    case "none":
+      return { text: NO_VALUE, stale: false };
+    case "live":
+      return { text: `${value}%`, stale: false };
+  }
   return {
     text: NO_VALUE,
     title: t("fleet.nodes.metric.lastKnown", { value: `${value}%`, time: formatRelativeTime(node.metrics?.collected_at ?? node.last_seen) }),
@@ -1028,13 +1034,13 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         <template #cell-memory="{ row }">
           <span
             :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).stale && 'text-muted-foreground')"
-            :title="metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).title ?? (row.metrics ? `${formatBytes(row.metrics.memory_used)} / ${formatBytes(row.metrics.memory_total)}` : undefined)"
+            :title="metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).title ?? (hasMetricSample(row.metrics) ? `${formatBytes(row.metrics.memory_used)} / ${formatBytes(row.metrics.memory_total)}` : undefined)"
           >{{ metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).text }}</span>
         </template>
         <template #cell-disk="{ row }">
           <span
             :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).stale && 'text-muted-foreground')"
-            :title="metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).title ?? (row.metrics ? `${formatBytes(row.metrics.disk_used)} / ${formatBytes(row.metrics.disk_total)}` : undefined)"
+            :title="metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).title ?? (hasMetricSample(row.metrics) ? `${formatBytes(row.metrics.disk_used)} / ${formatBytes(row.metrics.disk_total)}` : undefined)"
           >{{ metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).text }}</span>
         </template>
         <template #cell-tags="{ row }">

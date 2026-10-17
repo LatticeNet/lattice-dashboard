@@ -40,6 +40,7 @@ import {
   formatPercent,
   formatRelativeTime,
   isZeroTime,
+  NO_VALUE,
   ratio,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -502,19 +503,21 @@ function onGroup(id: string) {
     <div
       class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground tabular"
     >
+      <!-- A node that never reported carries all-zero metrics; they print as
+           the no-value mark, not as "0 B/s (0 B)" and "0s" beside "never". -->
       <span class="inline-flex items-center gap-1">
         <ArrowDown class="size-3" aria-hidden="true" />
-        {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
-        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
+        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_rx_speed) }}
+        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <ArrowUp class="size-3" aria-hidden="true" />
-        {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
-        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
+        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_tx_speed) }}
+        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <Activity class="size-3" aria-hidden="true" />
-        {{ formatDuration(node.metrics?.uptime_seconds) }}
+        {{ noSample ? NO_VALUE : formatDuration(node.metrics?.uptime_seconds) }}
       </span>
       <!-- A node that never reported has no last_seen (an older server sent
            the zero time, which printed "739,861 days ago"). A disabled node

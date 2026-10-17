@@ -9,7 +9,15 @@ import type { QueryParamCodec } from "@/composables/useQueryParam";
 import type { Node } from "@/lib/api/types";
 import { splitNamePrefix } from "@/lib/fleet";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
-import { ATTENTION_ORDER, isNodeStatus, nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
+import {
+  ATTENTION_ORDER,
+  hasMetricSample,
+  isNodeStatus,
+  isReporting,
+  nodeStatus,
+  type NodeStatus,
+  type NodeStatusInput,
+} from "@/lib/nodeStatus";
 
 /* ------------------------------------------------------------------ */
 /* Identity                                                            */
@@ -120,6 +128,27 @@ export function shownPercent(value: number | undefined): number | undefined {
 export function ratioPercent(used?: number, total?: number): number | undefined {
   if (used === undefined || !total || total <= 0) return undefined;
   return shownPercent((used / total) * 100);
+}
+
+/**
+ * What a metric cell shows for a node: nothing when the column has no value,
+ * the no-value mark when nothing was ever measured, the reading while the
+ * node reports, and the no-value mark with the last reading in its title
+ * otherwise. The sample is checked first: every node carries a metrics
+ * object, all zeros for one that never reported, and its zeros are not a
+ * reading even while the node is in contact.
+ */
+export type MetricCellKind = "blank" | "none" | "live" | "stale";
+
+export function metricCellKind(node: Pick<Node, "metrics"> & NodeStatusInput, value: number | undefined): MetricCellKind {
+  if (value === undefined) return "blank";
+  if (!hasMetricSample(node.metrics)) return "none";
+  return isReporting(node) ? "live" : "stale";
+}
+
+/** A metric column's sort key: the shown reading, or -1 so a node with none sorts last. */
+export function metricSortValue(node: Pick<Node, "metrics">, value: number | undefined): number {
+  return value !== undefined && hasMetricSample(node.metrics) ? value : -1;
 }
 
 export function lastSeenMillis(node: Pick<Node, "last_seen">): number {
