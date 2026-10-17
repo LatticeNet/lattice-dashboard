@@ -130,7 +130,11 @@ export function beaconViewFor(node: Node, nodes: readonly Node[], current: reado
     };
   });
   if (shape.enabled && view.exposure === "netguard") view.firewall_pending = !!shape.companionPending || view.sources!.some((s) => s.current !== s.approved);
-  if (REPLANS) view.replan = replanFrom(node, view) ?? null;
+  // The server omits replan when no plan is needed (omitempty), never null.
+  if (REPLANS) {
+    const replan = replanFrom(node, view);
+    if (replan) view.replan = replan;
+  }
   return view;
 }
 

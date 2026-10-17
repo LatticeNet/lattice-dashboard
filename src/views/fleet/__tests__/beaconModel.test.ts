@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { BeaconPlan, BeaconView } from "@/lib/api/types";
+import type { BeaconPlan, BeaconView, PathsResponse } from "@/lib/api/types";
 
 import {
   DEFAULT_BEACON_LIMITS,
@@ -46,7 +46,10 @@ import {
   replanMissingScopes,
   replanNames,
   replanOf,
+  replanStep,
+  replanSurface,
 } from "../beaconModel.ts";
+import { buildPathsMatrix } from "../pathsModel.ts";
 
 const ALL = { monitorAdmin: true, nodeAdmin: true, networkPlan: true, netguardAdmin: true };
 
@@ -478,4 +481,63 @@ test("replan: the scopes to file it, and what is said, in plain words", () => {
   // The attention list's claim is one line, the first.
   assert.deepEqual(replanLines(firewall, { added: ["hetzner-fsn"], removed: ["mkcloud"] }, "tyo-3", "claim"), [{ key: `${R}claim.firewall`, params: { target: "tyo-3", names: "hetzner-fsn" }, n: 1 }]);
   assert.deepEqual(replanLines(plan, { added: [], removed: [] }, "tyo-3", "claim"), [{ key: `${R}claim.planUnnamed`, params: { target: "tyo-3" }, n: 1 }]);
+});
+
+test("replan: a server that words it omits the field when nothing is needed, and that absence is an answer", () => {
+  // view() needs a plan by the sources' rule (fsn unadmitted, mk left); a server known to word it said none by omitting replan.
+  assert.equal(replanOf(view(), "xuezhang-jp-nat", true), undefined);
+  // Unknown server (no paths read, or one before the follow-ups): the rule from the sources stands in for it.
+  assert.equal(replanOf(view(), "xuezhang-jp-nat", false)?.reason, "firewall_pending");
+  // A replan the server sends is read either way.
+  const replan = { node_id: "jp", name: "xuezhang-jp-nat", reason: "beacon_source_pending", added: ["fsn"], removed: [], request: { node_id: "jp", action: "change" as const } };
+  assert.equal(replanOf(view({ replan }), "", true)?.reason, "beacon_source_pending");
+});
+
+test("replan: the beacon read again for the action decides over an older paths read", () => {
+  const node = { id: "jp", name: "xuezhang-jp-nat", internal_ip: "10.0.0.5", public_ip: "203.0.113.12" };
+  // The paths read as the server sends it before anyone files the plan: beacon_replans with no waiting approval.
+  const matrix = buildPathsMatrix({
+    window: "1h",
+    sources: [{ node_id: "fsn", name: "hetzner-fsn" }],
+    targets: [{ node_id: "jp", name: "xuezhang-jp-nat" }],
+    paths: [],
+    beacon_replans: [{ node_id: "jp", name: "xuezhang-jp-nat", reason: "firewall_pending", added: ["fsn"], removed: [], request: { node_id: "jp", action: "change" } }],
+  } as unknown as PathsResponse);
+  const offered = matrix.replans.get("jp");
+  assert.ok(offered && !offered.pendingApprovalId, "the surface offers the plan itself");
+  const replan = { node_id: "jp", name: "xuezhang-jp-nat", reason: "firewall_pending", added: ["fsn"], removed: [], request: { node_id: "jp", action: "change" as const } };
+
+  // Nothing filed meanwhile: the plan sheet opens on the fresh word, which files exactly the server's request.
+  const fresh = view({ replan });
+  const plan = replanStep(fresh, "xuezhang-jp-nat", matrix.replansKnown);
+  assert.ok(plan.kind === "plan");
+  assert.deepEqual(buildBeaconPlanRequest(node, "change", formFor("change", fresh, node), fresh), plan.item.request);
+
+  // A plan was filed since (another tab, another operator): the beacon names it, as the server's beaconView does in
+  // both its pending_approval_id and its replan. The action reviews that plan instead of filing a second one.
+  const waits = replanStep(view({ pending_approval_id: "apr_4", replan: { ...replan, pending_approval_id: "apr_4" } }), "xuezhang-jp-nat", matrix.replansKnown);
+  assert.deepEqual(waits.kind === "waits" && [waits.approvalId, waits.item.pendingApprovalId], ["apr_4", "apr_4"]);
+  // From a server before the follow-ups the rule from the sources finds the same waiting plan.
+  const before = replanStep(view({ pending_approval_id: "apr_5" }), "xuezhang-jp-nat", false);
+  assert.equal(before.kind === "waits" && before.approvalId, "apr_5");
+
+  // The plan applied since: the beacon omits replan, and nothing opens.
+  assert.deepEqual(replanStep(view(), "", matrix.replansKnown), { kind: "settled" });
+  // From a server before the follow-ups, sources that match the applied plan say the same.
+  assert.deepEqual(replanStep(view({ sources: [{ node_id: "fsn", name: "hetzner-fsn", source_id: 7, approved: true, current: true }] }), "", false), { kind: "settled" });
+  assert.deepEqual(replanStep(undefined), { kind: "settled" });
+});
+
+test("replan: the surface a read belongs to is the layer and its open sheet", () => {
+  const pathSheet = replanSurface("paths", { path: "node_004~@mon_beacon_jp", open: undefined });
+  assert.equal(pathSheet, replanSurface("paths", { path: "node_004~@mon_beacon_jp" }));
+  // The sheet closed, another one opened, or the layer changed: a different surface, so the read is dropped.
+  assert.notEqual(pathSheet, replanSurface("paths", {}));
+  assert.notEqual(pathSheet, replanSurface("paths", { path: "node_005~@mon_beacon_jp" }));
+  assert.notEqual(pathSheet, replanSurface("checks", { path: "node_004~@mon_beacon_jp" }));
+  assert.notEqual(replanSurface("checks", { open: "mon_beacon_jp" }), replanSurface("checks", {}));
+  // A repeated query parameter reads as its first value, as the page reads it.
+  assert.equal(replanSurface("checks", { open: ["mon_beacon_jp", "x"] }), replanSurface("checks", { open: "mon_beacon_jp" }));
+  // Other parameters (a filter, the window) leave the surface as it is.
+  assert.equal(replanSurface("overview", { open: undefined, path: undefined }), replanSurface("overview", {}));
 });

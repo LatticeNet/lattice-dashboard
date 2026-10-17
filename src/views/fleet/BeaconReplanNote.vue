@@ -60,7 +60,13 @@ const LINK = "font-medium text-foreground underline underline-offset-2 pointer-c
     :data-reason="item.reason"
   >
     <p v-for="line in lines" :key="line.key" class="break-words">{{ t(line.key, line.params, line.n) }}</p>
-    <p v-if="waits" :class="cn('break-words', tone === 'warning' ? 'text-foreground/80' : 'text-muted-foreground')" data-testid="beacon-replan-waits">{{ $t('fleet.monitoring.beacon.replan.waits') }}</p>
+    <p v-if="waits" :class="cn('break-words', tone === 'warning' ? 'text-foreground/80' : 'text-muted-foreground')" data-testid="beacon-replan-waits">
+      {{ $t('fleet.monitoring.beacon.replan.waits') }}
+      <!-- Without the action row (the plan sheet itself), the waiting plan is still one step away. -->
+      <RouterLink v-if="!action" :to="{ name: 'approvals', query: { open: item.pendingApprovalId } }" :class="LINK" data-testid="beacon-replan-review">
+        {{ $t('fleet.monitoring.beacon.replan.review') }}
+      </RouterLink>
+    </p>
     <template v-if="action">
       <div v-if="waits || canPlan || beaconLink" class="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
         <RouterLink v-if="waits" :to="{ name: 'approvals', query: { open: item.pendingApprovalId } }" :class="LINK" data-testid="beacon-replan-review">

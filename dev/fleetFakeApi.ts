@@ -307,9 +307,19 @@ function currentBeaconSources(targetId: string): string[] {
   return [...new Set([...fromPlan, ...fromChecks])].filter(runs).sort();
 }
 
-/** The server with the monitoring follow-ups names the beacons that need a change plan in every paths read (REPLANS). */
+/**
+ * The server with the monitoring follow-ups names the beacons that need a
+ * change plan in every paths read (REPLANS), each with the node.beacon
+ * approval that waits for it, as the server's beaconReplans fills it in.
+ * `?replansStale=1` serves a paths read older than a plan filed since (as
+ * after a plan filed in another tab): the entries name no waiting approval,
+ * and only the beacon read again for the action says one waits.
+ */
 function withReplans(response: PathsResponse): PathsResponse {
-  return REPLANS ? { ...response, beacon_replans: beaconReplansFor(nodes, currentBeaconSources) } : response;
+  if (!REPLANS) return response;
+  const replans = beaconReplansFor(nodes, currentBeaconSources);
+  const stale = PARAMS.get("replansStale") === "1";
+  return { ...response, beacon_replans: stale ? replans.map(({ pending_approval_id: _waits, ...rest }) => rest) : replans };
 }
 
 function reachabilityCheck(): MonitorView {

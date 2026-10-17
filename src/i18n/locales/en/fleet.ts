@@ -2078,6 +2078,9 @@ export default {
           openBeacon: "Open the beacon of {target}",
           opening: "Reading the beacon of {target}",
           failed: "The beacon of {target} was not read: {reason}",
+          // Read again for the action, the beacon said what the paths read did not yet.
+          waitsNow: "A change plan for {target} already waits for approval.",
+          settled: "The beacon of {target} no longer needs a change plan.",
           // The attention list's line: who cannot measure what, and why, in one clause.
           claim: {
             firewall: "{names} cannot measure {target} with its beacon until NetGuard admits it through a change plan | {names} cannot measure {target} with its beacon until NetGuard admits them through a change plan",

@@ -689,18 +689,22 @@ export function readBeaconReplans(raw: readonly BeaconReplan[] | null | undefine
 
 /**
  * Whether a node's beacon needs a change plan, from its view: the server's
- * `replan` when it sends one, else, from a server before it, the same rule
- * worked out from the sources (the server's beaconReplanFor): a current
+ * `replan` when it sends one. The field is omitted when no plan is needed,
+ * so its absence is an answer from a server known to send it (`known`: the
+ * paths read carried `beacon_replans`, PathsMatrix.replansKnown). From a
+ * server before it, or when nothing says which server this is, the same rule
+ * is worked out from the sources (the server's beaconReplanFor): a current
  * source the applied plan did not approve, or under NetGuard an approved
  * source no longer current, whose addresses the allow set still admits.
  * Undefined while the beacon is off or nothing differs.
  */
-export function replanOf(view: Pick<BeaconView, "node_id" | "state" | "exposure" | "sources" | "pending_approval_id" | "replan"> | undefined, name = ""): BeaconReplanItem | undefined {
+export function replanOf(view: Pick<BeaconView, "node_id" | "state" | "exposure" | "sources" | "pending_approval_id" | "replan"> | undefined, name = "", known = false): BeaconReplanItem | undefined {
   if (!view) return undefined;
-  if (view.replan !== undefined) {
+  if (view.replan) {
     const item = readBeaconReplan(view.replan);
     return item ? { ...item, name: name || item.name } : undefined;
   }
+  if (known || view.replan === null) return undefined;
   if (!beaconEnabled(view)) return undefined;
   const netguard = view.exposure === "netguard";
   const sources = [...(view.sources ?? [])].sort((a, b) => (a.name || a.node_id).localeCompare(b.name || b.node_id) || a.node_id.localeCompare(b.node_id));
@@ -716,6 +720,38 @@ export function replanOf(view: Pick<BeaconView, "node_id" | "state" | "exposure"
     pendingApprovalId: view.pending_approval_id || undefined,
     request: { node_id: view.node_id, action: "change" },
   };
+}
+
+/**
+ * What the re-plan action does once the page has read the node's beacon
+ * again: the paths read it was offered from may be older than a plan filed
+ * since (in another tab, by another operator, or through the node's Beacon
+ * card), so the fresh view decides. A plan that already waits is the one to
+ * review (a second one beside it would only be refused as stale once the
+ * first applies); a beacon that needs no plan any more is said to; otherwise
+ * the change plan sheet opens on the fresh word.
+ */
+export type ReplanStep =
+  | { kind: "plan"; item: BeaconReplanItem }
+  | { kind: "waits"; item: BeaconReplanItem; approvalId: string }
+  | { kind: "settled" };
+
+export function replanStep(view: Parameters<typeof replanOf>[0], name = "", known = false): ReplanStep {
+  const item = replanOf(view, name, known);
+  if (!item) return { kind: "settled" };
+  const approvalId = item.pendingApprovalId || view?.pending_approval_id || undefined;
+  return approvalId ? { kind: "waits", item: { ...item, pendingApprovalId: approvalId }, approvalId } : { kind: "plan", item };
+}
+
+/**
+ * The surface a re-plan action was asked from: the Monitoring layer and the
+ * sheet it had open (a check, a path). The beacon read the action starts is
+ * dropped when this has changed by the time it returns: a plan sheet never
+ * opens over a surface the operator already left.
+ */
+export function replanSurface(layer: string, query: { open?: unknown; path?: unknown }): string {
+  const one = (v: unknown) => (typeof v === "string" ? v : Array.isArray(v) && typeof v[0] === "string" ? v[0] : "");
+  return JSON.stringify([layer, one(query.open), one(query.path)]);
 }
 
 /** The sources a re-plan names, by name: the view's names first, then the caller's, then the id. */

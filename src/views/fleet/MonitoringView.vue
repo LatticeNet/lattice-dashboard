@@ -18,7 +18,7 @@
  * the path reads in usePathsData) and the editors, so Overview and Paths can
  * open the path set or a new check without leaving for Checks first.
  */
-import { computed, provide, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, provide, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
@@ -56,7 +56,7 @@ import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
 import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
-import { isReachabilityCheck, replanMissingScopes, replanOf, type BeaconReplanItem } from "./beaconModel";
+import { isReachabilityCheck, replanMissingScopes, replanStep, replanSurface, type BeaconReplanItem } from "./beaconModel";
 import { BEACON_REPLAN } from "./useBeaconReplan";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
@@ -183,26 +183,67 @@ function nodeSeen(id: string): string | undefined {
  * plan a target's beacon needs. The page reads the node's beacon (the plan
  * sheet works from the applied settings and the current sources) and opens
  * the sheet on a change that keeps the port, bind address and endpoint: the
- * request the server words. The beacon's own replan is the newest word, so a
- * plan filed meanwhile shows as the one to review.
+ * request the server words. The beacon's own word is newer than the paths
+ * read, so it decides (beaconModel replanStep): a plan filed meanwhile is
+ * offered for review instead of a second one, and a beacon that needs no
+ * plan any more says so.
+ *
+ * The read belongs to the surface that asked (replanSurface: the layer and
+ * its open sheet). Closing or leaving that surface cancels it, and a newer
+ * click on another target's action replaces it, so a plan sheet never opens
+ * over something the operator already left.
  */
 const replanSheet = shallowRef<{ item: BeaconReplanItem; view: BeaconView; node: Pick<Node, "id" | "name" | "internal_ip" | "public_ip"> }>();
 const replanSheetOpen = ref(false);
 const replanOpening = ref<string>();
 const nameOfNode = (id: string) => nodes.value.find((n) => n.id === id)?.name || matrix.value?.sources.find((s) => s.nodeId === id)?.name || undefined;
+const replanSurfaceNow = computed(() => replanSurface(layer.value, owned.query()));
+let replanRead: { controller: AbortController; surface: string } | undefined;
+function cancelReplan(): void {
+  replanRead?.controller.abort();
+  replanRead = undefined;
+  replanOpening.value = undefined;
+}
+watch(replanSurfaceNow, () => {
+  if (replanRead) cancelReplan();
+});
+onBeforeUnmount(cancelReplan);
 async function openReplan(item: BeaconReplanItem): Promise<void> {
-  if (replanOpening.value) return;
+  replanRead?.controller.abort();
+  const read = { controller: new AbortController(), surface: replanSurfaceNow.value };
+  replanRead = read;
   replanOpening.value = item.nodeId;
   const target = nameOfNode(item.nodeId) || item.name;
+  let view: BeaconView;
   try {
-    const view = await api.nodes.beacon.get(item.nodeId);
-    const node = nodes.value.find((n) => n.id === item.nodeId) ?? { id: item.nodeId, name: target };
-    replanSheet.value = { item: replanOf(view, target) ?? item, view, node };
-    fromSheet(() => (replanSheetOpen.value = true));
+    view = await api.nodes.beacon.get(item.nodeId, { signal: read.controller.signal });
   } catch (error) {
+    if (replanRead !== read) return;
+    cancelReplan();
+    if (!owned.owns() || replanSurfaceNow.value !== read.surface) return;
     toast.error(t("fleet.monitoring.beacon.replan.failed", { target, reason: error instanceof Error ? error.message : String(error) }));
-  } finally {
-    replanOpening.value = undefined;
+    return;
+  }
+  // Replaced by a newer click, or its surface closed or changed meanwhile: nothing opens.
+  if (replanRead !== read) return;
+  replanRead = undefined;
+  replanOpening.value = undefined;
+  if (!owned.owns() || replanSurfaceNow.value !== read.surface) return;
+  const step = replanStep(view, target, !!matrix.value?.replansKnown);
+  if (step.kind === "plan") {
+    const node = nodes.value.find((n) => n.id === item.nodeId) ?? { id: item.nodeId, name: target };
+    replanSheet.value = { item: step.item, view, node };
+    fromSheet(() => (replanSheetOpen.value = true));
+    return;
+  }
+  // The paths read was older than the beacon: read it again, so every surface offers what the beacon says.
+  data.refresh();
+  if (step.kind === "waits") {
+    toast.info(t("fleet.monitoring.beacon.replan.waitsNow", { target }), {
+      action: { label: t("fleet.monitoring.beacon.replan.review"), onClick: () => void router.push({ name: "approvals", query: { open: step.approvalId } }) },
+    });
+  } else {
+    toast.info(t("fleet.monitoring.beacon.replan.settled", { target }));
   }
 }
 provide(BEACON_REPLAN, {

@@ -2051,6 +2051,8 @@ export default {
           openBeacon: "打开 {target} 的信标",
           opening: "正在读取 {target} 的信标",
           failed: "没有读到 {target} 的信标：{reason}",
+          waitsNow: "{target} 已经有一个变更计划在等待批准。",
+          settled: "{target} 的信标已经不需要变更计划了。",
           claim: {
             firewall: "在 NetGuard 通过变更计划放行之前，{names} 无法用信标测量 {target} | 在 NetGuard 通过变更计划放行之前，{names} 无法用信标测量 {target}",
             plan: "在变更计划把它加入信标之前，{names} 无法用信标测量 {target} | 在变更计划把它们加入信标之前，{names} 无法用信标测量 {target}",

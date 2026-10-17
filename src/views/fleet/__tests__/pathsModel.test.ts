@@ -748,4 +748,8 @@ test("attention: a target whose beacon needs a change plan is one line with its 
   // A server that sends no list, and one that sends an empty list, offer no plan.
   assert.equal(buildPathsMatrix({ ...response, beacon_replans: undefined }).replans.size, 0);
   assert.equal(pathAttention(buildPathsMatrix({ ...response, beacon_replans: [] })).filter((i) => i.kind === "replan").length, 0);
+  // The list's presence is what says this server words the re-plan itself (it always sends the list, often empty).
+  assert.equal(m.replansKnown, true);
+  assert.equal(buildPathsMatrix({ ...response, beacon_replans: [] }).replansKnown, true);
+  assert.equal(buildPathsMatrix({ ...response, beacon_replans: undefined }).replansKnown, false);
 });

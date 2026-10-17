@@ -498,6 +498,12 @@ export interface PathsMatrix {
   degradedAt?: number;
   /** The nodes whose beacon needs a change plan, by node id (empty from a server that does not say). */
   replans: Map<string, BeaconReplanItem>;
+  /**
+   * The read carried `beacon_replans` (a server with the monitoring
+   * follow-ups, which always sends it): that server also omits a beacon
+   * view's `replan` when no plan is needed, so its absence is an answer.
+   */
+  replansKnown: boolean;
 }
 
 export interface MatrixNames {
@@ -615,6 +621,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     judgesDegraded: judges,
     degradedAt: judges ? epoch(response.degraded_at) : undefined,
     replans: readBeaconReplans(response.beacon_replans),
+    replansKnown: response.beacon_replans !== undefined,
   };
 }
 
