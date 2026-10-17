@@ -169,7 +169,7 @@ test("a metric cell reads the sample before the node's contact", () => {
   }
 });
 
-test("a node with no reading sorts after every real reading, a real 0% included", () => {
+test("a node with no reading ranks below every real reading, a real 0% included", () => {
   const SAMPLE = { collected_at: "2026-10-17T09:30:00Z" } as Node["metrics"];
   assert.equal(metricSortValue({ metrics: SAMPLE }, 0), 0);
   assert.equal(metricSortValue({ metrics: SAMPLE }, 41), 41);

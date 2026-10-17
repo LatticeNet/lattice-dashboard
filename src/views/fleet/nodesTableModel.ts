@@ -146,7 +146,7 @@ export function metricCellKind(node: Pick<Node, "metrics"> & NodeStatusInput, va
   return isReporting(node) ? "live" : "stale";
 }
 
-/** A metric column's sort key: the shown reading, or -1 so a node with none sorts last. */
+/** A metric column's sort key: the shown reading, or -1 so a node with none ranks below every real reading, a real 0% included. */
 export function metricSortValue(node: Pick<Node, "metrics">, value: number | undefined): number {
   return value !== undefined && hasMetricSample(node.metrics) ? value : -1;
 }
