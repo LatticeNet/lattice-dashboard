@@ -80,6 +80,7 @@ import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import AgentFetchReadout from "./AgentFetchReadout.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -754,6 +755,7 @@ const columns = computed<DataTableColumn<FleetRow>[]>(() => [
   { key: "version", label: t("platform.agentUpdatesPage.colRuns"), sortable: true, searchable: true, value: (row) => normalizeAgentVersion(row.version) },
   { key: "target", label: t("platform.agentUpdates.colTarget"), sortable: true, value: (row) => (row.policy ? targetLabel(row.policy) : "") },
   { key: "policy", label: t("platform.agentUpdatesPage.colPolicy"), sortable: true, value: (row) => (row.policy ? (row.policy.enabled ? 2 : 1) + (row.policy.auto_plan ? 1 : 0) : 0) },
+  { key: "last_fetch", label: t("platform.agentUpdatesPage.colFetch"), sortable: true, value: (row) => row.policy?.last_fetch?.at ?? "" },
   { key: "last_planned", label: t("platform.agentUpdates.colLastPlanned"), sortable: true, value: (row) => row.policy?.last_planned_at ?? "" },
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
@@ -1004,6 +1006,12 @@ const deleteImpact = computed(() => {
           <span v-if="row.policy?.last_error" class="block text-xs text-destructive">{{ $t('platform.agentUpdatesPage.policyFailed') }}</span>
           <span v-if="staleApprovalCount(row.nodeId)" class="block text-xs text-warning-text">{{ $t('platform.agentUpdates.staleApprovalBadge', { count: staleApprovalCount(row.nodeId) }) }}</span>
         </template>
+        <template #cell-last_fetch="{ row }">
+          <AgentFetchReadout v-if="row.policy?.last_fetch" :fetch="row.policy.last_fetch" class="w-[7.5rem] md:w-auto md:min-w-44 md:max-w-64" />
+          <span v-else-if="cellsOf(row).policy === 'notRead'" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
+          <span v-else-if="row.policy" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.noFetch') }}</span>
+          <span v-else class="text-xs text-muted-foreground">-</span>
+        </template>
         <template #cell-last_planned="{ row }">
           <span class="whitespace-nowrap text-xs text-muted-foreground" :title="row.policy?.last_planned_at ? formatDateTime(row.policy.last_planned_at) : undefined">
             {{ cellsOf(row).lastPlanned === 'time' ? formatRelativeTime(row.policy!.last_planned_at!) : cellsOf(row).lastPlanned === 'never' ? $t('common.misc.never') : $t('platform.agentUpdatesPage.notRead') }}
@@ -1180,6 +1188,13 @@ const deleteImpact = computed(() => {
               <dd class="text-xs">
                 <span v-if="openRow.policy.last_applied_version" class="font-mono">{{ openRow.policy.last_applied_version }}</span>
                 <span v-else class="text-muted-foreground">{{ $t('platform.agentUpdates.appliedUnconfirmed') }}</span>
+              </dd>
+            </div>
+            <div class="min-w-0 sm:col-span-2" data-testid="sheet-last-fetch">
+              <dt class="text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.sheet.lastFetch') }}</dt>
+              <dd>
+                <AgentFetchReadout v-if="openRow.policy.last_fetch" :fetch="openRow.policy.last_fetch" detailed />
+                <span v-else class="text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.sheet.noFetch') }}</span>
               </dd>
             </div>
             <div class="min-w-0 sm:col-span-2">
