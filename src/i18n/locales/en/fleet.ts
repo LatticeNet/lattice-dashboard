@@ -1497,11 +1497,21 @@ export default {
             target: "Likely cause: the target",
             source: "Likely cause: {source}'s network",
             path: "Likely cause: this path",
+            // One source reports on the target, so no cause is named.
+            alone: "Cause not placed",
           },
           target: {
             reach: "Down from all {n} sources that report on it: {sources}",
             quality: "Down or degraded from all {n} sources that report on it: {sources}",
           },
+          targetBoth: {
+            reach: "Down from both sources that report on it: {sources}",
+            quality: "Down or degraded from both sources that report on it: {sources}",
+          },
+          // Sources with a path to the target that report nothing now (unknown), after the target evidence.
+          silent: "{n} other source reports nothing | {n} other sources report nothing",
+          // Said once above the attention list when every verdict on it is "cause not placed" for the same source.
+          sole: "Only {source} reports on these paths, so their causes cannot be placed. A second source in the path set would place them.",
           source: {
             reach: "{source} fails {bad} of the {fresh} targets it reports on; other sources reach {elsewhere} of them.",
             quality: "{source} is down or degraded to {bad} of the {fresh} targets it reports on; other sources reach {elsewhere} of them at their usual level.",
@@ -1510,7 +1520,7 @@ export default {
             reach: "{n} other source reaches {target} | {n} other sources reach {target}",
             quality: "{n} other source reaches {target} at its usual level | {n} other sources reach {target} at their usual level",
           },
-          alone: "Only {source} reports on {target}, so the cause cannot be placed.",
+          alone: "Only {source} reports on {target}.",
         },
         stats: {
           jitter: "jitter",
@@ -1605,10 +1615,12 @@ export default {
         clear: "The only path is up over the {window}. | All {n} paths are up over the {window}.",
         attention: {
           down: "{target} is down from {source}",
-          downMany: "{target} is down from {n} of the {total} sources that measure it",
+          downMany: "{target} is down from {n} of the {total} sources that probe it",
           downSource: "{n} path down from {source} | {n} paths down from {source}",
           degraded: "{target} is degraded from {source}",
-          degradedMany: "{target} is degraded from {n} of the {total} sources that measure it",
+          degradedMany: "{target} is degraded from {n} of the {total} sources that probe it",
+          // A degraded item over several paths shows the lead path's evidence and says whose it is.
+          fromSource: "From {source}: {evidence}",
           degradedSource: "{n} path degraded from {source} | {n} paths degraded from {source}",
           offline: "{source}'s agent is offline: {n} path unknown | {source}'s agent is offline: {n} paths unknown",
           lastSeen: "last seen {age}",

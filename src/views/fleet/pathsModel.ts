@@ -795,19 +795,25 @@ export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): S
  * they hold a space or a colon, so the query parser reads them whole.
  */
 export function quoteQueryValue(value: string): string {
-  return /[\s:"()]/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
+  return /[\s:"(),]/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
+}
+
+function targetList(paths: readonly PathItem[]): string {
+  return [...new Set(paths.map((p) => p.targetName))].map(quoteQueryValue).join(",");
 }
 
 export function attentionQuery(item: PathAttention): string {
   switch (item.kind) {
     case "down":
       return `state:down target:${quoteQueryValue(item.targetName)}`;
+    // A source item lists its own targets, exactly: the source's other bad paths carry a different verdict
+    // (the target) and sit in another item, so `source:` alone would list more than the item counts.
     case "downSource":
-      return `state:down source:${quoteQueryValue(item.sourceName)}`;
+      return `state:down source:${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "degraded":
       return `state:degraded target:${quoteQueryValue(item.targetName)}`;
     case "degradedSource":
-      return `state:degraded source:${quoteQueryValue(item.sourceName)}`;
+      return `state:degraded source:${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
     case "offline":
       return `state:unknown source:${quoteQueryValue(item.sourceName)}`;
     case "unknown":

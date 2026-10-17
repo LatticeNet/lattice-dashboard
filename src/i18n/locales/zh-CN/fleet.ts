@@ -1479,11 +1479,18 @@ export default {
             target: "可能的原因：目标本身",
             source: "可能的原因：{source} 的网络",
             path: "可能的原因：这条路径",
+            alone: "原因无法判断",
           },
           target: {
             reach: "所有上报它的 {n} 个源节点都显示不通：{sources}",
             quality: "所有上报它的 {n} 个源节点都显示不通或劣化：{sources}",
           },
+          targetBoth: {
+            reach: "上报它的两个源节点都显示不通：{sources}",
+            quality: "上报它的两个源节点都显示不通或劣化：{sources}",
+          },
+          silent: "另有 {n} 个源节点没有上报 | 另有 {n} 个源节点没有上报",
+          sole: "只有 {source} 上报这些路径，所以无法判断原因在哪。在路径集里再加一个源节点就能定位。",
           source: {
             reach: "{source} 上报的 {fresh} 个目标中有 {bad} 个失败；其他源节点能到达其中 {elsewhere} 个。",
             quality: "{source} 上报的 {fresh} 个目标中有 {bad} 个不通或劣化；其他源节点能以平常水平到达其中 {elsewhere} 个。",
@@ -1492,7 +1499,7 @@ export default {
             reach: "另有 {n} 个源节点能到达 {target} | 另有 {n} 个源节点能到达 {target}",
             quality: "另有 {n} 个源节点能以平常水平到达 {target} | 另有 {n} 个源节点能以平常水平到达 {target}",
           },
-          alone: "只有 {source} 上报 {target}，无法判断原因在哪。",
+          alone: "只有 {source} 上报 {target}。",
         },
         stats: {
           jitter: "抖动",
@@ -1587,10 +1594,11 @@ export default {
         clear: "唯一的路径在{window}内都通。 | 全部 {n} 条路径在{window}内都通。",
         attention: {
           down: "{target} 从 {source} 不通",
-          downMany: "测量 {target} 的 {total} 个源节点中，有 {n} 个不通",
+          downMany: "探测 {target} 的 {total} 个源节点中，有 {n} 个不通",
           downSource: "从 {source} 出发有 {n} 条路径不通 | 从 {source} 出发有 {n} 条路径不通",
           degraded: "{target} 从 {source} 劣化",
-          degradedMany: "测量 {target} 的 {total} 个源节点中，有 {n} 个显示劣化",
+          degradedMany: "探测 {target} 的 {total} 个源节点中，有 {n} 个显示劣化",
+          fromSource: "来自 {source}：{evidence}",
           degradedSource: "从 {source} 出发有 {n} 条路径劣化 | 从 {source} 出发有 {n} 条路径劣化",
           offline: "{source} 的 agent 离线：{n} 条路径未知 | {source} 的 agent 离线：{n} 条路径未知",
           lastSeen: "最后上报 {age}",

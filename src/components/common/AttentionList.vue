@@ -27,10 +27,20 @@ export interface AttentionItem extends ModelItem {
   verdict?: { label: string; evidence: string };
 }
 
-const props = withDefaults(defineProps<{ items: AttentionItem[]; max?: number; title?: string }>(), {
-  max: ATTENTION_DEFAULT_MAX,
-  title: undefined,
-});
+const props = withDefaults(
+  defineProps<{
+    items: AttentionItem[];
+    max?: number;
+    title?: string;
+    /** One sentence under the heading that holds for every item, said once rather than on each line. */
+    note?: string;
+  }>(),
+  {
+    max: ATTENTION_DEFAULT_MAX,
+    title: undefined,
+    note: undefined,
+  },
+);
 
 const expanded = ref(false);
 const view = computed(() => attentionView(props.items, props.max, expanded.value));
@@ -49,6 +59,7 @@ const ICON_TONE = { danger: "text-destructive", warning: "text-warning-text", in
     <h2 class="border-b border-border px-3.5 py-2 text-xs font-medium text-muted-foreground">
       {{ title ?? $t('common.attention.title') }}
     </h2>
+    <p v-if="note" class="border-b border-border px-3.5 py-2 text-xs break-words text-muted-foreground" data-testid="attention-note">{{ note }}</p>
     <ul class="divide-y divide-border">
       <li
         v-for="item in view.shown"

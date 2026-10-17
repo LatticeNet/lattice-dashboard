@@ -10,7 +10,10 @@ import { applyQuery, compileQuery } from "@/lib/query/engine";
 import {
   attentionQuery,
   availability,
+  DEGRADED_LEAVE_AFTER_MS,
   DEGRADED_REASONS,
+  formatShare,
+  quoteQueryValue,
   judgesDegraded,
   PATH_STATES,
   PATHS_QUERY_EXAMPLES,
@@ -584,7 +587,13 @@ test("attention with triangulation: down by target, down by source, degraded by 
   });
   assert.deepEqual(shape, ["down:dmit4:3:target", "downSource:volc:4:source", "degraded:lon:2:target", "degraded:tyo:1:path", "unknown:results_stopped", "paused"]);
   const source = items[1]!;
-  assert.equal(attentionQuery(source), "state:down source:volc-sh");
+  assert.equal(attentionQuery(source), "state:down source:volc-sh target:=a,b,c,d");
+  // Show lists exactly the item's paths: volc-sh's down path to dmit4 carries the target verdict and is not in it.
+  const m = buildPathsMatrix(threeSources());
+  const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
+  const shown = applyQuery(m.paths, compileQuery(attentionQuery(source), schema).query).map((p) => p.key);
+  assert.deepEqual(shown.sort(), source.paths.map((p) => p.key).sort());
+  assert.equal(shown.length, 4);
   assert.deepEqual(source.kind === "downSource" && source.verdict.evidence, { kind: "source", source: "volc-sh", bad: 5, fresh: 7, elsewhere: 4 });
   assert.equal(attentionQuery(items[2]!), "state:degraded target:lon");
   const tyo = items[3]!;
@@ -597,4 +606,53 @@ test("attention: with one source every down and degraded item reads this path", 
   const judged = items.filter((i) => i.kind === "down" || i.kind === "degraded");
   assert.deepEqual(judged.map((i) => i.kind), ["down", "degraded"]);
   for (const i of judged) assert.equal((i as { verdict?: { kind: string } }).verdict?.kind, "path");
+});
+
+test("a source item's Show quotes names the query would split, and lists each target once", () => {
+  assert.equal(quoteQueryValue("[cd]-linode-sgp"), "[cd]-linode-sgp");
+  assert.equal(quoteQueryValue("hk, sg"), '"hk, sg"', "a comma would separate two values");
+  const r = threeSources();
+  r.targets = r.targets!.map((t) => (t.node_id === "a" ? { ...t, name: "[cd] hk mini" } : t.node_id === "b" ? { ...t, name: "edge,sg" } : t));
+  const m = buildPathsMatrix(r);
+  const item = pathAttention(m).find((i) => i.kind === "downSource")!;
+  const q = attentionQuery(item);
+  assert.equal(q, 'state:down source:volc-sh target:="[cd] hk mini",c,d,"edge,sg"', "in the item's target order");
+  const shown = applyQuery(m.paths, compileQuery(q, pathsQuerySchema({ reasonText: (x) => x ?? "" })).query).map((p) => p.key);
+  assert.deepEqual(shown.sort(), item.paths.map((p) => p.key).sort());
+});
+
+test("a degraded target's item is led by the path furthest over its trigger, on either arm", () => {
+  const r = threeSources();
+  // lon: cd-hs-sh's loss is 1.5 times its trigger; volc-sh's latency is 3 times its trigger, so volc-sh leads.
+  r.paths = r.paths.map((p) => {
+    if (p.target_node !== "lon") return p;
+    if (p.source === "sh") return { ...p, reason: "degraded_loss", degraded: { ...DEGRADED, loss: { value: 0.03, baseline: 0.004, trigger: 0.02, sent: 290, lost: 9 } } };
+    if (p.source === "volc") return { ...p, reason: "degraded_latency", degraded: { since: DEGRADED.since, evaluated_at: DEGRADED.evaluated_at, latency: { p50_ms: 360, runs: 15, baseline_ms: 60, trigger_ms: 120 } } };
+    return p;
+  });
+  const lon = pathAttention(buildPathsMatrix(r)).find((i) => i.kind === "degraded" && i.rowKey === "lon")!;
+  assert.deepEqual(lon.paths.map((p) => p.source), ["volc", "sh"], "the worse arm leads, whichever arm it is");
+  // A path that held both arms is ranked by the worse of the two, not the milder.
+  r.paths = r.paths.map((p) => (p.target_node === "lon" && p.source === "sh" ? { ...p, reason: "degraded_loss_latency", degraded: { ...DEGRADED, loss: { value: 0.03, baseline: 0.004, trigger: 0.02, sent: 290, lost: 9 }, latency: { p50_ms: 480, runs: 15, baseline_ms: 60, trigger_ms: 120 } } } : p));
+  const again = pathAttention(buildPathsMatrix(r)).find((i) => i.kind === "degraded" && i.rowKey === "lon")!;
+  assert.deepEqual(again.paths.map((p) => p.source), ["sh", "volc"], "4 times over on latency beats 3 times");
+});
+
+test("formatShare: one decimal under ten percent, whole from ten, never negative", () => {
+  assert.equal(formatShare(0.042), "4.2%");
+  assert.equal(formatShare(0.004), "0.4%");
+  assert.equal(formatShare(0.072), "7.2%", "one decimal up to ten percent");
+  assert.equal(formatShare(0.02), "2%", "a trailing .0 is dropped");
+  assert.equal(formatShare(0.0999), "10%", "9.99 rounds to one decimal as 10.0, printed whole");
+  assert.equal(formatShare(0.1), "10%");
+  assert.equal(formatShare(0.156), "16%");
+  assert.equal(formatShare(0), "0%");
+  assert.equal(formatShare(-0.01), "0%");
+  assert.equal(formatShare(undefined), "");
+  assert.equal(formatShare(Number.NaN), "");
+});
+
+test("a clearing path leaves ten minutes after the condition stopped (lattice-sdk PathDegradedLeaveAfter)", () => {
+  // The server sends clearing_since, not the leave time; the console adds the SDK's constant, so the test pins it.
+  assert.equal(DEGRADED_LEAVE_AFTER_MS, 10 * 60 * 1000);
 });

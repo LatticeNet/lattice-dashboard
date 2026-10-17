@@ -346,6 +346,12 @@ test("baseline: not ready under 24 hours, with no trigger and a note of how far 
   assert.deepEqual(baselinePending(s.baseline), { hours: 14, needed: BASELINE_MIN_HOURS });
   assert.equal(readBaseline({ ...raw, hours: 23, ready: true })!.ready, false, "23 hourly buckets are not a baseline whatever the flag says");
   assert.equal(readBaseline({ ...raw, hours: 24, ready: true })!.ready, true);
+  // Triggers sent with a baseline that is not ready are not kept: a path not judged has nothing to be above.
+  const early = readBaseline({ ...raw, hours: 30, ready: false, trigger_p50_ms: 128, trigger_loss: 0.02 })!;
+  assert.deepEqual([early.triggerP50Ms, early.triggerLoss], [undefined, undefined], "the server's flag says not ready");
+  const short = readBaseline({ ...raw, hours: 23, ready: true, trigger_p50_ms: 128, trigger_loss: 0.02 })!;
+  assert.deepEqual([short.triggerP50Ms, short.triggerLoss], [undefined, undefined], "23 hours is not ready");
+  assert.deepEqual(baselineGuides(early), []);
 });
 
 test("baseline: null for a path that is never judged, undefined from a server before M3", () => {

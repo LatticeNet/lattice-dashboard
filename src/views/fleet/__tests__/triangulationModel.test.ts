@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { PathView, PathsResponse } from "@/lib/api/types";
 
 import { buildPathsMatrix } from "../pathsModel.ts";
-import { familyOf, isBad, isFresh, isGood, triangulate, verdictFor } from "../triangulationModel.ts";
+import { familyOf, isBad, isFresh, isGood, soleReporter, triangulate, verdictFor } from "../triangulationModel.ts";
 
 const SOURCES = [
   { node_id: "sh", name: "cd-hs-sh" },
@@ -137,4 +137,22 @@ test("up, unknown and paused paths get no verdict", () => {
   const tri = triangulate(m);
   assert.equal(tri.reach.size + tri.quality.size, 0);
   for (const p of m.paths) assert.equal(verdictFor(tri, p), undefined);
+});
+
+test("sole reporter: one source behind every unplaced verdict is said once; anything placed or mixed is not", () => {
+  // The single-source fleet: every down and degraded verdict is "alone" from cd-hs-sh.
+  const one: PathView[] = [path("sh", "a", "down"), path("sh", "b", "degraded", { reason: "degraded_loss" }), path("sh", "c", "up")];
+  const m1 = matrix(one, [SOURCES[0]!]);
+  const t1 = triangulate(m1);
+  assert.equal(soleReporter(m1.paths.map((p) => verdictFor(t1, p))), "cd-hs-sh", "undefined verdicts of up paths are skipped");
+  // A verdict that is placed, or a "this path" with other sources beside it, keeps the per-line verdicts.
+  const t3 = triangulate(matrix(row("tyo-3", { sh: "down", hk: "down", fra: "up" })));
+  assert.equal(soleReporter([...t3.reach.values()]), undefined, "other sources reach tyo-3");
+  const placed = triangulate(matrix(row("tyo-3", { sh: "down", hk: "down" })));
+  assert.equal(soleReporter([...placed.reach.values()]), undefined, "the target is placed");
+  // Two different lone sources (each the only one on its own target) do not share a note.
+  const mixed = triangulate(matrix([path("sh", "a", "down"), path("hk", "b", "down")]));
+  assert.equal(soleReporter([...mixed.reach.values()]), undefined);
+  assert.equal(soleReporter([]), undefined, "no verdict, no note");
+  assert.equal(soleReporter([undefined]), undefined);
 });

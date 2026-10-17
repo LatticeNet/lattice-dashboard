@@ -111,8 +111,13 @@ export function usePathsCopy() {
     return parts.length ? parts.join(" ") : reasonText(reason);
   }
 
-  /** The verdict's label: "Likely cause: this source's network". */
+  /**
+   * The verdict's label: "Likely cause: this source's network". A path only
+   * one source reports on names no cause ("Cause not placed"), since the
+   * evidence beside it says the cause cannot be placed.
+   */
   function verdictLabel(v: Verdict): string {
+    if (v.evidence.kind === "alone") return t("fleet.monitoring.paths.verdict.label.alone");
     if (v.kind === "source") return t("fleet.monitoring.paths.verdict.label.source", { source: v.evidence.kind === "source" ? v.evidence.source : "" });
     return t(`fleet.monitoring.paths.verdict.label.${v.kind}`);
   }
@@ -122,6 +127,8 @@ export function usePathsCopy() {
     const e = v.evidence;
     switch (e.kind) {
       case "target":
+        // Rule 1 needs two sources at least: two read "both", more read "all N".
+        if (e.sources.length === 2) return t(`fleet.monitoring.paths.verdict.targetBoth.${v.family}`, { sources: e.sources.join(", ") });
         return t(`fleet.monitoring.paths.verdict.target.${v.family}`, { n: e.sources.length, sources: e.sources.join(", ") });
       case "source":
         return t(`fleet.monitoring.paths.verdict.source.${v.family}`, { source: e.source, bad: e.bad, fresh: e.fresh, elsewhere: e.elsewhere });

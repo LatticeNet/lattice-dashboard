@@ -151,6 +151,25 @@ export function familyOf(state: PathState): VerdictFamily | undefined {
   return undefined;
 }
 
+/**
+ * The one source every verdict rests on when none of them can be placed:
+ * each is "this path" because only that source reports on its target, as it
+ * is on every item while the path set has a single source. The Overview then
+ * says so once above the list instead of on every line. Undefined when there
+ * is no verdict, when any verdict is placed or has other sources beside it,
+ * or when the lone sources differ.
+ */
+export function soleReporter(verdicts: readonly (Verdict | undefined)[]): string | undefined {
+  let source: string | undefined;
+  for (const v of verdicts) {
+    if (!v) continue;
+    if (v.evidence.kind !== "alone") return undefined;
+    if (source !== undefined && source !== v.evidence.source) return undefined;
+    source = v.evidence.source;
+  }
+  return source;
+}
+
 /** A down or degraded path's verdict, from the family that names its state; undefined for any other path. */
 export function verdictFor(triangulation: Triangulation, path: Pick<PathItem, "key" | "state">): Verdict | undefined {
   const family = familyOf(path.state);

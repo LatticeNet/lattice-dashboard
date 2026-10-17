@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 
 import { formatLoss } from "./latencyModel";
 import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathDisplay, type PathItem, type SourceReach } from "./pathsModel";
-import type { Verdict } from "./triangulationModel";
+import { soleReporter, type Verdict } from "./triangulationModel";
 import { usePathsCopy } from "./pathsCopy";
 import type { PathsData } from "./usePathsData";
 
@@ -70,10 +70,25 @@ function names(list: string[]): string {
 
 const show = (q: string, path?: string) => ({ label: t("fleet.monitoring.overview.attention.show"), run: () => showInPaths(q, path) });
 
-/** The verdict line. With one source every verdict reads "this path", which is honest, and says why. */
-function verdictLine(v: Verdict | undefined): AttentionItem["verdict"] {
-  if (!v) return undefined;
-  return { label: verdictLabel(v), evidence: verdictEvidence(v) };
+const items = computed(() => (matrix.value ? pathAttention(matrix.value, props.data.triangulation.value) : []));
+/**
+ * The source every verdict on the list leans on when none can be placed (one
+ * source in the path set, as production runs today): the list says so once
+ * under its heading, and the lines leave out a verdict that would repeat it.
+ */
+const sole = computed(() => soleReporter(items.value.map((i) => ("verdict" in i ? i.verdict : undefined))));
+
+/**
+ * The verdict line. A target verdict counts the sources that report on the
+ * target; when more sources probe it (`measuredBy`), the rest report nothing
+ * and the line says how many, so its count and the claim's agree.
+ */
+function verdictLine(v: Verdict | undefined, measuredBy?: number): AttentionItem["verdict"] {
+  if (!v || (sole.value !== undefined && v.evidence.kind === "alone")) return undefined;
+  let evidence = verdictEvidence(v);
+  const silent = v.evidence.kind === "target" && measuredBy !== undefined ? measuredBy - v.evidence.sources.length : 0;
+  if (silent > 0) evidence = `${evidence}; ${t("fleet.monitoring.paths.verdict.silent", { n: silent }, silent)}`;
+  return { label: verdictLabel(v), evidence };
 }
 
 /** Why a down path is down: its reason, else the agent's newest error, and its loss over the window. */
@@ -93,7 +108,7 @@ function itemFor(item: PathAttention): AttentionItem {
         sources.length === 1 && item.measuredBy === 1
           ? t("fleet.monitoring.overview.attention.down", { target: item.targetName, source: sources[0] })
           : t("fleet.monitoring.overview.attention.downMany", { target: item.targetName, n: sources.length, total: item.measuredBy });
-      return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: downProof(lead), verdict: verdictLine(item.verdict), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
+      return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: downProof(lead), verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
     }
     case "downSource":
       return {
@@ -111,8 +126,10 @@ function itemFor(item: PathAttention): AttentionItem {
         sources.length === 1 && item.measuredBy === 1
           ? t("fleet.monitoring.overview.attention.degraded", { target: item.targetName, source: sources[0] })
           : t("fleet.monitoring.overview.attention.degradedMany", { target: item.targetName, n: sources.length, total: item.measuredBy });
-      // A degraded item's proof is its evidence sentence (D13), the lead path's.
-      return { key: `degraded:${item.rowKey}`, tone: "warning", claim, proof: evidenceText(lead.degraded, lead.reason), verdict: verdictLine(item.verdict), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
+      // A degraded item's proof is its evidence sentence (D13), the lead path's; over several paths it names whose.
+      const evidence = evidenceText(lead.degraded, lead.reason);
+      const proof = item.paths.length > 1 ? t("fleet.monitoring.overview.attention.fromSource", { source: lead.sourceName, evidence }) : evidence;
+      return { key: `degraded:${item.rowKey}`, tone: "warning", claim, proof, verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
     }
     case "degradedSource":
       return {
@@ -152,7 +169,7 @@ function itemFor(item: PathAttention): AttentionItem {
   }
 }
 
-const attention = computed<AttentionItem[]>(() => [...(matrix.value ? pathAttention(matrix.value, props.data.triangulation.value).map(itemFor) : []), ...props.checkAttention]);
+const attention = computed<AttentionItem[]>(() => [...items.value.map(itemFor), ...props.checkAttention]);
 const reach = computed(() => (matrix.value ? reachBySource(matrix.value).filter((r) => r.total > 0) : []));
 /** The counts the strip links, worst first; degraded only from a server that judges it. */
 const reachLinks = computed<PathDisplay[]>(() => (matrix.value?.judgesDegraded ? ["degraded", "down", "unknown", "paused"] : ["down", "unknown", "paused"]));
@@ -192,7 +209,7 @@ function share(r: SourceReach, state: PathDisplay): string {
           </div>
         </EmptyState>
         <template v-else>
-          <AttentionList :items="attention" />
+          <AttentionList :items="attention" :note="sole !== undefined ? $t('fleet.monitoring.paths.verdict.sole', { source: sole }) : undefined" />
           <p v-if="attention.length === 0" class="rounded-lg border border-border bg-card px-3.5 py-3 text-sm text-muted-foreground" data-testid="overview-clear">
             {{ $t('fleet.monitoring.overview.clear', { n: matrix.counts.paths, window: windowLong(window) }, matrix.counts.paths) }}
           </p>
