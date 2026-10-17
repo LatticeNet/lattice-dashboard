@@ -283,10 +283,13 @@ function setAlertAfter(value: string | number | undefined): void {
   const n = Number(value);
   draft.value = { ...draft.value, alertAfter: value === "" || value === undefined ? 0 : Number.isFinite(n) ? n : Number.NaN };
 }
-/** Which generated paths page, and on what: every path the path set makes, after the save. */
+/**
+ * Which generated paths page, and on what. No count: a paused path, or one
+ * that measures nothing, never pages, so "all N" would claim more than holds.
+ */
 const alertLine = computed(() => {
   if (alert.value === "off") return t("fleet.monitoring.pathSet.alertPages.off");
-  return t(`fleet.monitoring.pathSet.alertPages.${alert.value}`, { n: pathCount.value, after: alertAfterShown.value }, pathCount.value);
+  return t(`fleet.monitoring.pathSet.alertPages.${alert.value}`, { after: alertAfterShown.value });
 });
 const SECTION = "grid min-w-0 gap-2.5 border-0 p-0";
 const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground";

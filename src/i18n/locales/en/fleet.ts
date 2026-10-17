@@ -1617,9 +1617,13 @@ export default {
         attention: {
           down: "{target} is down from {source}",
           downMany: "{target} is down from {n} of the {total} sources that probe it",
+          downAll: "{target} is down from all {n} sources that probe it",
+          downBoth: "{target} is down from both sources that probe it",
           downSource: "{n} path down from {source} | {n} paths down from {source}",
           degraded: "{target} is degraded from {source}",
           degradedMany: "{target} is degraded from {n} of the {total} sources that probe it",
+          degradedAll: "{target} is degraded from all {n} sources that probe it",
+          degradedBoth: "{target} is degraded from both sources that probe it",
           // A degraded item over several paths shows the lead path's evidence and says whose it is.
           fromSource: "From {source}: {evidence}",
           degradedSource: "{n} path degraded from {source} | {n} paths degraded from {source}",
@@ -1926,8 +1930,8 @@ export default {
         },
         alertPages: {
           off: "No generated path pages. Down and degraded still show on the page.",
-          down: "The {n} generated path pages after {after} failed runs in a row. | All {n} generated paths page after {after} failed runs in a row.",
-          down_and_degraded: "The {n} generated path pages after {after} failed runs in a row, and when it is degraded. | All {n} generated paths page after {after} failed runs in a row, and when they are degraded.",
+          down: "A generated path pages after {after} failed runs in a row. Paused paths and paths that measure nothing never page.",
+          down_and_degraded: "A generated path pages after {after} failed runs in a row, and when it is degraded. Paused paths and paths that measure nothing never page.",
         },
         description: "One rule for measuring between your nodes: each source probes each target. Pause single paths here or from a path's sheet.",
         method: "TCP: connect to each target's line port. ICMP needs a newer control plane; Beacon arrives with a later agent release.",

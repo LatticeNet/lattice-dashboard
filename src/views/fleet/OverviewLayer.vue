@@ -99,15 +99,20 @@ function downProof(lead: PathItem): string {
   return [failure, loss].filter(Boolean).join(" · ");
 }
 
+/** "X is down from cd-hs-sh", "from both sources", "from all 3 sources", or "from 2 of the 3 sources that probe it". */
+function targetClaim(state: "down" | "degraded", target: string, sources: string[], measuredBy: number): string {
+  const key = `fleet.monitoring.overview.attention.${state}`;
+  if (sources.length === 1 && measuredBy === 1) return t(key, { target, source: sources[0] });
+  if (sources.length === measuredBy) return sources.length === 2 ? t(`${key}Both`, { target }) : t(`${key}All`, { target, n: sources.length });
+  return t(`${key}Many`, { target, n: sources.length, total: measuredBy });
+}
+
 function itemFor(item: PathAttention): AttentionItem {
   switch (item.kind) {
     case "down": {
       const sources = item.paths.map((p) => p.sourceName);
       const lead = item.paths[0]!;
-      const claim =
-        sources.length === 1 && item.measuredBy === 1
-          ? t("fleet.monitoring.overview.attention.down", { target: item.targetName, source: sources[0] })
-          : t("fleet.monitoring.overview.attention.downMany", { target: item.targetName, n: sources.length, total: item.measuredBy });
+      const claim = targetClaim("down", item.targetName, sources, item.measuredBy);
       return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: downProof(lead), verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
     }
     case "downSource":
@@ -122,10 +127,7 @@ function itemFor(item: PathAttention): AttentionItem {
     case "degraded": {
       const sources = item.paths.map((p) => p.sourceName);
       const lead = item.paths[0]!;
-      const claim =
-        sources.length === 1 && item.measuredBy === 1
-          ? t("fleet.monitoring.overview.attention.degraded", { target: item.targetName, source: sources[0] })
-          : t("fleet.monitoring.overview.attention.degradedMany", { target: item.targetName, n: sources.length, total: item.measuredBy });
+      const claim = targetClaim("degraded", item.targetName, sources, item.measuredBy);
       // A degraded item's proof is its evidence sentence (D13), the lead path's; over several paths it names whose.
       const evidence = evidenceText(lead.degraded, lead.reason);
       const proof = item.paths.length > 1 ? t("fleet.monitoring.overview.attention.fromSource", { source: lead.sourceName, evidence }) : evidence;
