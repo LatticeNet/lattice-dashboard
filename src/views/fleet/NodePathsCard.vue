@@ -24,7 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 import WindowControl from "./WindowControl.vue";
 import { formatLoss, formatMs } from "./latencyModel";
-import { NODE_PATHS_SHOWN, NODE_PATH_DEFAULT_WINDOW, NODE_PATH_WINDOWS, monitoringQuery, nodePaths, otherEnd } from "./nodePathsModel";
+import { NODE_PATHS_SHOWN, NODE_PATH_DEFAULT_WINDOW, NODE_PATH_WINDOWS, degradedFigures, monitoringQuery, nodePaths, otherEnd } from "./nodePathsModel";
 import { displayState, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 import { usePathsData } from "./usePathsData";
@@ -34,7 +34,7 @@ const props = defineProps<{ node: Pick<Node, "id" | "name">; nodes?: Node[] }>()
 const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("monitor:read"));
-const { reasonShort, displayLabel, windowLong, methodName } = usePathsCopy();
+const { reasonShort, displayLabel, windowLong, methodName, evidenceText } = usePathsCopy();
 
 const requested = ref<MonitorWindow>(NODE_PATH_DEFAULT_WINDOW);
 const nodeName = (id: string) => props.nodes?.find((n) => n.id === id)?.name;
@@ -61,16 +61,25 @@ function pathLink(path: PathItem) {
   return { name: "monitoring", query: { view: "paths", path: path.key, window: data.window.value } };
 }
 
-/** The value a row shows: the p50 (and loss) when up, the state and loss when down, the reason when unknown. */
-function valueOf(path: PathItem): { text: string; tone: string } {
+/**
+ * The value a row shows: the p50 (and loss) when up, the state and loss when
+ * down, the reason when unknown, and for a degraded row the evidence its
+ * reason rests on (the 15-minute median, the hour's loss) with the full
+ * sentence on hover, never the window's p50.
+ */
+function valueOf(path: PathItem): { text: string; tone: string; title?: string } {
   const state = displayState(path);
   if (state === "up") {
     const loss = (path.loss ?? 0) > 0 ? ` · ${formatLoss(path.loss)}` : "";
     return { text: path.p50Ms !== undefined ? `${formatMs(path.p50Ms)}${loss}` : t("fleet.monitoring.paths.reasonShort.no_data"), tone: "text-foreground" };
   }
   if (state === "down") return { text: (path.loss ?? 0) > 0 ? `${displayLabel(path)} · ${formatLoss(path.loss)}` : displayLabel(path), tone: "text-destructive" };
-  // Degraded (design 29 D13): the p50 and the reason, in the warning tone.
-  if (state === "degraded") return { text: [path.p50Ms !== undefined ? formatMs(path.p50Ms) : "", reasonShort(path.reason)].filter(Boolean).join(" · "), tone: "text-warning-text" };
+  // Degraded (design 29 D13): the evidence and the reason, in the warning tone.
+  if (state === "degraded") {
+    const f = degradedFigures(path);
+    const figures = [f.latencyMs !== undefined ? formatMs(f.latencyMs) : "", f.loss !== undefined ? formatLoss(f.loss) : ""];
+    return { text: [...figures, reasonShort(path.reason)].filter(Boolean).join(" · "), tone: "text-warning-text", title: evidenceText(path.degraded, path.reason) || undefined };
+  }
   if (state === "paused") return { text: displayLabel(path), tone: "text-muted-foreground" };
   return { text: reasonShort(path.reason), tone: "text-muted-foreground" };
 }
@@ -119,7 +128,7 @@ const PathList = defineComponent({
                   end.check ? h("span", { class: "block truncate text-[11px] text-muted-foreground", title: end.check }, t("fleet.monitoring.nodePaths.viaCheck", { name: end.check })) : null,
                 ]),
                 h("span", { class: "font-mono text-[10px] uppercase text-muted-foreground", "aria-hidden": "true" }, path.method),
-                h("span", { class: cn("text-end font-mono tabular", value.tone), "aria-hidden": "true" }, value.text),
+                h("span", { class: cn("text-end font-mono tabular", value.tone), "aria-hidden": "true", title: value.title }, value.text),
               ],
             ),
           ]);

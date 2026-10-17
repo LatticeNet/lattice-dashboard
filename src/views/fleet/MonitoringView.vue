@@ -558,6 +558,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :monitor-names="monitorNames"
         :monitor-targets="monitorTargets"
         :now="now.getTime()"
+        :degraded="!!matrix?.judgesDegraded"
         @refresh="incidentsQuery.refresh()"
       />
     </template>

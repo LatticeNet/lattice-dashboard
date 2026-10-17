@@ -26,6 +26,7 @@ import {
   methodMarkers,
   piecesCrossing,
   placeGuideLabels,
+  placePreviousLabel,
   seriesCeilingMs,
   seriesFromLatency,
   seriesFromResponse,
@@ -476,4 +477,22 @@ test("the step in progress: the last step, which ends after now, says its runs s
   assert.equal(stepInProgress({ to: from + 60 * 60, stepSec: 60 }, { t: from + 59 * 60 }), false);
   assert.equal(stepInProgress({ to, stepSec: 0 }, { t: to }), false);
   assert.equal(stepInProgress({ to: NaN, stepSec: 60 }, { t: to }), false);
+});
+
+test("the previous period's label: once, where its line begins in view, on the side the p50 crosses less, inside the lane", () => {
+  const opts = { w: 80, h: 13, gap: 3, left: 60, right: 460, laneTop: 10, laneBottom: 180, covered: () => 0 };
+  // The line starts at its first step with a value inside the plot; the steps before it had no run.
+  const line = [{ x: 40, y: 100 }, { x: 70, y: null }, { x: 100, y: 120 }, { x: 130, y: 118 }];
+  assert.deepEqual(placePreviousLabel(line, opts), { x: 103, top: 104 }, "above the line by the gap, left aligned at its start");
+  // Above crosses the drawn p50, below does not: below.
+  const crossed = (box: { y0: number }) => (box.y0 < 120 ? 2 : 0);
+  assert.deepEqual(placePreviousLabel(line, { ...opts, covered: crossed }), { x: 103, top: 123 });
+  // Near the lane's top there is no room above; near the bottom none below.
+  assert.deepEqual(placePreviousLabel([{ x: 100, y: 20 }], opts), { x: 103, top: 23 });
+  assert.deepEqual(placePreviousLabel([{ x: 100, y: 178 }], opts), { x: 103, top: 162 });
+  // A line that begins at the right edge keeps its label inside the plot.
+  assert.deepEqual(placePreviousLabel([{ x: 450, y: 100 }], opts), { x: 377, top: 84 });
+  // Nothing in view (no value, or every value outside the plot): no label.
+  assert.equal(placePreviousLabel([{ x: 100, y: null }, { x: 120, y: undefined }], opts), undefined);
+  assert.equal(placePreviousLabel([{ x: 20, y: 90 }, { x: 500, y: 90 }], opts), undefined);
 });

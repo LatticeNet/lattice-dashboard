@@ -507,6 +507,31 @@ export function linePieces(values: readonly { x: number; y: number | null | unde
   return out;
 }
 
+/**
+ * Where the previous period's label goes. The guides are labelled on the
+ * canvas, and so is the dotted previous line: once, at the start of the part
+ * in view, so it names the line where the line begins. It sits above the
+ * line, or below it when that crosses fewer of the drawn lines (`covered`)
+ * or above would leave the latency lane; it never runs past the plot's
+ * right edge. Undefined when no previous step is in view.
+ */
+export function placePreviousLabel(
+  line: readonly { x: number; y: number | null | undefined }[],
+  opts: { w: number; h: number; gap: number; left: number; right: number; laneTop: number; laneBottom: number; covered: (box: { x0: number; x1: number; y0: number; y1: number }) => number },
+): { x: number; top: number } | undefined {
+  const start = line.find((p) => p.y !== null && p.y !== undefined && Number.isFinite(p.y) && p.x >= opts.left && p.x <= opts.right);
+  if (!start) return undefined;
+  const y = start.y as number;
+  const x = Math.max(opts.left + opts.gap, Math.min(start.x + opts.gap, opts.right - opts.w - opts.gap));
+  const box = (top: number) => ({ x0: x, x1: x + opts.w, y0: top, y1: top + opts.h });
+  const above = y - opts.gap - opts.h;
+  const below = y + opts.gap;
+  const fits = (top: number) => top >= opts.laneTop && top + opts.h <= opts.laneBottom;
+  if (fits(above) && (!fits(below) || opts.covered(box(above)) <= opts.covered(box(below)))) return { x, top: above };
+  if (fits(below)) return { x, top: below };
+  return { x, top: Math.max(opts.laneTop, Math.min(above, opts.laneBottom - opts.h)) };
+}
+
 /** How many pieces cross a box: a steep drop through a label counts, not only the points that land in it. */
 export function piecesCrossing(pieces: readonly LinePiece[], box: { x0: number; x1: number; y0: number; y1: number }): number {
   let n = 0;

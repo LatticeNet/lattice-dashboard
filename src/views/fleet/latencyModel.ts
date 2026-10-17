@@ -29,7 +29,7 @@ import type {
 import { latencyClass } from "@/lib/latency";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
-import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, degradedDraftFrom, degradedForSave, degradedProblems, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
+import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, degradedDraftFrom, degradedForSave, degradedProblems, effectiveAlert, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
 import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
@@ -690,12 +690,30 @@ export function draftProblems(draft: LatencyDraft): DraftProblem[] {
   if (!Number.isInteger(interval) || interval < LATENCY_MIN_INTERVAL_SEC || interval > LATENCY_MAX_INTERVAL_SEC) out.push("interval");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > LATENCY_MAX_TIMEOUT_SEC) out.push("timeout");
   else if (!out.includes("interval") && timeout >= interval) out.push("timeoutVsInterval");
-  if ((draft.alert === "down" || draft.alert === "down_and_degraded") && draft.alertAfter !== 0) {
-    const after = Number(draft.alertAfter);
-    if (!Number.isInteger(after) || after < 1 || after > ALERT_MAX_AFTER) out.push("alertAfter");
-  }
+  if ((draft.alert === "down" || draft.alert === "down_and_degraded") && !alertAfterValid(draft.alertAfter)) out.push("alertAfter");
   if (degradedProblems(draft.degraded).length) out.push("degraded");
   return out;
+}
+
+/**
+ * What the path set's alert line says: the policy in force (a path set
+ * nobody set reads off) and the run count it pages after, a stored zero
+ * reading as the default (2). While the field holds a count the save would
+ * refuse, `after` is left out, so the line never names a number the field's
+ * own error contradicts.
+ */
+export function alertPagesLine(draft: Pick<LatencyDraft, "alert" | "alertAfter">): { policy: "off" | "down" | "down_and_degraded"; after?: number } {
+  const policy = effectiveAlert(draft.alert, true);
+  if (policy === "off") return { policy };
+  if (!alertAfterValid(draft.alertAfter)) return { policy };
+  return { policy, after: draft.alertAfter > 0 ? draft.alertAfter : ALERT_DEFAULT_AFTER };
+}
+
+/** The path set's run count as the server takes it (validMonitorAlertAfter): 1 to ALERT_MAX_AFTER, or 0 for the default. */
+export function alertAfterValid(alertAfter: number): boolean {
+  if (alertAfter === 0) return true;
+  const after = Number(alertAfter);
+  return Number.isInteger(after) && after >= 1 && after <= ALERT_MAX_AFTER;
 }
 
 /**

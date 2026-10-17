@@ -31,6 +31,8 @@ import {
   setSourceMethod,
   sourcePins,
   sourceMethod,
+  alertAfterValid,
+  alertPagesLine,
 } from "../latencyModel.ts";
 
 function plan(over: Partial<LatencyProbePlan> = {}): LatencyProbePlan {
@@ -438,4 +440,16 @@ test("the path set keeps its alert, run count and thresholds through any save, a
   assert.equal(defaults.degraded, undefined);
   assert.deepEqual(draftProblems({ ...draft, alertAfter: 25 }), ["alertAfter"]);
   assert.deepEqual(draftProblems({ ...draft, degraded: { ...draft.degraded, lossFactor: 50 } }), ["degraded"]);
+});
+
+test("the path set's alert line names the run count in force, and none while the field holds one the save refuses", () => {
+  assert.deepEqual(alertPagesLine({ alert: "", alertAfter: 0 }), { policy: "off" }, "a path set nobody set reads off");
+  assert.deepEqual(alertPagesLine({ alert: "off", alertAfter: 25 }), { policy: "off" }, "off pages nothing, whatever the count");
+  assert.deepEqual(alertPagesLine({ alert: "down", alertAfter: 0 }), { policy: "down", after: 2 }, "a stored zero reads as the default");
+  assert.deepEqual(alertPagesLine({ alert: "down_and_degraded", alertAfter: 5 }), { policy: "down_and_degraded", after: 5 });
+  assert.deepEqual(alertPagesLine({ alert: "down", alertAfter: 20 }), { policy: "down", after: 20 });
+  // The field says "1 to 20"; the line under it must not say "pages after 25" (or the default for a cleared field).
+  for (const bad of [21, 25, -1, 1.5, Number.NaN]) assert.deepEqual(alertPagesLine({ alert: "down", alertAfter: bad }), { policy: "down" }, String(bad));
+  // One rule for the line and the save's problem.
+  for (const n of [0, 1, 20, 21, -1, 2.5, Number.NaN]) assert.equal(alertAfterValid(n), n === 0 || n === 1 || n === 20, String(n));
 });

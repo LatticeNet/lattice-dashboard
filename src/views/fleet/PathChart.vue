@@ -16,7 +16,7 @@
  * the right edge, beneath the series so a label never hides a bucket; the
  * scale always covers the trigger. With `compare` on, the
  * previous period's p50 is a thin dotted line in the same ink, its empty steps
- * unjoined, and the readout adds its value.
+ * unjoined, labelled once where the line begins, and the readout adds its value.
  *
  * The crosshair snaps to buckets and carries the exact values. It follows the
  * pointer and the keyboard (Left and Right step a bucket, Home and End jump);
@@ -49,6 +49,7 @@ import {
   methodMarkers,
   piecesCrossing,
   placeGuideLabels,
+  placePreviousLabel,
   stepInProgress,
   stepIndex,
   visibleRange,
@@ -299,6 +300,44 @@ function drawGuideLabels(u: uPlot): void {
   ctx.restore();
 }
 
+/**
+ * The previous period's label ("previous p50"), once, where its dotted line
+ * begins in view, drawn beneath the series as the guide labels are, on the
+ * side of its line that the p50 crosses less.
+ */
+function drawPreviousLabel(u: uPlot): void {
+  const prev = previous.value;
+  if (!prev) return;
+  const ctx = u.ctx;
+  const { left, top, width, height } = u.bbox;
+  const px = uPlot.pxRatio;
+  const half = step.value / 2;
+  const laneBottom = u.valToPos(lanes.value.divider, "ms", true);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  ctx.font = `${10 * px}px ${colors().mono}`;
+  const text = t("fleet.monitoring.chart.previous");
+  const w = ctx.measureText(text).width + 8 * px;
+  const h = 13 * px;
+  const xs = points.value.map((p) => u.valToPos(p.t + half, "x", true));
+  const p50 = linePieces(points.value.map((p, i) => ({ x: xs[i]!, y: p.p50Ms === undefined ? null : u.valToPos(p.p50Ms, "ms", true) })));
+  const slot = placePreviousLabel(
+    points.value.map((_, i) => ({ x: xs[i]!, y: prev[i] == null ? null : u.valToPos(prev[i]!, "ms", true) })),
+    { w, h, gap: 3 * px, left, right: left + width, laneTop: top, laneBottom, covered: (box) => piecesCrossing(p50, box) },
+  );
+  if (slot) {
+    ctx.fillStyle = rgba(colors().card, 0.88);
+    ctx.fillRect(slot.x, slot.top, w, h);
+    ctx.fillStyle = rgba(colors().ink, 0.7);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(text, slot.x + 4 * px, slot.top + 12 * px);
+  }
+  ctx.restore();
+}
+
 function drawOverlay(u: uPlot): void {
   const ctx = u.ctx;
   const { left, top, width, height } = u.bbox;
@@ -476,7 +515,7 @@ function options(width: number): uPlot.Options {
     bands: [{ series: [3, 1], fill: () => rgba(colors().tone, colors().dark ? 0.22 : 0.16) }],
     hooks: {
       drawClear: [(u) => drawGaps(u)],
-      drawAxes: [(u) => drawGuideLabels(u)],
+      drawAxes: [(u) => drawGuideLabels(u), (u) => drawPreviousLabel(u)],
       draw: [(u) => drawOverlay(u)],
       setCursor: [
         (u) => {

@@ -3,7 +3,8 @@ import { test } from "node:test";
 
 import type { PathView, PathsResponse } from "@/lib/api/types";
 
-import { monitoringQuery, nodePaths, otherEnd, stateCounts, worstFirst } from "../nodePathsModel.ts";
+import { degradedFigures, monitoringQuery, nodePaths, otherEnd, stateCounts, worstFirst } from "../nodePathsModel.ts";
+import { GOLDEN_PATHS_7D } from "@/testing/m3Golden";
 import { buildPathsMatrix } from "../pathsModel.ts";
 
 function path(over: Partial<PathView>): PathView {
@@ -79,4 +80,17 @@ test("the other end is the source when reached, the target when reaching; checks
 test("the Monitoring link filters by target or by source, quoting names the query would split", () => {
   assert.equal(monitoringQuery("reachedBy", "xuezhang-jp-nat"), "target:xuezhang-jp-nat");
   assert.equal(monitoringQuery("reaches", "my node: 2"), 'source:"my node: 2"');
+});
+
+test("a degraded row shows the evidence its reason is about, never the window's p50", () => {
+  // The node card's default window is 24h; the golden week shows the same gap: a 40 ms week beside a slow quarter hour.
+  const week = buildPathsMatrix(GOLDEN_PATHS_7D);
+  const path = (key: string) => week.paths.find((p) => p.key === key)!;
+  const slow = path("node-fra~node-jp");
+  assert.equal(slow.p50Ms, 40, "the week's median is the usual figure");
+  assert.deepEqual(degradedFigures(slow), { latencyMs: 140 }, "the 15-minute median the reason is about");
+  assert.deepEqual(degradedFigures(path("node-sh~node-jp")), { loss: 0.082 }, "the hour's loss the reason is about");
+  assert.deepEqual(degradedFigures(path("node-sh~@mon-web")), { latencyMs: 140, loss: 0.082 });
+  assert.deepEqual(degradedFigures(path("node-hk~node-fra")), {}, "an up path has no evidence");
+  assert.deepEqual(degradedFigures({ state: "degraded", degraded: undefined }), {}, "no evidence sent: the reason alone");
 });

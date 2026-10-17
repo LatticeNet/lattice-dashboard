@@ -45,7 +45,7 @@ import {
   type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
-import { PROBE_INK, PROBE_MARK, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
+import { PROBE_INK, PROBE_MARK, checkLineValue, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -304,11 +304,7 @@ function sourcePaths(node: TopoNode): number {
 }
 
 function checkLine(check: TopoCheck): { text: string; tone: string } {
-  if (!check.enabled) return { text: t("fleet.monitoring.topology.check.disabled"), tone: "text-muted-foreground" };
-  const total = check.sourceIds.length;
-  if (check.summary.failing > 0) return { text: t("fleet.monitoring.topology.check.failing", { n: check.summary.failing, total }), tone: "text-destructive" };
-  if (check.summary.degraded > 0) return { text: t("fleet.monitoring.topology.check.degraded", { n: check.summary.degraded, total }), tone: "text-warning-text" };
-  return { text: t("fleet.monitoring.topology.check.summary", { up: check.summary.up, total }), tone: check.summary.up === total ? "text-muted-foreground" : "text-warning-text" };
+  return checkLineValue(t, check);
 }
 
 function checkFrom(check: TopoCheck): string {

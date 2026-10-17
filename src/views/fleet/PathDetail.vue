@@ -484,10 +484,6 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
         :class="seriesQuery.refreshing.value && 'opacity-70'"
         @zoom="(range) => (zoom = range)"
       />
-      <!-- The overlay's key: the dotted line has no label on the canvas. -->
-      <p v-if="comparing && series?.previous" class="flex items-center gap-2 text-xs text-muted-foreground" data-testid="path-compare-key">
-        <span class="inline-block w-5 shrink-0 border-t-2 border-dotted border-foreground/50" aria-hidden="true" />{{ $t('fleet.monitoring.paths.sheet.compareKey') }}
-      </p>
       <p v-if="pendingNote" class="text-xs text-muted-foreground" data-testid="path-baseline-pending">{{ pendingNote }}</p>
       <p v-if="path?.state === 'degraded'" class="text-xs text-muted-foreground" data-testid="path-baseline-drift">{{ $t('fleet.monitoring.paths.sheet.baselineDrift') }}</p>
       <details v-if="series && series.points.length" class="group rounded-md border border-border" data-testid="path-table">

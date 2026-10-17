@@ -1575,7 +1575,6 @@ export default {
           openTarget: "Target node",
           clearing: "clearing",
           compare: "Compare with the previous period",
-          compareKey: "Dotted line: p50 over the previous period of the same length",
           baselinePending: "Degraded is judged once this path has {needed} hours of history ({hours} h so far).",
           baselineDrift: "The 7-day baseline follows the path: a degradation that lasts for days slowly becomes its usual level, and the path then reads up again.",
         },
@@ -1937,6 +1936,9 @@ export default {
           off: "No generated path pages. Down and degraded still show on the page.",
           down: "A generated path pages after {after} failed runs in a row. Paused paths and paths that measure nothing never page.",
           down_and_degraded: "A generated path pages after {after} failed runs in a row, and when it is degraded. Paused paths and paths that measure nothing never page.",
+          // While the run count above holds a number the save would refuse: the line names none.
+          downUnset: "A generated path pages after the number of failed runs in a row set above. Paused paths and paths that measure nothing never page.",
+          down_and_degradedUnset: "A generated path pages after the number of failed runs in a row set above, and when it is degraded. Paused paths and paths that measure nothing never page.",
         },
         description: "One rule for measuring between your nodes: each source probes each target. Pause single paths here or from a path's sheet.",
         method: "TCP: connect to each target's line port. ICMP needs a newer control plane; Beacon arrives with a later agent release.",
@@ -2562,7 +2564,9 @@ export default {
           // A target row with several sources drawn: how many of them read its worst live state.
           summary: {
             down: "down from {n} of {of}",
+            downAll: "down from all {of}",
             degraded: "degraded from {n} of {of}",
+            degradedAll: "degraded from all {of}",
             up: "up from {n} of {of}",
             upAll: "up from all {of}",
           },
@@ -3030,6 +3034,7 @@ export default {
         active: "No open incidents.",
         filtered: "No incident matches these filters.",
         explain: "A node that stops reporting, sing-box going down, a failing monitor or a stalled agent opens one here once it lasts past its hold.",
+        explainDegraded: "A node that stops reporting, sing-box going down, a failing monitor, a degraded path whose check or path set pages on degraded, or a stalled agent opens one here once it lasts past its hold.",
       },
       maintenance: {
         new: "New maintenance window",
