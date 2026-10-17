@@ -615,18 +615,21 @@ watch(
   { immediate: true },
 );
 
-function compareValues(a: unknown, b: unknown): number {
-  // null/undefined always sort last regardless of direction
+function compareValues(a: unknown, b: unknown, dir: 1 | -1): number {
+  // null, undefined and "" sort last in either direction, so only the
+  // comparison of two values is turned round. Multiplying the whole result by
+  // the direction put every empty row first in a descending sort, which is
+  // the newest-first order a time column is read in.
   const aNil = a == null || a === "";
   const bNil = b == null || b === "";
   if (aNil && bNil) return 0;
   if (aNil) return 1;
   if (bNil) return -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
   const an = typeof a === "number" ? a : Number(a);
   const bn = typeof b === "number" ? b : Number(b);
-  if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  if (!Number.isNaN(an) && !Number.isNaN(bn)) return (an - bn) * dir;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" }) * dir;
 }
 
 const sortedRows = computed(() => {
@@ -636,7 +639,7 @@ const sortedRows = computed(() => {
   if (!column) return filteredRows.value;
   const dir = sortDir.value === "asc" ? 1 : -1;
   // copy before sorting to avoid mutating the source array
-  return [...filteredRows.value].sort((a, b) => compareValues(rawValue(a, column), rawValue(b, column)) * dir);
+  return [...filteredRows.value].sort((a, b) => compareValues(rawValue(a, column), rawValue(b, column), dir));
 });
 
 /** The order the headers show: the page's when it orders the rows, the table's own otherwise. */
