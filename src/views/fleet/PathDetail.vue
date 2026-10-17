@@ -31,7 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
 import { baselinePending, earlierMethods, methodAt, methodMarkers, seriesFromLatency, seriesFromResponse, seriesStats, stepInProgress, type PathSeries } from "./pathSeriesModel";
-import { formatShare, isChosenUnknown, reasonCode, runEchoes, runRows } from "./pathsModel";
+import { displayState, formatShare, isChosenUnknown, LOSS_TEXT, lossTone, reasonCode, runEchoes, runRows } from "./pathsModel";
 import type { Verdict } from "./triangulationModel";
 import {
   availability,
@@ -193,7 +193,7 @@ const figures = computed<Figure[]>(() => {
       value: stats.samples > 0 && stats.loss !== undefined ? formatLoss(stats.loss) : none,
       // A stray lost run in a week is not an alarm; a loss of one percent or more is, on a path that measures. From a
       // server that judges degraded, the loss takes the path's state tone (D13: amber means degraded), never a red of its own.
-      tone: measured && (stats.loss ?? 0) >= 0.01 ? lossTone.value : undefined,
+      tone: measured && (stats.loss ?? 0) >= 0.01 ? lossFigureTone.value : undefined,
       sub: delta.loss !== undefined ? formatDeltaLoss(delta.loss) : undefined,
       holdSub: windowDelta.loss !== undefined,
     },
@@ -240,8 +240,13 @@ const tone = computed<"success" | "warning" | "destructive" | "muted">(() => {
   return state === "up" ? "success" : state === "degraded" ? "warning" : state === "down" ? "destructive" : "muted";
 });
 
-/** A lossy window's tone: the M1 red on a server that does not judge degraded, else the path's state tone (down, degraded) or none. */
-const lossTone = computed<"destructive" | "warning" | undefined>(() => (!props.judgesDegraded ? "destructive" : props.path?.state === "down" ? "destructive" : props.path?.state === "degraded" ? "warning" : undefined));
+/** The loss bars' and the table's tone: the path's state tone, the ink on an up path, muted when it measured nothing (pathsModel lossTone). */
+const barTone = computed(() => (unmeasured.value ? "muted" : lossTone(props.path ? displayState(props.path) : undefined)));
+/** A lossy window's figure: the M1 red on a server that does not judge degraded, else the bars' tone when it is a state's (down, degraded). */
+const lossFigureTone = computed<"destructive" | "warning" | undefined>(() => {
+  if (!props.judgesDegraded) return "destructive";
+  return barTone.value === "destructive" || barTone.value === "warning" ? barTone.value : undefined;
+});
 
 /* ---- Degraded (design 29 D13) ---- */
 
@@ -444,7 +449,7 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
         :height="compact ? 200 : 228"
         :label="$t('fleet.monitoring.paths.sheet.chartLabel', { path: title, window: windowLong(window) })"
         :unmeasured-note="unmeasuredNote"
-        :loss-tone="lossTone === 'warning' ? 'warning' : 'destructive'"
+        :loss-tone="barTone"
         :compare="comparing"
         :class="seriesQuery.refreshing.value && 'opacity-70'"
         @zoom="(range) => (zoom = range)"
@@ -485,7 +490,7 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
                   <td class="px-2 py-1 text-end">{{ formatMs(p.p50Ms) || '' }}</td>
                   <td class="px-2 py-1 text-end">{{ formatMs(p.p95Ms) || '' }}</td>
                   <td class="px-2 py-1 text-end">{{ formatMs(p.jitterMs) || '' }}</td>
-                  <td :class="cn('px-2 py-1 text-end', (p.loss ?? 0) > 0 && 'text-destructive')">{{ p.n > 0 ? formatLoss(p.loss ?? 0) : '' }}</td>
+                  <td :class="cn('px-2 py-1 text-end', (p.loss ?? 0) > 0 && LOSS_TEXT[barTone])">{{ p.n > 0 ? formatLoss(p.loss ?? 0) : '' }}</td>
                 </template>
                 <td class="px-3 py-1 text-end">{{ p.n }}/{{ p.expected }}</td>
                 <td v-if="tableMethods" class="px-3 py-1">{{ tableMethod(p.t) }}</td>

@@ -44,6 +44,7 @@ import {
   buildPathsMatrix,
   cellKey,
   displayState,
+  lossTone,
   pathAttention,
   pathsQuerySchema,
   reachBySource,
@@ -184,6 +185,12 @@ test("golden matrix: degraded evidence, the clearing time and unmeasured figures
   assert.equal(down.expected, 60);
   assert.equal(availability(down), 1 - 0.0333);
   assert.equal(pathOf(m, "node-hk~node-fra").prev?.p50Ms, 158.8);
+
+  // Loss takes the path's state tone: red on the down path, amber on the lossy degraded ones, never red on an up path.
+  assert.equal(lossTone(displayState(down)), "destructive");
+  assert.equal(lossTone(displayState(pathOf(m, "node-sh~node-jp"))), "warning");
+  assert.equal(lossTone(displayState(pathOf(m, "node-sh~@mon-web"))), "warning");
+  for (const p of m.paths.filter((x) => x.state === "up")) assert.equal(lossTone(displayState(p)), "ink", `${p.key} is up`);
 });
 
 test("golden matrix: the 7d window judges the same states with the same evidence; only its figures differ", () => {

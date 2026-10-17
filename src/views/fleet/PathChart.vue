@@ -35,6 +35,7 @@ import "uplot/dist/uPlot.min.css";
 
 import { resolveColor, resolveFontFamily, rgba, watchTheme, type Rgba } from "@/lib/cssColor";
 import { formatLoss, formatMs } from "./latencyModel";
+import { LOSS_FILL, type LossTone } from "./pathsModel";
 import {
   baselineGuides,
   bucketIndexAt,
@@ -73,10 +74,10 @@ const props = withDefaults(
     unmeasuredNote?: string;
     /** Draw the previous period's p50 (the series carries it when the comparison is on). */
     compare?: boolean;
-    /** The loss bars' tone: the M1 red, or the warning tone on a degraded path (D13: amber means degraded). */
-    lossTone?: "destructive" | "warning";
+    /** The loss bars' tone (pathsModel lossTone): the path's state tone when it is down or degraded, the ink on an up path, muted on one that measured nothing. */
+    lossTone?: LossTone;
   }>(),
-  { compact: false, height: 240, compare: false, lossTone: "destructive" },
+  { compact: false, height: 240, compare: false, lossTone: "ink" },
 );
 
 const emit = defineEmits<{ zoom: [range: { from: number; to: number } | null] }>();
@@ -116,7 +117,7 @@ function readPalette(): Palette {
     border: resolveColor("--border"),
     card: resolveColor("--card"),
     tone: resolveColor(toneToken),
-    loss: resolveColor(props.unmeasuredNote ? "--muted-foreground" : props.lossTone === "warning" ? "--warning" : "--destructive"),
+    loss: resolveColor(LOSS_FILL[props.unmeasuredNote ? "muted" : props.lossTone]),
     dark: document.documentElement.classList.contains("dark"),
     mono: resolveFontFamily("--font-mono"),
     sans: getComputedStyle(document.body).fontFamily || "system-ui, sans-serif",
@@ -464,7 +465,8 @@ function options(width: number): uPlot.Options {
         scale: "loss",
         stroke: "transparent",
         width: 0,
-        fill: () => rgba(colors().loss, colors().dark ? 0.6 : 0.5),
+        // A state tone at half strength; the ink of an up path's loss lighter still, so it reads as a figure, not an alarm.
+        fill: () => rgba(colors().loss, props.lossTone === "ink" ? (colors().dark ? 0.5 : 0.38) : colors().dark ? 0.6 : 0.5),
         points: { show: false },
         paths: uPlot.paths.bars!({ size: [0.7, 24, 1], gap: 2, radius: 0.2 }),
       },
@@ -657,7 +659,8 @@ const readout = computed<{ time: string; entries: ReadoutEntry[]; note?: string 
     if (p.maxMs !== undefined) entries.push({ key: "max", label: t("fleet.monitoring.chart.max"), value: formatMs(p.maxMs) });
     if (p.jitterMs !== undefined) entries.push({ key: "jitter", label: t("fleet.monitoring.chart.jitter"), value: formatMs(p.jitterMs) });
   }
-  const alarm = props.unmeasuredNote ? undefined : props.lossTone;
+  // Only a down or degraded path's loss reads in its state's tone; an up path's is a plain figure.
+  const alarm = props.unmeasuredNote || (props.lossTone !== "destructive" && props.lossTone !== "warning") ? undefined : props.lossTone;
   entries.push({ key: "loss", label: t("fleet.monitoring.chart.loss"), value: formatLoss(p.loss ?? 0), tone: (p.loss ?? 0) > 0 ? alarm : undefined });
   // A multi-packet bucket counts its loss in packets, echoes for icmp and signed requests for a beacon; say how many.
   if (p.sent > p.n) entries.push({ key: "echoes", label: t(method === "beacon" ? "fleet.monitoring.chart.requests" : "fleet.monitoring.chart.echoes"), value: t("fleet.monitoring.chart.echoesValue", { lost: p.lost, sent: p.sent }), tone: p.lost > 0 ? alarm : undefined });

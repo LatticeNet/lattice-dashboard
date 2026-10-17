@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 
 import { formatLoss, formatMs } from "./latencyModel";
 import { usePathsCopy } from "./pathsCopy";
+import { LOSS_TEXT, lossTone } from "./pathsModel";
 import {
   CONTROL_PLANE,
   edgeStyle,
@@ -372,7 +373,8 @@ function probeRows(edge: TopoEdge): CardRow[] {
   rows.push({
     label: t("fleet.monitoring.topology.card.loss"),
     value: edge.loss !== undefined ? formatLoss(edge.loss) : t("common.misc.none"),
-    tone: (edge.loss ?? 0) > 0 ? "text-destructive" : undefined,
+    // A loss takes the path's state tone (down red, degraded amber); an up path's is a plain figure (D13).
+    tone: (edge.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(edge.state as ProbeState)] || undefined : undefined,
   });
   if (edge.expected) rows.push({ label: t("fleet.monitoring.topology.card.heard"), value: t("fleet.monitoring.topology.card.heardValue", { heard: edge.samples ?? 0, expected: edge.expected, window: props.windowLabel }) });
   rows.push({ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last?.ok === false ? "text-destructive" : undefined });

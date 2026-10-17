@@ -302,6 +302,37 @@ export function displayState(path: { state: PathState; reason?: string }): PathD
   return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
 }
 
+/** The ink a path's loss is drawn in: see lossTone. */
+export type LossTone = "destructive" | "warning" | "ink" | "muted";
+
+/**
+ * The ink for a path's loss bars and figures. State tones are the only
+ * saturated colour (design 29 D13), so a loss takes its path's tone where
+ * the state is down (red) or degraded (amber); on an up path a loss is a
+ * figure, not a state, and takes the foreground ink; on a path that reads
+ * unknown or paused it is muted, since what it holds is not an outage.
+ * Undefined (no path read) is ink.
+ */
+export function lossTone(state: PathDisplay | undefined): LossTone {
+  switch (state) {
+    case "down":
+      return "destructive";
+    case "degraded":
+      return "warning";
+    case "unknown":
+    case "paused":
+      return "muted";
+    default:
+      return "ink";
+  }
+}
+
+/** The text class a loss figure takes in each tone; ink adds none, so the figure keeps its row's ink. */
+export const LOSS_TEXT: Readonly<Record<LossTone, string>> = { destructive: "text-destructive", warning: "text-warning-text", ink: "", muted: "text-muted-foreground" };
+
+/** The CSS colour token a loss bar is filled with in each tone. */
+export const LOSS_FILL: Readonly<Record<LossTone, string>> = { destructive: "--destructive", warning: "--warning", ink: "--foreground", muted: "--muted-foreground" };
+
 /**
  * A multi-packet run's echoes for the runs list (design 29 M2a): how many
  * were sent and lost and each RTT that came back, rounded to a tenth of a

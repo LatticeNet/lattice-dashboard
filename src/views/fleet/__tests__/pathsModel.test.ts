@@ -48,6 +48,9 @@ import {
   runEchoes,
   runRows,
   UNKNOWN_REASONS,
+  LOSS_FILL,
+  LOSS_TEXT,
+  lossTone,
 } from "../pathsModel.ts";
 
 function response(over: Partial<PathsResponse> = {}): PathsResponse {
@@ -667,4 +670,31 @@ test("formatShare: one decimal under ten percent, whole from ten, never negative
 test("a clearing path leaves ten minutes after the condition stopped (lattice-sdk PathDegradedLeaveAfter)", () => {
   // The server sends clearing_since, not the leave time; the console adds the SDK's constant, so the test pins it.
   assert.equal(DEGRADED_LEAVE_AFTER_MS, 10 * 60 * 1000);
+});
+
+test("loss tone: a down path's loss is red, a degraded path's amber, an up path's the plain ink, never a saturated colour of its own", () => {
+  assert.equal(lossTone("down"), "destructive");
+  assert.equal(lossTone("degraded"), "warning");
+  assert.equal(lossTone("up"), "ink");
+  assert.equal(lossTone(undefined), "ink", "no path read: a plain figure");
+  assert.equal(lossTone("unknown"), "muted", "what an unknown path holds is not an outage");
+  assert.equal(lossTone("paused"), "muted");
+  // Every display state has a tone, and the only saturated ones are the two states that own them (D13).
+  for (const state of PATH_STATES) {
+    const tone = lossTone(state);
+    const saturated = tone === "destructive" || tone === "warning";
+    assert.equal(saturated, state === "down" || state === "degraded", `${state} reads ${tone}`);
+  }
+  // The bars fill with the state tokens; an up path's with the foreground, its figure in the row's own ink.
+  assert.deepEqual(LOSS_FILL, { destructive: "--destructive", warning: "--warning", ink: "--foreground", muted: "--muted-foreground" });
+  assert.deepEqual(LOSS_TEXT, { destructive: "text-destructive", warning: "text-warning-text", ink: "", muted: "text-muted-foreground" });
+  // A lossy up path from a server (3 percent over the hour, below any trigger) is drawn in the ink, not red.
+  const m = buildPathsMatrix({
+    window: "1h",
+    degraded_at: "2026-09-14T09:47:00Z",
+    sources: [{ node_id: "sh", name: "sh" }],
+    targets: [{ node_id: "jp", name: "jp" }],
+    paths: [{ source: "sh", target_node: "jp", target: "203.0.113.3:443", monitor_id: "mon_lat_jp", managed: true, method: "tcp", state: "up", reason: "", p50_ms: 40, p95_ms: 41, jitter_ms: 0, loss: 0.03, samples: 60, expected: 60, prev: null, last_at: "2026-09-14T09:47:00Z" }],
+  } as PathsResponse);
+  assert.equal(lossTone(m.paths[0]!.state), "ink");
 });
