@@ -19,8 +19,11 @@ import {
   rowMarks,
   CONTROL_PLANE,
   COLLAPSE_AT,
+  FAN_MIN_W,
   LEFT_W,
   ROW_H,
+  ROW_MARK_W,
+  ROW_SUMMARY_EXTRA_W,
   SOURCES_TOP,
   TOP_LANE,
   buildTopology,
@@ -537,6 +540,32 @@ test("past the fold each country becomes one row and its edges one bundle, colou
   assert.equal(opened.rows.filter((r) => r.type === "node").length, 25);
   assert.equal(opened.anchorOf.get("n004"), "n004");
   assert.equal(opened.anchorOf.get("n001"), "country:JP");
+});
+
+test("the row column grows with the drawn sources, from width the fan does not need, so target names keep their room", () => {
+  // Several sources add a summary and a mark per source to each target row; both keep their width, so the name pays unless the column grows.
+  const monitors = [monitor({ id: "m", node_ids: ["de"] })];
+  const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "x"] } });
+  const threeMatrix = matrixOf([...PATHS, probe("bj", "hk", { state: "up", p50_ms: 30 }), probe("x", "hk", { state: "up", p50_ms: 31 })], [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }, { node_id: "x", name: "no-country" }]);
+  const several = buildTopology(input({ plan: three, matrix: threeMatrix, monitors }));
+  const one = buildTopology(input({ monitors }));
+  assert.equal(several.drawnSourceIds.length, 3);
+  assert.equal(one.drawnSourceIds.length, 1);
+  // 1440 px page: a 1358 px frame.
+  const wide1 = layoutTopology(one, { width: 1358 });
+  const wide3 = layoutTopology(several, { width: 1358 });
+  assert.equal(wide1.rowsW, 380, "one source: the value is a figure, the column as it was");
+  assert.equal(wide3.rowsW, 380 + ROW_SUMMARY_EXTRA_W + 3 * ROW_MARK_W);
+  assert.ok(wide3.rowsX - LEFT_W >= FAN_MIN_W, "the fan keeps its gap");
+  const six = layoutTopology({ ...several, drawnSourceIds: ["sh", "bj", "x", "a", "b", "c"] }, { width: 1358 });
+  assert.equal(six.rowsW - wide3.rowsW, 3 * ROW_MARK_W, "each drawn source adds a mark's width");
+  for (const a of [wide1, wide3, six]) assert.ok(a.checks[0]!.box.x >= a.rowsX + a.rowsW, "never under the check column");
+  // Narrow: the column grows only as far as the fan's minimum allows, and never shrinks below its old width.
+  const mid = layoutTopology(several, { width: 1060 });
+  assert.equal(mid.rowsX - LEFT_W, FAN_MIN_W);
+  assert.ok(mid.rowsW > layoutTopology(one, { width: 1060 }).rowsW);
+  const narrow = layoutTopology(several, { width: 900 });
+  assert.equal(narrow.rowsW, layoutTopology(one, { width: 900 }).rowsW);
 });
 
 test("too narrow for its columns, the drawing keeps them and reports its real width", () => {

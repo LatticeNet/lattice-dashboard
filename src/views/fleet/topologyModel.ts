@@ -759,6 +759,17 @@ export const CHECK_W = 232;
 export const SOURCES_TOP = CP_H + 24;
 /** Rows past this fold by country. */
 export const COLLAPSE_AT = 60;
+/**
+ * With several sources drawn, a target row also carries a summary across
+ * them ("degraded from 1 of 6") and one mark per source, all of which keep
+ * their width, so the name gets what is left. The row column grows by the
+ * summary's extra width and a mark's width per drawn source, taken from the
+ * width the fan gap does not need, so the name keeps its room as sources are
+ * added. The fan never narrows below FAN_MIN_W for it.
+ */
+export const ROW_SUMMARY_EXTRA_W = 96;
+export const ROW_MARK_W = 10;
+export const FAN_MIN_W = 160;
 
 export interface Box {
   x: number;
@@ -846,7 +857,10 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const arcW = hasChains ? 80 : 16;
   const checkW = hasChecks ? CHECK_W : 0;
   const checkGap = hasChecks ? 56 : 0;
-  const rowsW = clamp(Math.round(width * 0.3), 260, 380);
+  const drawnCount = model.drawnSourceIds.length;
+  const baseRowsW = clamp(Math.round(width * 0.3), 260, 380);
+  const rowsExtra = drawnCount > 1 ? ROW_SUMMARY_EXTRA_W + ROW_MARK_W * drawnCount : 0;
+  const rowsW = baseRowsW + clamp(width - LEFT_W - baseRowsW - arcW - checkW - checkGap - FAN_MIN_W, 0, rowsExtra);
   const spare = width - LEFT_W - rowsW - arcW - checkW - checkGap;
   const gapLR = clamp(spare, 72, 300);
   const rowsX = LEFT_W + gapLR;
