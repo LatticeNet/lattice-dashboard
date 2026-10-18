@@ -228,6 +228,9 @@ export const api = {
     // SSO challenge and 405 from a server older than the read; the sign-in
     // page treats any failure as nothing to say.
     pendingSecondFactor: () => http.get<PendingSecondFactor>("/api/login/totp"),
+    // Leaving a post-SSO second-factor step: the server spends the challenge
+    // its callback bound to this browser and clears the challenge cookie.
+    cancelPendingSecondFactor: () => http.del<void>("/api/login/totp"),
     // Usernameless (discoverable) passkey login. begin returns the assertion
     // options; the browser produces a serialized assertion that finish verifies,
     // issuing the same session the password+TOTP path does.
