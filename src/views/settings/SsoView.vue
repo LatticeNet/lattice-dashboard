@@ -569,11 +569,17 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-issuer="{ row }">
-        <!-- A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line. -->
-        <span class="block w-52 break-all font-mono text-xs text-muted-foreground">{{ row.issuer }}</span>
-        <span class="mt-1 block w-52 break-all font-mono text-xs text-muted-foreground">
-          <span class="sr-only">{{ $t("settings.sso.list.clientId") }}: </span>{{ row.client_id }}
-        </span>
+        <!--
+          A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line.
+          Outside the row click: operators copy the issuer and client ID from here, and the first
+          click of a double-click would open the editor before the word is selected.
+        -->
+        <div data-no-row-nav>
+          <span class="block w-52 break-all font-mono text-xs text-muted-foreground">{{ row.issuer }}</span>
+          <span class="mt-1 block w-52 break-all font-mono text-xs text-muted-foreground">
+            <span class="sr-only">{{ $t("settings.sso.list.clientId") }}: </span>{{ row.client_id }}
+          </span>
+        </div>
       </template>
 
       <template #cell-status="{ row }">
@@ -855,7 +861,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
               <span class="block text-muted-foreground">{{ fact.from }}</span>
               <span class="block">
                 <span aria-hidden="true">→ </span>
-                <span class="sr-only">{{ $t("settings.sso.identityStepUp.changesTo") }} </span>{{ fact.to }}
+                <span class="sr-only">{{ $t("settings.sso.identityStepUp.changesTo") + " " }}</span>{{ fact.to }}
               </span>
             </template>
             <template v-else>{{ fact.to }}</template>
