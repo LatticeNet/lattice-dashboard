@@ -48,6 +48,8 @@ const router = createRouter({
   routes: [
     { path: "/approvals.html", name: "approvals", component: ApprovalsView },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node detail") },
+    // A stale agent.mirrors plan links to the Mirrors layer for a fresh plan.
+    { path: "/platform/agent-updates", name: "platform-agent-updates", component: placeholder("Agent updates") },
     { path: "/:rest(.*)", redirect: "/approvals.html" },
   ],
 });

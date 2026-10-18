@@ -8,7 +8,9 @@
  * It reads the plan document the approval carries; the hash binds the text,
  * which both places keep on screen beside this. A create lists the new
  * entry's values and a delete the removed entry's, each once; a change
- * shows each field before and after. Nodes whose order changes the same way
+ * shows each field before and after, except prefer_for, which reads as one
+ * list where what the plan adds and removes is marked and what it keeps is
+ * muted, so a kept entry is never struck out. Nodes whose order changes the same way
  * share one row, so a change that moves forty nodes reads as one or two
  * rows, each naming its nodes.
  */
@@ -28,6 +30,7 @@ import {
   mirrorRefLabel,
   namePreview,
   planBehindRegistry,
+  preferForChange,
   type MirrorField,
 } from "./agentMirrorsModel";
 
@@ -93,6 +96,17 @@ function fieldText(entry: AgentMirror | undefined, field: MirrorField): string |
 function refs(entry: AgentMirror | undefined) {
   return (entry?.prefer_for ?? []).map((ref) => ({ ref, ...mirrorRefLabel(ref, nodeNames.value, groups.value) }));
 }
+
+/** A changed prefer_for as one list: removed first, struck; added, marked; kept, muted. */
+function refChanges(before: AgentMirror | undefined, after: AgentMirror | undefined) {
+  const change = preferForChange(before?.prefer_for, after?.prefer_for);
+  const label = (ref: string) => mirrorRefLabel(ref, nodeNames.value, groups.value);
+  return [
+    ...change.removed.map((ref) => ({ ref, state: "removed" as const, ...label(ref) })),
+    ...change.added.map((ref) => ({ ref, state: "added" as const, ...label(ref) })),
+    ...change.kept.map((ref) => ({ ref, state: "kept" as const, ...label(ref) })),
+  ];
+}
 </script>
 
 <template>
@@ -111,7 +125,29 @@ function refs(entry: AgentMirror | undefined) {
       <p v-if="!diff.length" class="text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.mirrors.plan.noDiff') }}</p>
       <ul v-else class="divide-y divide-border rounded-md border border-border">
         <li v-for="(row, index) in diff" :key="index" class="grid gap-x-3 gap-y-0.5 px-3 py-2 text-xs sm:grid-cols-[7.5rem_minmax(0,1fr)]">
-          <template v-if="'field' in row">
+          <template v-if="'field' in row && row.field === 'prefer_for' && sides === 'both'">
+            <span class="text-muted-foreground">{{ fieldLabel(row.field) }}</span>
+            <ul class="flex min-w-0 flex-wrap gap-1" data-testid="mirror-plan-prefer-change">
+              <li
+                v-for="item in refChanges(row.before, row.after)"
+                :key="item.ref"
+                :title="item.ref"
+                :class="cn(
+                  'max-w-full rounded border px-1.5 py-px [overflow-wrap:anywhere]',
+                  item.state === 'added' && 'border-primary/40 bg-primary/10 text-foreground',
+                  item.state === 'removed' && 'border-border text-muted-foreground line-through decoration-muted-foreground/60',
+                  item.state === 'kept' && 'border-border text-muted-foreground',
+                  item.kind === 'unknown' && 'font-mono',
+                )"
+              >
+                <span v-if="item.state === 'added'" class="me-0.5" aria-hidden="true">+</span>
+                <span v-if="item.state === 'removed'" class="me-0.5" aria-hidden="true">-</span>
+                <span class="sr-only">{{ $t(`platform.agentUpdatesPage.mirrors.plan.ref.${item.state}`) }} </span>
+                <span v-if="item.kind === 'group'" class="me-1 text-muted-foreground">{{ $t('platform.agentUpdatesPage.mirrors.applies.groupMark') }}</span>{{ item.text }}
+              </li>
+            </ul>
+          </template>
+          <template v-else-if="'field' in row">
             <span class="text-muted-foreground">{{ fieldLabel(row.field) }}</span>
             <span class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
               <template v-for="side in (sides === 'both' ? ['before', 'after'] : [sides])" :key="side">

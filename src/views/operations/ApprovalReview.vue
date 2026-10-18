@@ -57,6 +57,12 @@ const props = defineProps<{
   staleRaw?: string;
   canReplan: boolean;
   canDismissStale: boolean;
+  /**
+   * The mirror registry's revision now, for a pending agent.mirrors plan:
+   * the page reads it once for every pending registry plan and passes it
+   * only while the plan is pending, so a decided plan never warns.
+   */
+  registryRevision?: number;
   canDismissWaiting: boolean;
   dismissing: boolean;
   replanning: boolean;
@@ -101,18 +107,8 @@ watch(needsGroups, (needed) => {
   if (needed && !groupsQuery.data.value?.length) void groupsQuery.refresh();
 });
 const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((group) => [group.id, group.name] as const)));
-// The registry's revision now, so a plan made against an older one says it
-// will be refused as stale before anyone decides it.
-const registryQuery = useAsyncData<number | undefined>(
-  (signal) => (mirrorPlan.value && auth.can("node:read") ? api.agentUpdates.mirrors({ signal }).then((view) => view.revision) : Promise.resolve(undefined)),
-  { pollInterval: 0 },
-);
-watch(
-  () => (mirrorPlan.value ? props.approval.id : ""),
-  (id) => {
-    if (id) void registryQuery.refresh();
-  },
-);
+/** Only a pending plan can be stale; a decided one is history, and its readout says nothing about the registry now. */
+const mirrorRevision = computed(() => (props.approval.status === "pending" ? props.registryRevision : undefined));
 
 function waitingVariant(): "warning" | "destructive" | "outline" {
   if (!waiting.value) return "outline";
@@ -300,11 +296,24 @@ function statusLabel(status: string): string {
         <AlertTriangle class="size-4 text-warning-text" aria-hidden="true" />
         {{ $t('operations.approvals.staleTitle') }}
       </p>
-      <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
-      <p class="mt-2 text-xs font-medium text-muted-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
-      <p class="mt-1 break-words">{{ staleReason }}</p>
-      <p v-if="staleRaw && staleRaw !== staleReason" class="mt-1 break-words font-mono text-xs" data-testid="approval-stale-raw">{{ staleRaw }}</p>
+      <template v-if="mirrorPlan">
+        <!-- A registry plan made against an older revision: the server would refuse it, so the way out is a fresh plan. -->
+        <p class="mt-1">{{ $t('operations.approvals.mirrorStale.description') }}</p>
+        <p class="mt-1 break-words">{{ staleReason }}</p>
+      </template>
+      <template v-else>
+        <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
+        <p class="mt-2 text-xs font-medium text-muted-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
+        <p class="mt-1 break-words">{{ staleReason }}</p>
+        <p v-if="staleRaw && staleRaw !== staleReason" class="mt-1 break-words font-mono text-xs" data-testid="approval-stale-raw">{{ staleRaw }}</p>
+      </template>
       <div class="mt-3 flex flex-wrap gap-2">
+        <Button v-if="mirrorPlan" variant="outline" size="sm" as-child>
+          <RouterLink :to="{ name: 'platform-agent-updates', query: { view: 'mirrors' } }" data-testid="approval-mirror-fresh-plan">
+            <FileCode2 class="size-4" aria-hidden="true" />
+            {{ $t('operations.approvals.mirrorStale.freshPlan') }}
+          </RouterLink>
+        </Button>
         <Button v-if="canReplan" type="button" variant="outline" size="sm" :disabled="replanning" @click="emit('replan')">
           <RefreshCw v-if="replanning" class="size-4 animate-spin" aria-hidden="true" />
           <FileCode2 v-else class="size-4" aria-hidden="true" />
@@ -331,7 +340,7 @@ function statusLabel(status: string): string {
 
     <section v-if="mirrorPlan" class="space-y-2" data-testid="approval-mirror-plan">
       <h3 class="text-sm font-medium">{{ $t('platform.agentUpdatesPage.mirrors.plan.reviewHeading') }}</h3>
-      <AgentMirrorPlanReadout :plan="mirrorPlan" :revision="registryQuery.data.value" :group-names="groupNames" />
+      <AgentMirrorPlanReadout :plan="mirrorPlan" :revision="mirrorRevision" :group-names="groupNames" />
     </section>
 
     <section class="space-y-2" :aria-label="$t('operations.approvals.plan')">
@@ -349,7 +358,8 @@ function statusLabel(status: string): string {
             <GitCompare class="size-3.5" aria-hidden="true" />
             {{ $t('operations.approvals.viewDiff') }}
           </Button>
-          <Button :variant="shownView === 'full' ? 'secondary' : 'ghost'" size="sm" type="button" :aria-pressed="shownView === 'full'" @click="planView = 'full'">
+          <!-- With no diff to offer, a lone Full plan toggle would be a control that does nothing. -->
+          <Button v-if="diffable" :variant="shownView === 'full' ? 'secondary' : 'ghost'" size="sm" type="button" :aria-pressed="shownView === 'full'" @click="planView = 'full'">
             {{ $t('operations.approvals.viewFull') }}
           </Button>
           <CopyButton :value="approval.plan || ''" />

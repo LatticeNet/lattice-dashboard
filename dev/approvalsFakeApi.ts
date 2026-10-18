@@ -9,6 +9,7 @@
  *   open http://127.0.0.1:5185/dev/approvals.html?state=small   (the eleven hand-written rows only)
  *   open http://127.0.0.1:5185/dev/approvals.html?scope=read
  *   open http://127.0.0.1:5185/dev/approvals.html?legacy=1      (every listing carries plan text, as before)
+ *   open http://127.0.0.1:5185/dev/approvals.html?mirrors=current (the registry is at the revision the pending agent.mirrors plan was made against, so it is not stale)
  *
  * The default fixture is a fleet's worth: production's 1,084 applied and 190
  * rejected rows, a pending wave, and every way an approved change can be
@@ -140,9 +141,10 @@ export const api = {
   },
   agentUpdates: {
     plan: () => Promise.reject(new Error("fake api: re-planning is not implemented in the approvals harness")),
-    // The registry has moved past the revision the agent.mirrors fixture plan
-    // was made against (7), so its review says the decision would be refused.
-    mirrors: () => delay({ mirrors: [], revision: 8, order: [], pending: [], health: [] }),
+    // The registry has moved past the revision the pending agent.mirrors
+    // fixture plan was made against (7), so it reads stale; ?mirrors=current
+    // keeps the registry at 7.
+    mirrors: () => delay({ mirrors: [], revision: query("mirrors") === "current" ? 7 : 8, order: [], pending: [], health: [] }),
   },
   nodes: { list: () => delay({ nodes: [] }) },
   // The agent.mirrors review names prefer_for groups by name.

@@ -100,6 +100,12 @@ export default {
         agentMirrors: "Change the agent download mirrors",
         generic: "{action} ({plugin})",
       },
+      /** A registry plan (agent.mirrors) made against an older registry revision. */
+      mirrorStale: {
+        description: "The mirror registry has changed since this plan was made, so approving it would be refused. File a fresh plan from Agent updates, or reject this one.",
+        reason: "Made against registry revision {planned}; the registry is at revision {current} now.",
+        freshPlan: "File a fresh plan",
+      },
       /** An agent update plan's stale reason, read from the server's English (approvalsModel.describeAgentUpdateStale). */
       staleWhy: {
         changed: "The update policy changed after this plan was written: {changes}.",

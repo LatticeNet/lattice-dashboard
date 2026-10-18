@@ -11,26 +11,30 @@
  * every node whose order changes), and hand the decision to Approvals; the
  * registry on this page changes only when that plan is approved. Delete
  * confirms first, like every delete in the console, and names how many nodes
- * list the mirror now.
+ * list the mirror now. A mirror with a plan waiting says so in its row, its
+ * attention item links to that plan, and filing a second plan for it asks
+ * first: approving either would make the other stale.
  *
  * Changing the registry needs node:admin and network:plan over the whole
- * fleet. A session confined to some nodes reads the registry and the order
- * of the nodes it may read, and is told why the controls are not there.
+ * fleet. A session without them, or confined to some nodes, reads the
+ * registry and the order of the nodes it may read, and is told why the
+ * controls are not there.
  *
  * The order preview groups nodes whose order is identical into one row, so a
- * fleet of a hundred nodes on a few mirrors reads as a handful of rows, and
- * a filter finds one node's row by name.
+ * fleet of a hundred nodes on a few mirrors reads as a handful of rows; a
+ * filter finds a node, or every row that lists a mirror, by id or name.
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { AlertTriangle, Pencil, Plus, Power, PowerOff, RefreshCw, Search, Trash2, X } from "lucide-vue-next";
+import { AlertTriangle, FileCode2, Pencil, Plus, Power, PowerOff, RefreshCw, Search, Trash2 } from "lucide-vue-next";
 
 import {
   api,
   unwrap,
   type AgentMirror,
   type AgentMirrorAction,
+  type AgentMirrorPlan,
   type AgentMirrorPlanResponse,
   type AgentMirrorsView,
   type ApprovalView,
@@ -65,6 +69,7 @@ import { mirrorPlanSentence } from "./agentMirrorsCopy";
 import {
   AGENT_MIRRORS_PLUGIN,
   MAX_AGENT_MIRRORS,
+  chosenSummary,
   draftChangesMirror,
   draftFromMirror,
   emptyMirrorDraft,
@@ -82,8 +87,14 @@ import {
   parseAgentMirrorPlan,
   pendingByMirror,
   planBehindRegistry,
+  planHeadline,
+  pruneFiledPlans,
+  serverProblemField,
   sortMirrors,
+  waitingPlans,
+  type FiledPlan,
   type MirrorDraft,
+  type MirrorDraftField,
 } from "./agentMirrorsModel";
 
 const props = defineProps<{
@@ -113,6 +124,9 @@ const order = computed(() => props.view?.order ?? []);
 const pendingIds = computed(() => props.view?.pending ?? []);
 const registryFull = computed(() => mirrors.value.length >= MAX_AGENT_MIRRORS);
 const mirrorNames = computed(() => new Map(mirrors.value.filter((mirror) => mirror.name).map((mirror) => [mirror.id, mirror.name as string] as const)));
+const failingMirrors = computed(() => new Set(mirrorsWithChunkFailures(props.view?.health).map((entry) => entry.mirror)));
+
+const introOpen = ref(false);
 
 // ── names for prefer_for ─────────────────────────────────────────────────────
 const groupsQuery = useAsyncData<GroupView[]>(
@@ -151,23 +165,56 @@ const pendingRows = computed(() => {
   });
 });
 
-function planSentence(plan: NonNullable<ReturnType<typeof parseAgentMirrorPlan>>): string {
+/**
+ * Plans this page filed that the registry read does not list yet. They count
+ * as waiting from the moment the server answered, so the row, the attention
+ * item and the duplicate check never see a gap between filing and the next
+ * read. An entry leaves once the pending plans read holds it, or once a read
+ * that landed well after the filing no longer lists it (decided elsewhere).
+ */
+const localFiled = ref<FiledPlan[]>([]);
+watch(
+  () => [props.view, pendingQuery.data.value] as const,
+  () => {
+    const read = new Set((pendingQuery.data.value ?? []).map((approval) => approval.id));
+    localFiled.value = pruneFiledPlans(localFiled.value, read, new Set(pendingIds.value), Date.now());
+  },
+);
+
+/** The plans waiting for each mirror, so its row says one exists before anyone files a second. */
+const pendingPlans = computed(() => waitingPlans(pendingRows.value, localFiled.value));
+const pendingForMirror = computed(() => pendingByMirror(pendingPlans.value));
+
+function planSentence(plan: AgentMirrorPlan): string {
   return mirrorPlanSentence(t, plan);
 }
 
-/** The plans waiting for each mirror, so its row says one exists before anyone files a second. */
-const pendingForMirror = computed(() => pendingByMirror(pendingRows.value));
+/** Whether a mirror has a disable plan waiting, for the attention item's words. */
+function waitingDisable(mirrorId: string): boolean {
+  const ids = new Set(pendingForMirror.value.get(mirrorId) ?? []);
+  return pendingPlans.value.some((entry) => ids.has(entry.id) && entry.plan && planHeadline(entry.plan).kind === "disable");
+}
 
 // ── attention ────────────────────────────────────────────────────────────────
 const attention = computed<AttentionItem[]>(() =>
   mirrorsWithChunkFailures(props.view?.health).map((entry) => {
     const mirror = mirrors.value.find((candidate) => candidate.id === entry.mirror);
+    const waiting = pendingForMirror.value.get(entry.mirror) ?? [];
+    let action: AttentionItem["action"];
+    if (waiting.length) {
+      action = {
+        label: waitingDisable(entry.mirror) ? t(`${K}.attention.reviewDisable`) : t(`${K}.attention.reviewPending`),
+        to: { name: "approvals", query: { open: waiting[0] } },
+      };
+    } else if (canChange.value && mirror?.enabled) {
+      action = { label: t(`${K}.attention.disable`), run: () => void toggleEnabled(mirror), busy: planning.value === mirror.id };
+    }
     return {
       key: `chunks:${entry.mirror}`,
       tone: "danger",
       claim: t(`${K}.attention.chunksClaim`, { id: entry.mirror, n: entry.chunk_failures }, entry.chunk_failures),
       proof: t(`${K}.attention.chunksProof`),
-      action: canChange.value && mirror?.enabled ? { label: t(`${K}.attention.disable`), run: () => void toggleEnabled(mirror) } : undefined,
+      action,
     };
   }),
 );
@@ -199,26 +246,58 @@ function toggleRefs(id: string): void {
 
 const planning = ref<string | undefined>();
 
+/**
+ * A second plan for a mirror that already has one waiting asks first:
+ * approving either makes the other stale, so a repeated click must not file
+ * one silently.
+ */
+const duplicate = ref<{ mirror: AgentMirror; run: () => void } | undefined>();
+function guarded(mirror: AgentMirror, run: () => void): void {
+  if (pendingForMirror.value.get(mirror.id)?.length) duplicate.value = { mirror, run };
+  else run();
+}
+function fileAnother(): void {
+  const pending = duplicate.value;
+  duplicate.value = undefined;
+  pending?.run();
+}
+
 function menuFor(mirror: AgentMirror): RowMenuItem[] {
   const busy = planning.value === mirror.id;
+  const waiting = pendingForMirror.value.get(mirror.id) ?? [];
   return [
-    { key: "change", label: t(`${K}.actions.change`), icon: Pencil, disabled: busy, run: () => openChange(mirror) },
+    {
+      key: "review",
+      label: t(`${K}.actions.review`),
+      icon: FileCode2,
+      hidden: !waiting.length,
+      to: { name: "approvals", query: { open: waiting[0] } },
+    },
+    { key: "change", label: t(`${K}.actions.change`), icon: Pencil, disabled: busy, run: () => guarded(mirror, () => openChange(mirror)) },
     {
       key: "toggle",
       label: mirror.enabled ? t(`${K}.actions.disable`) : t(`${K}.actions.enable`),
       icon: mirror.enabled ? PowerOff : Power,
       disabled: busy,
-      run: () => void toggleEnabled(mirror),
+      run: () => guarded(mirror, () => void toggleEnabled(mirror)),
     },
-    { key: "delete", label: t(`${K}.actions.delete`), icon: Trash2, danger: true, disabled: busy, run: () => (deleteTarget.value = mirror) },
+    { key: "delete", label: t(`${K}.actions.delete`), icon: Trash2, danger: true, disabled: busy, run: () => guarded(mirror, () => (deleteTarget.value = mirror)) },
   ];
+}
+
+/** The row's actions button: where focus goes back to once a plan filed from that row is closed. */
+function rowTrigger(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-mirror-actions="${CSS.escape(id)}"] button`);
+}
+function addButton(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-testid="mirror-add"]');
 }
 
 // ── the order preview ────────────────────────────────────────────────────────
 const NAMES_SHOWN = 8;
 const orderFilter = ref("");
 const orderGroups = computed(() => groupOrders(order.value));
-const shownGroups = computed(() => filterOrderGroups(orderGroups.value, orderFilter.value));
+const shownGroups = computed(() => filterOrderGroups(orderGroups.value, orderFilter.value, mirrorNames.value));
 const shownNodes = computed(() => shownGroups.value.reduce((sum, group) => sum + group.nodes.length, 0));
 const openGroups = ref(new Set<string>());
 function toggleGroup(key: string): void {
@@ -239,14 +318,20 @@ const filed = ref<AgentMirrorPlanResponse | undefined>();
 const filedDigest = ref("");
 const planOpen = ref(false);
 const filedPlan = computed(() => (filed.value ? (parseAgentMirrorPlan(filed.value.approval.plan) ?? filed.value.plan) : undefined));
+/** The plan dialog's title says what the plan does, enable and disable included. */
+const filedKind = computed(() => (filedPlan.value ? planHeadline(filedPlan.value).kind : undefined));
+/** Where focus lands when the plan dialog closes: the control that filed it, which a closed form or menu no longer is. */
+const returnTarget = ref<(() => HTMLElement | null) | undefined>();
 
-async function filePlan(action: AgentMirrorAction, mirror: AgentMirror | { id: string }): Promise<void> {
+async function filePlan(action: AgentMirrorAction, mirror: AgentMirror | { id: string }, returnTo: () => HTMLElement | null): Promise<void> {
   planning.value = mirror.id;
   try {
     const result = await api.agentUpdates.planMirror({ action, mirror });
     // The plan is filed from here on: a failure below must not read as a
     // refusal, or a retry files it twice.
     filed.value = result;
+    const plan = parseAgentMirrorPlan(result.approval.plan) ?? result.plan;
+    localFiled.value = [...localFiled.value, { id: result.approval.id, plan, at: Date.now() }];
     try {
       filedDigest.value = await digestHex(result.approval.plan);
     } catch {
@@ -254,6 +339,7 @@ async function filePlan(action: AgentMirrorAction, mirror: AgentMirror | { id: s
       // digest, and Approvals computes it again before anyone decides.
       filedDigest.value = "";
     }
+    returnTarget.value = returnTo;
     planOpen.value = true;
     toast.success(t(`${K}.planFiled`));
     emit("refresh");
@@ -269,12 +355,35 @@ function errorText(error: unknown): string {
   return t(`${K}.refused`, { message });
 }
 
+/**
+ * Enable or disable, built on the registry as the server holds it now rather
+ * than on this page's last read, which may be 30 s old: a plan built on a
+ * stale copy would quietly undo an edit someone else had approved since.
+ * The state the operator asked for is the one they saw flipped; when the
+ * registry already reads that way there is nothing to file.
+ */
 async function toggleEnabled(mirror: AgentMirror): Promise<void> {
   if (!canChange.value || planning.value) return;
+  const wanted = !mirror.enabled;
+  planning.value = mirror.id;
   try {
-    await filePlan("change", { ...mirror, enabled: !mirror.enabled, created_at: undefined, updated_at: undefined });
+    const fresh = await api.agentUpdates.mirrors();
+    const current = fresh.mirrors.find((entry) => entry.id === mirror.id);
+    if (!current) {
+      toast.error(t(`${K}.goneSince`, { id: mirror.id }));
+      emit("refresh");
+      return;
+    }
+    if (current.enabled === wanted) {
+      toast.info(wanted ? t(`${K}.alreadyEnabled`, { id: mirror.id }) : t(`${K}.alreadyDisabled`, { id: mirror.id }));
+      emit("refresh");
+      return;
+    }
+    await filePlan("change", { ...current, enabled: wanted, created_at: undefined, updated_at: undefined }, () => rowTrigger(mirror.id));
   } catch (error) {
     toast.error(errorText(error));
+  } finally {
+    planning.value = undefined;
   }
 }
 
@@ -283,38 +392,83 @@ const formOpen = ref(false);
 const editing = ref<AgentMirror | undefined>();
 const draft = ref<MirrorDraft>(emptyMirrorDraft());
 const formError = ref("");
+/** The field a server refusal names, marked as invalid beside the message. */
+const formErrorField = ref<MirrorDraftField | undefined>();
+const formErrorEl = ref<HTMLElement | null>(null);
 const refFilter = ref("");
+/** The applies-to warning waits until the operator has been through that part of the form. */
+const appliesTouched = ref(false);
 
 const problems = computed(() => mirrorDraftProblems(draft.value, { registry: mirrors.value, editing: editing.value?.id }));
 /** Enabled, neither global nor preferred: valid, and listed in no plan. Said before filing, not after. */
 const listsNowhere = computed(() => draft.value.enabled && !draft.value.global && !draft.value.prefer_for.length);
 // A refusal answered the draft as it was; once a field changes it no longer applies.
-watch(draft, () => (formError.value = ""), { deep: true });
+watch(
+  draft,
+  () => {
+    formError.value = "";
+    formErrorField.value = undefined;
+  },
+  { deep: true },
+);
 const unchanged = computed(() => !!editing.value && !draftChangesMirror(draft.value, editing.value));
 const canSubmit = computed(() => Object.keys(problems.value).length === 0 && !unchanged.value && !planning.value);
 
-function openCreate(): void {
-  if (!canChange.value) return;
-  editing.value = undefined;
-  draft.value = emptyMirrorDraft();
+function resetForm(entry: AgentMirror | undefined): void {
+  editing.value = entry;
+  draft.value = entry ? draftFromMirror(entry) : emptyMirrorDraft();
   formError.value = "";
+  formErrorField.value = undefined;
   refFilter.value = "";
+  chosenSnapshot.value = null;
+  appliesTouched.value = !!entry;
   formOpen.value = true;
+}
+
+function openCreate(): void {
+  if (canChange.value) resetForm(undefined);
 }
 
 function openChange(mirror: AgentMirror): void {
-  if (!canChange.value) return;
-  editing.value = mirror;
-  draft.value = draftFromMirror(mirror);
-  formError.value = "";
-  refFilter.value = "";
-  formOpen.value = true;
+  if (canChange.value) resetForm(mirror);
 }
 
 /** A field's problem shows once the field holds something, as the policy form's checks do. */
-function problemText(field: keyof ReturnType<typeof mirrorDraftProblems>, filled: boolean): string | undefined {
+function problemText(field: MirrorDraftField, filled: boolean): string | undefined {
   const problem = problems.value[field];
   return problem && filled ? t(`${K}.form.problems.${problem}`) : undefined;
+}
+
+/** aria-invalid and the line that says why, for a field with a problem or the field a refusal named. */
+function fieldAria(field: MirrorDraftField, filled: boolean): Record<string, string> {
+  if (problemText(field, filled)) return { "aria-invalid": "true", "aria-describedby": `mirror-${field}-error` };
+  if (formErrorField.value === field) return { "aria-invalid": "true", "aria-describedby": "mirror-form-error" };
+  return {};
+}
+function fieldInvalid(field: MirrorDraftField, filled: boolean): boolean {
+  return !!problemText(field, filled) || formErrorField.value === field;
+}
+
+// The picker. The list never moves while the operator ticks it: what is
+// chosen is one fixed line above it, not chips that wrap and push it down,
+// and "Show chosen" keeps the rows it showed until it is turned off, so
+// unticking one there leaves the row in place, unticked.
+const chosenSnapshot = ref<Set<string> | null>(null);
+const nodeIds = computed(() => new Set(props.nodes.map((node) => node.id)));
+const groupIds = computed(() => new Set(groups.value.map((group) => group.id)));
+const chosen = computed(() => chosenSummary(draft.value.prefer_for, nodeIds.value, groupIds.value));
+const chosenText = computed(() => {
+  const summary = chosen.value;
+  if (!summary.total) return t(`${K}.form.chosenNone`);
+  const parts = [
+    summary.groups ? t(`${K}.form.chosenGroups`, { n: summary.groups }, summary.groups) : "",
+    summary.nodes ? t(`${K}.form.chosenNodes`, { n: summary.nodes }, summary.nodes) : "",
+    summary.unknown ? t(`${K}.form.chosenUnknown`, { n: summary.unknown }) : "",
+  ].filter(Boolean);
+  return t(`${K}.form.chosen`, { n: summary.total, parts: parts.join(t(`${K}.plan.fieldSeparator`)) });
+});
+function toggleShowChosen(): void {
+  chosenSnapshot.value = chosenSnapshot.value ? null : new Set(draft.value.prefer_for);
 }
 
 function toggleRef(id: string, on: boolean): void {
@@ -325,23 +479,35 @@ function toggleRef(id: string, on: boolean): void {
 }
 
 const refNeedle = computed(() => refFilter.value.trim().toLowerCase());
-const pickGroups = computed(() =>
-  groups.value.filter((group) => !refNeedle.value || group.name.toLowerCase().includes(refNeedle.value) || group.id.toLowerCase().includes(refNeedle.value)),
-);
-const pickNodes = computed(() =>
-  [...props.nodes]
-    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
-    .filter((node) => !refNeedle.value || (node.name || "").toLowerCase().includes(refNeedle.value) || node.id.toLowerCase().includes(refNeedle.value)),
+function inPicker(id: string, name: string): boolean {
+  if (chosenSnapshot.value && !chosenSnapshot.value.has(id)) return false;
+  return !refNeedle.value || name.toLowerCase().includes(refNeedle.value) || id.toLowerCase().includes(refNeedle.value);
+}
+const pickGroups = computed(() => groups.value.filter((group) => inPicker(group.id, group.name)));
+const pickNodes = computed(() => [...props.nodes].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)).filter((node) => inPicker(node.id, node.name || "")));
+/** Chosen ids that name no node or group this page can read, so they can still be unticked. */
+const pickUnknown = computed(() =>
+  [...(chosenSnapshot.value ?? new Set(draft.value.prefer_for))].filter((id) => !nodeIds.value.has(id) && !groupIds.value.has(id) && inPicker(id, "")),
 );
 
 async function submitForm(): Promise<void> {
   if (!canSubmit.value) return;
   formError.value = "";
+  formErrorField.value = undefined;
+  const entry = editing.value;
   try {
-    await filePlan(editing.value ? "change" : "create", mirrorFromDraft(draft.value));
+    await filePlan(entry ? "change" : "create", mirrorFromDraft(draft.value), entry ? () => rowTrigger(entry.id) : addButton);
     formOpen.value = false;
   } catch (error) {
     formError.value = errorText(error);
+    formErrorField.value = serverProblemField(error instanceof Error ? error.message : "");
+    // The refusal may sit below the fold of a long form: bring the field it
+    // names into view, or the message itself.
+    await nextTick();
+    const field = formErrorField.value ? document.querySelector<HTMLElement>(`#mirror-${formErrorField.value === "base_url" ? "url" : formErrorField.value}`) : null;
+    const target = field && !field.hasAttribute("disabled") ? field : formErrorEl.value;
+    target?.scrollIntoView({ block: "center" });
+    target?.focus();
   }
 }
 
@@ -363,7 +529,7 @@ async function confirmDelete(): Promise<void> {
   if (!mirror) return;
   deleting.value = true;
   try {
-    await filePlan("delete", { id: mirror.id });
+    await filePlan("delete", { id: mirror.id }, () => rowTrigger(mirror.id));
     deleteTarget.value = undefined;
   } catch (error) {
     toast.error(errorText(error));
@@ -396,8 +562,19 @@ async function confirmDelete(): Promise<void> {
           </Button>
         </div>
       </div>
-      <p class="max-w-3xl text-xs text-muted-foreground">{{ $t(`${K}.hint`) }}</p>
+      <div class="max-w-3xl">
+        <!-- Below 640 px the intro keeps to two lines until it is opened, so the registry stays near the top. -->
+        <p id="agent-mirrors-intro" :class="cn('text-xs text-muted-foreground', !introOpen && 'max-sm:line-clamp-2')">{{ $t(`${K}.hint`) }}</p>
+        <button
+          type="button"
+          class="touch-target mt-0.5 rounded-sm text-xs text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring sm:hidden"
+          aria-controls="agent-mirrors-intro"
+          :aria-expanded="introOpen"
+          @click="introOpen = !introOpen"
+        >{{ introOpen ? $t(`${K}.introLess`) : $t(`${K}.introMore`) }}</button>
+      </div>
       <p v-if="hasPlanScopes && confined" class="max-w-3xl text-xs text-muted-foreground" data-testid="mirrors-confined">{{ $t(`${K}.confined`) }}</p>
+      <p v-else-if="!hasPlanScopes" class="max-w-3xl text-xs text-muted-foreground" data-testid="mirrors-read-only">{{ $t(`${K}.readOnly`) }}</p>
       <p v-if="error && view" class="text-sm text-warning-text">{{ $t(`${K}.staleRead`, { reason: proofReason(error) }) }}</p>
 
       <!-- Plans filed and not yet decided: the registry below is what is in force. -->
@@ -422,9 +599,13 @@ async function confirmDelete(): Promise<void> {
         </ul>
       </div>
 
-      <div v-if="view && !mirrors.length" class="rounded-md border border-dashed border-border p-4" data-testid="mirrors-empty">
+      <div v-if="view && !mirrors.length" class="rounded-md border border-dashed border-muted-foreground/40 p-4" data-testid="mirrors-empty">
         <p class="text-sm font-medium">{{ $t(`${K}.emptyTitle`) }}</p>
         <p class="mt-1 max-w-3xl text-sm text-muted-foreground">{{ $t(`${K}.emptyDescription`) }}</p>
+        <Button v-if="canChange" size="sm" class="mt-3" data-testid="mirror-add-empty" @click="openCreate">
+          <Plus aria-hidden="true" class="size-4" />
+          {{ $t(`${K}.add`) }}
+        </Button>
       </div>
       <DataTable
         v-else
@@ -447,7 +628,7 @@ async function confirmDelete(): Promise<void> {
           <div class="flex w-36 items-start gap-1 sm:w-auto sm:min-w-48 sm:max-w-80">
             <!-- Breaks after a slash first, and inside a part only when one part is too long. -->
             <code class="min-w-0 font-mono text-xs [overflow-wrap:anywhere]"><template v-for="(part, index) in urlParts(row.base_url)" :key="index"><wbr v-if="index" />{{ part }}</template></code>
-            <CopyButton :value="row.base_url" />
+            <CopyButton :value="row.base_url" :aria-label="$t(`${K}.copyBaseUrl`, { id: row.id })" />
           </div>
         </template>
         <template #cell-applies="{ row }">
@@ -494,7 +675,7 @@ async function confirmDelete(): Promise<void> {
           >{{ $t(`${K}.state.pending`) }}</RouterLink>
         </template>
         <template #cell-health="{ row }">
-          <div class="min-w-36 text-xs">
+          <div class="text-xs md:min-w-36">
             <template v-if="health.get(row.id)?.fetches">
               <p class="text-foreground">{{ $t(`${K}.health.fetches`, { n: health.get(row.id)!.fetches }, health.get(row.id)!.fetches) }}</p>
               <p v-if="health.get(row.id)!.chunk_failures" class="mt-0.5 flex items-start gap-1 text-destructive" data-testid="mirror-chunk-failures">
@@ -506,7 +687,9 @@ async function confirmDelete(): Promise<void> {
           </div>
         </template>
         <template #cell-actions="{ row }">
-          <RowMenu v-if="canChange" :name="row.id" :items="menuFor(row)" />
+          <div v-if="canChange" :data-mirror-actions="row.id">
+            <RowMenu :name="row.id" :items="menuFor(row)" />
+          </div>
         </template>
       </DataTable>
     </section>
@@ -530,7 +713,7 @@ async function confirmDelete(): Promise<void> {
         </div>
         <ul v-if="shownGroups.length" class="divide-y divide-border rounded-md border border-border" data-testid="mirror-order-groups">
           <li v-for="group in shownGroups" :key="group.key" class="grid gap-2 px-3 py-2.5 md:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] md:gap-4">
-            <AgentSourceOrder :sources="group.sources" :mirror-names="mirrorNames" />
+            <AgentSourceOrder :sources="group.sources" :mirror-names="mirrorNames" :failing="failingMirrors" />
             <p class="break-words text-xs text-muted-foreground">
               <span class="font-medium text-foreground">{{ $t(`${K}.nodeCount`, { n: group.nodes.length }, group.nodes.length) }}</span>
               <span>: </span>
@@ -571,15 +754,23 @@ async function confirmDelete(): Promise<void> {
                 spellcheck="false"
                 :disabled="!!editing"
                 :placeholder="$t(`${K}.form.idPlaceholder`)"
-                :class="cn(problemText('id', !!draft.id) && 'border-destructive')"
+                :class="cn(fieldInvalid('id', !!draft.id) && 'border-destructive')"
+                v-bind="fieldAria('id', !!draft.id)"
               />
-              <p v-if="problemText('id', !!draft.id)" class="text-xs text-destructive">{{ problemText('id', !!draft.id) }}</p>
+              <p v-if="problemText('id', !!draft.id)" id="mirror-id-error" class="text-xs text-destructive">{{ problemText('id', !!draft.id) }}</p>
               <p v-else class="text-xs text-muted-foreground">{{ editing ? $t(`${K}.form.idFixed`) : $t(`${K}.form.idHint`) }}</p>
             </div>
             <div class="grid content-start gap-2">
               <Label for="mirror-name">{{ $t(`${K}.form.name`) }}</Label>
-              <Input id="mirror-name" v-model="draft.name" autocomplete="off" :placeholder="$t(`${K}.form.namePlaceholder`)" :class="cn(problemText('name', !!draft.name) && 'border-destructive')" />
-              <p v-if="problemText('name', !!draft.name)" class="text-xs text-destructive">{{ problemText('name', !!draft.name) }}</p>
+              <Input
+                id="mirror-name"
+                v-model="draft.name"
+                autocomplete="off"
+                :placeholder="$t(`${K}.form.namePlaceholder`)"
+                :class="cn(fieldInvalid('name', !!draft.name) && 'border-destructive')"
+                v-bind="fieldAria('name', !!draft.name)"
+              />
+              <p v-if="problemText('name', !!draft.name)" id="mirror-name-error" class="text-xs text-destructive">{{ problemText('name', !!draft.name) }}</p>
               <p v-else class="text-xs text-muted-foreground">{{ $t(`${K}.form.nameHint`) }}</p>
             </div>
           </div>
@@ -594,13 +785,14 @@ async function confirmDelete(): Promise<void> {
               spellcheck="false"
               inputmode="url"
               placeholder="https://agent-mirror.example.com/lattice-agent"
-              :class="cn(problemText('base_url', !!draft.base_url) && 'border-destructive')"
+              :class="cn(fieldInvalid('base_url', !!draft.base_url) && 'border-destructive')"
+              v-bind="fieldAria('base_url', !!draft.base_url)"
             />
-            <p v-if="problemText('base_url', !!draft.base_url)" class="text-xs text-destructive">{{ problemText('base_url', !!draft.base_url) }}</p>
+            <p v-if="problemText('base_url', !!draft.base_url)" id="mirror-base_url-error" class="text-xs text-destructive">{{ problemText('base_url', !!draft.base_url) }}</p>
             <p v-else class="text-xs text-muted-foreground">{{ $t(`${K}.form.baseUrlHint`) }}</p>
           </div>
 
-          <fieldset class="grid min-w-0 gap-2 rounded-md border border-border bg-muted/20 p-3">
+          <fieldset class="grid min-w-0 gap-2 rounded-md border border-border bg-muted/20 p-3" @focusout="appliesTouched = true">
             <legend class="px-1 text-sm font-medium">{{ $t(`${K}.form.applies`) }}</legend>
             <label class="flex cursor-pointer items-start gap-2 text-sm">
               <Checkbox v-model="draft.global" class="mt-0.5" />
@@ -610,28 +802,37 @@ async function confirmDelete(): Promise<void> {
               </span>
             </label>
             <div class="grid min-w-0 gap-2 pt-1">
-              <p class="text-sm">{{ $t(`${K}.form.preferFor`) }}</p>
+              <p id="mirror-prefer-label" class="text-sm">{{ $t(`${K}.form.preferFor`) }}</p>
               <p class="text-xs text-muted-foreground">{{ $t(`${K}.form.preferForHint`) }}</p>
-              <ul v-if="draft.prefer_for.length" class="flex flex-wrap gap-1" :aria-label="$t(`${K}.form.preferForChosen`)">
-                <li v-for="item in draft.prefer_for" :key="item" class="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background py-0.5 ps-2 pe-0.5 text-xs">
-                  <span class="min-w-0 break-all"><span v-if="refLabel(item).kind === 'group'" class="me-1 text-muted-foreground">{{ $t(`${K}.applies.groupMark`) }}</span>{{ refLabel(item).text }}</span>
-                  <button
-                    type="button"
-                    class="touch-target inline-flex size-5 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    :aria-label="$t(`${K}.form.removeRef`, { name: refLabel(item).text })"
-                    @click="toggleRef(item, false)"
-                  >
-                    <X class="size-3" aria-hidden="true" />
-                  </button>
-                </li>
-              </ul>
-              <p v-if="problemText('prefer_for', true)" class="text-xs text-destructive">{{ problemText('prefer_for', true) }}</p>
+              <!-- One fixed line, whatever is chosen: the list below never moves under the pointer. -->
+              <div class="flex h-6 min-w-0 items-center justify-between gap-2 text-xs">
+                <p
+                  id="mirror-prefer_for-error"
+                  :class="cn('min-w-0 truncate', problemText('prefer_for', true) ? 'text-destructive' : 'text-muted-foreground')"
+                  aria-live="polite"
+                  :title="chosenText"
+                  data-testid="mirror-chosen"
+                >{{ problemText('prefer_for', true) ? `${chosenText}. ${problemText('prefer_for', true)}` : chosenText }}</p>
+                <button
+                  v-if="chosen.total || chosenSnapshot"
+                  type="button"
+                  class="touch-target shrink-0 rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  :aria-pressed="!!chosenSnapshot"
+                  data-testid="mirror-show-chosen"
+                  @click="toggleShowChosen"
+                >{{ chosenSnapshot ? $t(`${K}.form.showAllRefs`) : $t(`${K}.form.showChosen`) }}</button>
+              </div>
               <div class="relative">
                 <Search class="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <!-- Enter narrows the list; it never submits the form, which would file a plan. -->
                 <Input v-model="refFilter" type="search" class="ps-8" :aria-label="$t(`${K}.form.refFilter`)" :placeholder="$t(`${K}.form.refFilter`)" @keydown.enter.prevent />
               </div>
-              <div class="grid max-h-56 gap-0.5 overflow-auto rounded-md border border-border bg-background p-1.5">
+              <div
+                class="grid max-h-56 gap-0.5 overflow-auto rounded-md border border-border bg-background p-1.5"
+                role="group"
+                aria-labelledby="mirror-prefer-label"
+                v-bind="fieldAria('prefer_for', true)"
+              >
                 <template v-if="pickGroups.length">
                   <p class="px-2 pt-1 text-xs font-medium text-muted-foreground">{{ $t(`${K}.form.groups`) }}</p>
                   <label v-for="group in pickGroups" :key="group.id" class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
@@ -645,7 +846,14 @@ async function confirmDelete(): Promise<void> {
                   <Checkbox :model-value="draft.prefer_for.includes(node.id)" @update:model-value="(v) => toggleRef(node.id, v === true)" />
                   <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
                 </label>
-                <p v-if="!pickGroups.length && !pickNodes.length" class="px-2 py-1.5 text-xs text-muted-foreground">{{ $t(`${K}.form.refNoMatch`) }}</p>
+                <template v-if="pickUnknown.length">
+                  <p class="px-2 pt-1 text-xs font-medium text-muted-foreground">{{ $t(`${K}.form.unknownRefs`) }}</p>
+                  <label v-for="id in pickUnknown" :key="id" class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
+                    <Checkbox :model-value="draft.prefer_for.includes(id)" @update:model-value="(v) => toggleRef(id, v === true)" />
+                    <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" :title="id">{{ id }}</span>
+                  </label>
+                </template>
+                <p v-if="!pickGroups.length && !pickNodes.length && !pickUnknown.length" class="px-2 py-1.5 text-xs text-muted-foreground">{{ $t(`${K}.form.refNoMatch`) }}</p>
               </div>
             </div>
           </fieldset>
@@ -659,9 +867,10 @@ async function confirmDelete(): Promise<void> {
                 class="w-40 font-mono"
                 inputmode="numeric"
                 autocomplete="off"
-                :class="cn(problemText('priority', true) && 'border-destructive')"
+                :class="cn(fieldInvalid('priority', true) && 'border-destructive')"
+                v-bind="fieldAria('priority', true)"
               />
-              <p v-if="problemText('priority', true)" class="text-xs text-destructive">{{ problemText('priority', true) }}</p>
+              <p v-if="problemText('priority', true)" id="mirror-priority-error" class="text-xs text-destructive">{{ problemText('priority', true) }}</p>
               <p v-else class="text-xs text-muted-foreground">{{ $t(`${K}.form.priorityHint`) }}</p>
             </div>
             <label class="flex cursor-pointer items-start gap-2 self-start text-sm sm:pt-7">
@@ -673,9 +882,17 @@ async function confirmDelete(): Promise<void> {
             </label>
           </div>
 
-          <p v-if="formError" class="break-words rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-foreground" role="alert" data-testid="mirror-form-error">{{ formError }}</p>
+          <p
+            v-if="formError"
+            id="mirror-form-error"
+            ref="formErrorEl"
+            tabindex="-1"
+            class="break-words rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-foreground outline-none"
+            role="alert"
+            data-testid="mirror-form-error"
+          >{{ formError }}</p>
           <p v-else-if="unchanged" class="text-xs text-muted-foreground">{{ $t(`${K}.form.unchanged`) }}</p>
-          <p v-else-if="listsNowhere" class="text-xs text-warning-text" data-testid="mirror-form-nowhere">{{ $t(`${K}.form.nowhere`) }}</p>
+          <p v-else-if="listsNowhere && appliesTouched" class="text-xs text-warning-text" data-testid="mirror-form-nowhere">{{ $t(`${K}.form.nowhere`) }}</p>
 
           <DialogFooter>
             <Button type="button" variant="outline" @click="formOpen = false">{{ $t('common.actions.cancel') }}</Button>
@@ -698,9 +915,30 @@ async function confirmDelete(): Promise<void> {
       :confirm-label="$t(`${K}.delete.confirm`)"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
+      :return-focus="() => (deleteTarget ? rowTrigger(deleteTarget.id) : null)"
       @update:open="(v) => { if (!v && !deleting) deleteTarget = undefined; }"
       @confirm="confirmDelete"
     />
+
+    <!-- A second plan for a mirror with one waiting: say so, offer the waiting one, file another only when asked. -->
+    <ConfirmDialog
+      :open="!!duplicate"
+      variant="default"
+      :title="$t(`${K}.duplicate.title`, { id: duplicate?.mirror.id ?? '' })"
+      :description="$t(`${K}.duplicate.description`)"
+      :confirm-label="$t(`${K}.duplicate.confirm`)"
+      :cancel-label="$t('common.actions.cancel')"
+      :return-focus="() => (duplicate ? rowTrigger(duplicate.mirror.id) : null)"
+      @update:open="(v) => { if (!v) duplicate = undefined; }"
+      @confirm="fileAnother"
+    >
+      <RouterLink
+        v-if="duplicate && pendingForMirror.get(duplicate.mirror.id)?.length"
+        :to="{ name: 'approvals', query: { open: pendingForMirror.get(duplicate.mirror.id)![0] } }"
+        class="touch-target text-sm text-primary underline-offset-4 hover:underline"
+        data-testid="mirror-duplicate-review"
+      >{{ $t(`${K}.actions.review`) }}</RouterLink>
+    </ConfirmDialog>
 
     <!--
       SECURITY-CRITICAL: PlanReviewDialog is a pure renderer. `:plan-text` is the
@@ -711,12 +949,13 @@ async function confirmDelete(): Promise<void> {
       v-model:open="planOpen"
       :plan-text="filed?.approval.plan"
       :digest="filedDigest"
-      :title="filedPlan ? $t(`${K}.plan.dialogTitle.${filedPlan.action}`, { id: filedPlan.mirror.id }) : $t(`${K}.title`)"
+      :title="filedPlan && filedKind ? $t(`${K}.plan.dialogTitle.${filedKind}`, { id: filedPlan.mirror.id }) : $t(`${K}.title`)"
       :description="$t(`${K}.plan.dialogDescription`)"
       :plan-label="$t(`${K}.plan.text`)"
       :close-label="$t('common.actions.close')"
       :approvals-label="$t(`${K}.plan.review`)"
       :approvals-to="filed ? `/approvals?open=${encodeURIComponent(filed.approval.id)}` : '/approvals'"
+      :return-focus="returnTarget"
     >
       <template #badges>
         <Badge v-if="filed" variant="outline">{{ $t('platform.agentUpdates.approvalLabel', { id: idToken(filed.approval.id) }) }}</Badge>

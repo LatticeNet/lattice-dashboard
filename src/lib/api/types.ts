@@ -3370,9 +3370,11 @@ export interface AgentMirrorOrder {
 }
 
 /**
- * What the nodes' last update downloads say about one mirror: how many nodes
- * fetched from it, and how many of those fetches wrote a chunk that failed
- * the manifest. Node-reported, for display; it never feeds the order.
+ * What the nodes' last update downloads say about one mirror: how many
+ * fetches in them came from it (a node whose second pass went back to the
+ * same mirror counts twice), and how many of those fetches wrote a chunk
+ * that failed the manifest. Node-reported, for display; it never feeds the
+ * order.
  */
 export interface AgentMirrorHealth {
   mirror: string;

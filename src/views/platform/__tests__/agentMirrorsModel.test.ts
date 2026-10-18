@@ -3,6 +3,12 @@ import { test } from "node:test";
 
 import {
   MAX_MIRROR_PREFER_FOR,
+  chosenSummary,
+  mirrorPlanStale,
+  preferForChange,
+  pruneFiledPlans,
+  serverProblemField,
+  waitingPlans,
   draftChangesMirror,
   draftFromMirror,
   emptyMirrorDraft,
@@ -350,7 +356,66 @@ test("every draft problem, field, plan action and source has copy in both locale
     for (const field of ["name", "base_url", "prefer_for", "global", "priority", "enabled"]) assert.equal(typeof mirrors.fields?.[field], "string", field);
     const plan = mirrors.plan as { headline: Record<string, string>; dialogTitle: Record<string, string> };
     for (const kind of ["create", "change", "delete", "enable", "disable"]) assert.equal(typeof plan.headline[kind], "string", kind);
-    for (const action of ["create", "change", "delete"]) assert.equal(typeof plan.dialogTitle[action], "string", action);
-    for (const source of ["mirror", "controlPlane", "upstream", "none", "changedInPlace"]) assert.equal(typeof mirrors.source?.[source], "string", source);
+    for (const action of ["create", "change", "delete", "enable", "disable"]) assert.equal(typeof plan.dialogTitle[action], "string", action);
+    for (const source of ["mirror", "controlPlane", "upstream", "none", "changedInPlace", "failing"]) assert.equal(typeof mirrors.source?.[source], "string", source);
   }
+});
+
+test("only a pending registry plan made against an older revision is stale; a decided one is history", () => {
+  const plan = { base_revision: 7 };
+  assert.equal(mirrorPlanStale("pending", plan, 8), true);
+  assert.equal(mirrorPlanStale("pending", plan, 7), false, "made against the revision in force");
+  // Every applied plan moved the revision past its own base, so it would always read behind.
+  assert.equal(mirrorPlanStale("applied", plan, 8), false);
+  assert.equal(mirrorPlanStale("rejected", plan, 8), false);
+  assert.equal(mirrorPlanStale("approved", plan, 8), false);
+  assert.equal(mirrorPlanStale("pending", undefined, 8), false, "a plan the page could not read decides nothing");
+  assert.equal(mirrorPlanStale("pending", plan, undefined), false, "nor does a registry the page could not read");
+});
+
+test("the order filter finds every row that lists a mirror by its registry name too", () => {
+  const groups = groupOrders(fleetOrder());
+  const names = new Map([["r2", "Cloudflare R2"], ["cn-cache", "Edge cache"]]);
+  assert.equal(filterOrderGroups(groups, "CLOUDFLARE", names).reduce((sum, group) => sum + group.nodes.length, 0), 39, "every node that lists r2");
+  assert.deepEqual(filterOrderGroups(groups, "edge cache", names).map((group) => [group.sources[0], group.nodes.length]), [["mirror:cn-cache", 6]]);
+  assert.deepEqual(filterOrderGroups(groups, "CLOUDFLARE"), [], "without the names only ids and nodes match");
+});
+
+test("a plan just filed counts as waiting for its mirror until a read speaks for it or a later read drops it", () => {
+  const plan = parseAgentMirrorPlan(CHANGE_PLAN)!;
+  const filed = [{ id: "approval_new", plan, at: 1_000 }];
+  // Right after filing, before any read lists it: the mirror has a plan waiting.
+  assert.deepEqual(pendingByMirror(waitingPlans([], filed)).get("r2"), ["approval_new"]);
+  // Read and filed name the same plan once.
+  assert.deepEqual(pendingByMirror(waitingPlans([{ id: "approval_new", plan }], filed)).get("r2"), ["approval_new"]);
+  // Pruning: the pending read holds it, so the filed copy goes.
+  assert.deepEqual(pruneFiledPlans(filed, new Set(["approval_new"]), new Set(["approval_new"]), 2_000), []);
+  // Listed by the registry read but not yet in the pending read: kept.
+  assert.equal(pruneFiledPlans(filed, new Set(), new Set(["approval_new"]), 60_000).length, 1);
+  // Not listed, and the read came soon after filing: kept; long after: decided elsewhere, dropped.
+  assert.equal(pruneFiledPlans(filed, new Set(), new Set(), 3_000).length, 1);
+  assert.equal(pruneFiledPlans(filed, new Set(), new Set(), 9_000).length, 0);
+});
+
+test("a prefer_for change reads as added, removed and kept, never striking a kept entry", () => {
+  assert.deepEqual(preferForChange(["grp_home"], ["grp_apac", "grp_home"]), { added: ["grp_apac"], removed: [], kept: ["grp_home"] });
+  assert.deepEqual(preferForChange(["node_1", "grp_home"], ["grp_home"]), { added: [], removed: ["node_1"], kept: ["grp_home"] });
+  assert.deepEqual(preferForChange(undefined, ["node_1"]), { added: ["node_1"], removed: [], kept: [] });
+  assert.deepEqual(preferForChange(["node_1"], undefined), { added: [], removed: ["node_1"], kept: [] });
+});
+
+test("a server refusal names its field, so the form marks it beside the message", () => {
+  assert.equal(serverProblemField("base_url must not be on the control plane's own host: the control plane is a source of its own"), "base_url");
+  assert.equal(serverProblemField("mirror id must be 1 to 31 lowercase letters, digits or hyphens"), "id");
+  assert.equal(serverProblemField("mirror name must be printable text on one line"), "name");
+  assert.equal(serverProblemField("mirror priority must be between 0 and 1000000"), "priority");
+  assert.equal(serverProblemField('prefer_for names "x y", which is not a node or group id'), "prefer_for");
+  assert.equal(serverProblemField("mirror r2 already exists; plan a change instead"), undefined, "a conflict names no single field");
+});
+
+test("the picker's count splits what is chosen into groups, nodes and ids the page cannot name", () => {
+  const nodes = new Set(["node_1", "node_2"]);
+  const groups = new Set(["grp_a"]);
+  assert.deepEqual(chosenSummary(["node_1", "grp_a", "node_2", "grp_gone", "node_1"], nodes, groups), { total: 4, groups: 1, nodes: 2, unknown: 1 });
+  assert.deepEqual(chosenSummary([], nodes, groups), { total: 0, groups: 0, nodes: 0, unknown: 0 });
 });

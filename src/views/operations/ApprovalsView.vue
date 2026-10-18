@@ -79,7 +79,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import ApprovalReview from "./ApprovalReview.vue";
-import { AGENT_MIRRORS_PLUGIN, isNodeConfined, parseSourceList } from "@/views/platform/agentMirrorsModel";
+import { AGENT_MIRRORS_PLUGIN, isNodeConfined, mirrorPlanStale, parseAgentMirrorPlan, parseSourceList } from "@/views/platform/agentMirrorsModel";
 import {
   UNKNOWN_WRITER,
   agentUpdateStaleValueKind,
@@ -373,8 +373,48 @@ function canDecide(approval?: ApprovalView): boolean {
   return scope === "" || auth.can(scope);
 }
 
+/*
+ * A registry plan (agent.mirrors, design 31 S5) is stale when it is still
+ * pending and was made against an older registry revision: the server would
+ * refuse it. The listing carries no plan text, so the base revisions of the
+ * pending registry plans and the registry's revision now are read once,
+ * together, whenever the inbox holds one, and every 30 s while it does.
+ */
+const pendingMirrorIds = computed(() => inbox.value.filter((row) => row.plugin === AGENT_MIRRORS_PLUGIN && row.status === "pending").map((row) => row.id));
+const mirrorStaleQuery = useAsyncData<{ revision?: number; bases: Map<string, number> }>(
+  async (signal) => {
+    if (!pendingMirrorIds.value.length || !auth.can("node:read")) return { revision: undefined, bases: new Map() };
+    const [view, rows] = await Promise.all([
+      api.agentUpdates.mirrors({ signal }),
+      api.approvals.list({ plugin: AGENT_MIRRORS_PLUGIN, status: "pending", include: "plan" }, { signal }).then((r) => unwrap(r, "approvals")),
+    ]);
+    const bases = new Map<string, number>();
+    for (const row of rows) {
+      const plan = parseAgentMirrorPlan(row.plan);
+      if (plan) bases.set(row.id, plan.base_revision);
+    }
+    return { revision: view.revision, bases };
+  },
+  { pollInterval: 30_000 },
+);
+watch(
+  () => pendingMirrorIds.value.join(","),
+  () => void mirrorStaleQuery.refresh(),
+);
+const registryRevision = computed(() => mirrorStaleQuery.data.value?.revision);
+
+function mirrorPlanBase(approval: ApprovalView): number | undefined {
+  return mirrorStaleQuery.data.value?.bases.get(approval.id) ?? parseAgentMirrorPlan(approval.plan)?.base_revision;
+}
+
+function isStaleMirrorPlan(approval?: ApprovalView): boolean {
+  if (!approval || approval.plugin !== AGENT_MIRRORS_PLUGIN) return false;
+  const base = mirrorPlanBase(approval);
+  return mirrorPlanStale(approval.status, base === undefined ? undefined : { base_revision: base }, registryRevision.value);
+}
+
 function isStale(approval?: ApprovalView): boolean {
-  return isStaleAgentUpdateApprovalView(approval);
+  return isStaleAgentUpdateApprovalView(approval) || isStaleMirrorPlan(approval);
 }
 
 /**
@@ -416,6 +456,9 @@ function staleValue(field: AgentUpdateStaleField, value: string): string {
  * server wrote it. The raw text stays available through staleRaw.
  */
 function staleReason(approval?: ApprovalView): string {
+  if (approval && isStaleMirrorPlan(approval)) {
+    return t("operations.approvals.mirrorStale.reason", { planned: mirrorPlanBase(approval) ?? "?", current: registryRevision.value ?? "?" });
+  }
   if (!approval || approval.plugin !== "agentupdate") return "";
   const raw = approval.reason?.trim() ?? "";
   if (!(approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED)) return raw;
@@ -1367,7 +1410,10 @@ function refreshAll(): void {
                       · {{ $t('operations.approvals.events.newest', { age: formatRelativeTime(group.newestCreatedAt) }) }}
                     </p>
                   </div>
-                  <Badge v-if="group.isSystem" variant="secondary" class="shrink-0">{{ $t('operations.approvals.events.systemBadge') }}</Badge>
+                  <span class="flex shrink-0 flex-wrap items-center gap-1">
+                    <Badge v-if="group.items.some(isStaleMirrorPlan)" variant="outline" data-testid="approvals-card-stale">{{ $t('operations.approvals.staleBadge') }}</Badge>
+                    <Badge v-if="group.isSystem" variant="secondary">{{ $t('operations.approvals.events.systemBadge') }}</Badge>
+                  </span>
                 </div>
                 <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <span v-for="id in nodePreview(group).ids" :key="id" class="max-w-48 truncate rounded border border-border px-1.5 py-0.5">
@@ -1697,6 +1743,7 @@ function refreshAll(): void {
         :can-replan="canReplan(openRecord)"
         :can-dismiss-stale="canDismissStale(openRecord)"
         :can-dismiss-waiting="canDismissWaiting(openRecord)"
+        :registry-revision="registryRevision"
         :dismissing="dismissing === openRecord.id"
         :replanning="replanning === openRecord.id"
         :decision-error="decisionError?.id === openRecord.id ? decisionError.message : null"
@@ -1717,6 +1764,13 @@ function refreshAll(): void {
           {{ appliesOnApproval(openRecord) ? $t('operations.approvals.approveAndApply') : $t('operations.approvals.approveAndQueue') }}
         </Button>
         <RowMenu v-if="approvesWithoutQueue(openRecord)" align="start" :name="changeLabel(openRecord)" :items="approveWithoutQueueMenu(openRecord)" />
+        <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
+          <Ban class="size-4" aria-hidden="true" />
+          {{ $t('operations.approvals.reject') }}
+        </Button>
+      </template>
+      <!-- A stale registry plan: approving it would be refused, so only Reject stays; the review links to a fresh plan. -->
+      <template v-else-if="openRecord && openRecord.status === 'pending' && isStaleMirrorPlan(openRecord)" #actions>
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}

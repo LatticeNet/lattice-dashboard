@@ -85,6 +85,7 @@ import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import AgentFetchReadout from "./AgentFetchReadout.vue";
 import AgentMirrorsLayer from "./AgentMirrorsLayer.vue";
+import { mirrorsWithChunkFailures } from "./agentMirrorsModel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -731,6 +732,17 @@ const attention = computed<AttentionItem[]>(() => {
         action: { label: t("platform.agentUpdatesPage.attention.open"), run: () => sheet.open(row.nodeId) },
       });
     }
+  }
+  // A mirror caught sending wrong bytes shows here too, so it is not hidden
+  // behind the Mirrors tab of a page that opens on Nodes.
+  for (const entry of mirrorsWithChunkFailures(mirrorsQuery.data.value?.health)) {
+    items.push({
+      key: `mirror-chunks:${entry.mirror}`,
+      tone: "danger",
+      claim: t("platform.agentUpdatesPage.mirrors.attention.chunksClaim", { id: entry.mirror, n: entry.chunk_failures }, entry.chunk_failures),
+      proof: t("platform.agentUpdatesPage.mirrors.attention.chunksProof"),
+      action: { label: t("platform.agentUpdatesPage.mirrors.attention.openMirrors"), run: () => (layer.value = "mirrors") },
+    });
   }
   if (staleAgentUpdateApprovals.value.length) {
     items.push({

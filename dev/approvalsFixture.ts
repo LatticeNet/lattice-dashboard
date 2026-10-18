@@ -474,7 +474,7 @@ export const MIRROR_GROUPS = [
 ];
 
 /** An agent.mirrors change plan, shaped as json.MarshalIndent writes model.AgentMirrorPlan. */
-function agentMirrorsPlan(): string {
+function agentMirrorsPlan(baseRevision = 7): string {
   const base = "https://hkg-edge-cache-01.objects.storage.lattice-mirror.example/lattice-node-agent/releases/linux-binaries";
   const previous = { id: "hk-cache", name: "Hong Kong edge cache", base_url: base, prefer_for: ["grp_home_lines"], priority: 20, enabled: true };
   const mirror = { id: "hk-cache", name: "Hong Kong edge cache", base_url: base, prefer_for: ["grp_apac_edges", "grp_home_lines"], priority: 10, enabled: true };
@@ -488,7 +488,7 @@ function agentMirrorsPlan(): string {
       mirror,
       previous,
       diff: ["prefer_for: grp_home_lines -> grp_apac_edges,grp_home_lines", "priority: 20 -> 10"],
-      base_revision: 7,
+      base_revision: baseRevision,
       changes: [node(0, plain, first), node(1, plain, first), node(6, plain, first), node(7, plain, first), node(8, plain, first)],
     },
     null,
@@ -606,6 +606,24 @@ export const PENDING_KINDS: ApprovalView[] = [
   },
 ];
 
+/**
+ * A registry plan applied a week ago, in History. Every applied plan was
+ * made against a revision older than the registry's now; the review must
+ * not call it stale or warn that approving it would be refused.
+ */
+const APPLIED_MIRRORS: ApprovalView = {
+  id: "approval_k9mirrorsapplied",
+  node_id: "",
+  plugin: "agent.mirrors",
+  action: "agent.mirrors",
+  plan: agentMirrorsPlan(5),
+  status: "applied",
+  actor_id: "cdcd",
+  approved_by: "cdcd",
+  created_at: iso(-7 * DAY),
+  updated_at: iso(-7 * DAY + 20 * MINUTE),
+};
+
 export const HAND_WRITTEN: ApprovalView[] = [
   OFFLINE,
   NEVER_REPORTED,
@@ -618,6 +636,7 @@ export const HAND_WRITTEN: ApprovalView[] = [
   PENDING_SSH,
   APPLIED,
   STALE,
+  APPLIED_MIRRORS,
   ...PENDING_KINDS,
 ];
 

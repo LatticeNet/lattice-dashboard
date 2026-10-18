@@ -102,19 +102,20 @@ export function groupOrders(order: readonly AgentMirrorOrder[]): OrderGroup[] {
 }
 
 /**
- * The filter over the order. A row whose order lists a mirror whose id
- * contains the text is kept whole ("which nodes use hk-cache"); otherwise a
- * row is kept with only the nodes whose name or id contains it. Blank text
- * keeps every row whole.
+ * The filter over the order. A row whose order lists a mirror whose id or
+ * registry name contains the text is kept whole ("which nodes use
+ * Cloudflare R2"); otherwise a row is kept with only the nodes whose name or
+ * id contains it. Blank text keeps every row whole.
  */
-export function filterOrderGroups(groups: readonly OrderGroup[], text: string): OrderGroup[] {
+export function filterOrderGroups(groups: readonly OrderGroup[], text: string, mirrorNames: ReadonlyMap<string, string> = new Map()): OrderGroup[] {
   const needle = text.trim().toLowerCase();
   if (!needle) return [...groups];
   const out: OrderGroup[] = [];
   for (const group of groups) {
     const viaMirror = group.sources.some((label) => {
       const source = parseSourceLabel(label);
-      return source.kind === "mirror" && (source.mirror ?? "").toLowerCase().includes(needle);
+      if (source.kind !== "mirror" || !source.mirror) return false;
+      return source.mirror.toLowerCase().includes(needle) || (mirrorNames.get(source.mirror) ?? "").toLowerCase().includes(needle);
     });
     if (viaMirror) {
       out.push({ ...group, nodes: [...group.nodes] });
@@ -476,6 +477,65 @@ export function planBehindRegistry(plan: Pick<AgentMirrorPlan, "base_revision">,
 }
 
 /**
+ * Whether an agent.mirrors approval is stale: still pending, and made
+ * against an older revision than the registry's now. Only a pending plan can
+ * be: every plan that was applied moved the revision past its own base, so a
+ * decided one is history, never stale.
+ */
+export function mirrorPlanStale(
+  status: string,
+  plan: Pick<AgentMirrorPlan, "base_revision"> | undefined,
+  revision: number | undefined,
+): boolean {
+  return status === "pending" && !!plan && planBehindRegistry(plan, revision);
+}
+
+/**
+ * A prefer_for change as the review reads it: what the plan adds, what it
+ * removes, and what it keeps, each in the order the entry lists it.
+ */
+export function preferForChange(before: readonly string[] | undefined, after: readonly string[] | undefined): { added: string[]; removed: string[]; kept: string[] } {
+  const was = new Set(before ?? []);
+  const now = new Set(after ?? []);
+  return {
+    added: (after ?? []).filter((ref) => !was.has(ref)),
+    removed: (before ?? []).filter((ref) => !now.has(ref)),
+    kept: (after ?? []).filter((ref) => was.has(ref)),
+  };
+}
+
+/**
+ * The field a server refusal names, read from validateAgentMirror's
+ * messages ("base_url must not ...", "mirror id must ..."), so the form
+ * marks that field as well as printing the message.
+ */
+export function serverProblemField(message: string): MirrorDraftField | undefined {
+  const text = message.trim();
+  if (text.startsWith("base_url")) return "base_url";
+  if (text.startsWith("prefer_for")) return "prefer_for";
+  if (text.startsWith("mirror id")) return "id";
+  if (text.startsWith("mirror name")) return "name";
+  if (text.startsWith("mirror priority")) return "priority";
+  return undefined;
+}
+
+/** The picker's one-line count of what is chosen: groups, nodes, and ids neither list names. */
+export function chosenSummary(
+  refs: readonly string[],
+  nodes: ReadonlySet<string>,
+  groups: ReadonlySet<string>,
+): { total: number; groups: number; nodes: number; unknown: number } {
+  const out = { total: 0, groups: 0, nodes: 0, unknown: 0 };
+  for (const ref of new Set(refs)) {
+    out.total += 1;
+    if (nodes.has(ref)) out.nodes += 1;
+    else if (groups.has(ref)) out.groups += 1;
+    else out.unknown += 1;
+  }
+  return out;
+}
+
+/**
  * The first names of a list and how many more, for a row that must stay one
  * or two lines. A "show 1 more" would hide one name behind a click that
  * costs as much as the name, so a list one longer than the preview is shown
@@ -499,6 +559,37 @@ export function planHeadline(plan: AgentMirrorPlan): PlanHeadline {
   const fields = MIRROR_FIELDS.filter((field) => plan.diff.some((line) => line.startsWith(`${field}: `)));
   if (fields.length === 1 && fields[0] === "enabled") return { kind: plan.mirror.enabled ? "enable" : "disable" };
   return { kind: "change", fields };
+}
+
+/** A plan this page filed, held as waiting until the registry read lists it. */
+export interface FiledPlan {
+  id: string;
+  plan: AgentMirrorPlan;
+  /** When the server answered, in ms since the epoch. */
+  at: number;
+}
+
+/**
+ * The filed plans still worth holding after a read: not yet in the pending
+ * plans read (which then speaks for them), and either listed by the
+ * registry read or filed too recently for that read to know them. A plan a
+ * read that came well after the filing no longer lists was decided
+ * elsewhere.
+ */
+export function pruneFiledPlans(
+  filed: readonly FiledPlan[],
+  read: ReadonlySet<string>,
+  listed: ReadonlySet<string>,
+  now: number,
+  graceMs = 5000,
+): FiledPlan[] {
+  return filed.filter((entry) => !read.has(entry.id) && (listed.has(entry.id) || now - entry.at < graceMs));
+}
+
+/** The plans waiting, as read and as just filed, each once. */
+export function waitingPlans<T extends { id: string; plan?: AgentMirrorPlan }>(read: readonly T[], filed: readonly FiledPlan[]): Array<T | FiledPlan> {
+  const known = new Set(read.map((entry) => entry.id));
+  return [...read, ...filed.filter((entry) => !known.has(entry.id))];
 }
 
 /** Mirror ids with a plan waiting, from the pending plans the page could read. */
