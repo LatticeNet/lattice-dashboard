@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { providerDeleteImpact } from "../ssoModel.ts";
+import { providerDeleteImpact, skipLocalTotpOf } from "../ssoModel.ts";
 
 const google = { id: "oidc_google", enabled: true };
 const okta = { id: "oidc_okta", enabled: true };
@@ -59,4 +59,11 @@ test("while the accounts are being read the confirm waits, whatever an earlier r
   assert.deepEqual(impact.lines, [{ kind: "keep" }, { kind: "usersReading" }]);
   assert.equal(impact.waiting, true);
   assert.equal(impact.typed, true);
+});
+
+test("the provider-trusted second factor is off for a new provider and for a server that does not report it", () => {
+  assert.equal(skipLocalTotpOf(undefined), false);
+  assert.equal(skipLocalTotpOf({}), false);
+  assert.equal(skipLocalTotpOf({ skip_local_totp: false }), false);
+  assert.equal(skipLocalTotpOf({ skip_local_totp: true }), true);
 });

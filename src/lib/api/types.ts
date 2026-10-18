@@ -3453,6 +3453,8 @@ export interface OIDCProviderView {
   scopes?: string[];
   allowed_domains?: string[];
   enabled: boolean;
+  /** A sign-in through this provider stands in for the local TOTP code. Absent from servers that predate it. */
+  skip_local_totp?: boolean;
 }
 
 export interface OIDCProviderUpsertRequest {
@@ -3464,6 +3466,10 @@ export interface OIDCProviderUpsertRequest {
   scopes?: string[];
   allowed_domains?: string[];
   enabled?: boolean;
+  /** Always sent: the server stores false when it is left out. */
+  skip_local_totp: boolean;
+  /** A fresh step-up grant; the server requires one only to turn skip_local_totp on. */
+  step_up_grant?: string;
 }
 
 // Result of the "test connection" discovery probe for an OIDC issuer.

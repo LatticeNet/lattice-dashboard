@@ -15,7 +15,7 @@
  * Every way out (Cancel, Escape, a click outside) goes through cancel(), so
  * whatever waits on the grant ends instead of staying pending.
  */
-import { useId } from "vue";
+import { useId, type Component } from "vue";
 import { Eye, KeyRound, RefreshCw } from "lucide-vue-next";
 
 import type { useStepUp } from "@/composables/useStepUp";
@@ -30,6 +30,8 @@ const props = withDefaults(
     title: string;
     description: string;
     submitLabel: string;
+    /** The submit button's icon; a reveal's eye unless the caller names another. */
+    submitIcon?: Component;
     /** Shown under the passcode field: where the reveal is recorded. */
     audit?: string;
     /** Open in confirm mode, independent of the step-up handle's own open state. */
@@ -46,6 +48,7 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>();
 // unwrap in the template like local state.
 const { open, code, error, pending } = props.stepUp;
 const codeId = useId();
+const errorId = useId();
 
 function setOpen(next: boolean): void {
   if (!next) cancel();
@@ -67,7 +70,7 @@ function cancel(): void {
       <slot />
       <div v-if="confirm" class="space-y-4">
         <p class="text-sm text-muted-foreground">{{ confirmHint }}</p>
-        <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           <Button type="button" variant="outline" @click="cancel">{{ $t('common.actions.cancel') }}</Button>
           <Button type="button" :data-testid="`${testId}-confirm`" @click="emit('confirm')">
             <Eye class="size-4" aria-hidden="true" />
@@ -85,12 +88,14 @@ function cancel(): void {
             autocomplete="one-time-code"
             maxlength="8"
             placeholder="123456"
+            :aria-invalid="error ? true : undefined"
+            :aria-describedby="error ? errorId : undefined"
             :data-testid="`${testId}-code`"
           />
-          <p v-if="error" class="text-xs text-destructive" role="alert">{{ error }}</p>
+          <p v-if="error" :id="errorId" class="text-xs text-destructive" role="alert">{{ error }}</p>
           <p v-if="audit" class="text-xs text-muted-foreground">{{ audit }}</p>
         </div>
-        <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           <Button type="button" variant="outline" @click="cancel">{{ $t('common.actions.cancel') }}</Button>
           <Button type="button" variant="outline" :disabled="!!pending || !stepUp.supportsPasskey" @click="stepUp.submitPasskey">
             <RefreshCw v-if="pending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
@@ -99,7 +104,7 @@ function cancel(): void {
           </Button>
           <Button type="submit" :disabled="!!pending || !code.trim()" :data-testid="`${testId}-submit`">
             <RefreshCw v-if="pending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
-            <Eye v-else class="size-4" aria-hidden="true" />
+            <component :is="submitIcon ?? Eye" v-else class="size-4" aria-hidden="true" />
             {{ submitLabel }}
           </Button>
         </div>

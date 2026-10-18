@@ -204,7 +204,7 @@ export default {
       guide: "配置指南",
       explainer: {
         title: "带 PKCE 的授权码流程",
-        body: "Lattice 使用带 PKCE 的授权码流程与各提供方进行认证。启用后,SSO 登录之后仍会强制执行 Lattice 本地的 TOTP 第二因子,单点登录绝不会绕过 2FA。客户端密钥为只写,API 永不返回。",
+        body: "Lattice 使用带 PKCE 的授权码流程与各提供方进行认证。账号启用了 Lattice 本地 TOTP 第二因子时,通过提供方登录后仍会要求输入验证码,除非管理员将该提供方设为可代替这一步。客户端密钥为只写,API 永不返回。",
         guideLink: "打开 OIDC 提供方配置指南",
       },
       list: {
@@ -221,6 +221,8 @@ export default {
         allowedDomains: "允许的域名",
         actions: "操作",
         anyDomain: "任意",
+        skipsLocalCode: "免身份验证器验证码",
+        skipsLocalCodeTitle: "通过该提供方登录,无需身份验证器验证码即可打开控制台",
       },
       form: {
         editTitle: "编辑身份提供方",
@@ -262,7 +264,20 @@ export default {
         allowedDomainsHint: "以逗号分隔。留空则允许任意已验证的邮箱域名。",
         allowedDomainsGuide: "可选的已验证邮箱域名 allowlist。只有当该 IdP 下所有用户都可登录时才留空。",
         enabled: "启用(在登录页提供该提供方)",
+        skipLocalTotp: "通过该提供方登录后跳过 Lattice 身份验证器验证码",
+        skipLocalTotpConsequence: "开启后,任何人只要使用已登录运维人员在该提供方账号的浏览器,就能不输入身份验证器验证码直接打开控制台。",
+        skipLocalTotpHint:
+          "开启后,每个账号首次通过该提供方登录时要输入验证码,修改密码、重置二次验证或吊销会话之后也要再输入一次。改用恢复码登录不算数,下次登录仍会要求验证码。密码登录和敏感操作的二次确认始终要求验证码。",
         disableLastWarning: "这是唯一启用的提供方。关闭后,登录页将对所有人隐藏 SSO 入口。",
+      },
+      skipStepUp: {
+        title: "开启前请确认身份",
+        description: "开启后,通过 {name} 登录无需身份验证器验证码即可打开控制台。请输入验证码或使用通行密钥,确认是你本人。",
+        submit: "确认并保存",
+        audit: "此次修改会记入审计日志。",
+        required: "开启此项需要重新验证第二因子。",
+        failed: "无法验证第二因子。",
+        passkeyFailed: "无法验证通行密钥。",
       },
       disableLastTitle: "停用唯一的 SSO 提供方？",
       disableLastDescription:
@@ -282,6 +297,7 @@ export default {
         "移除“{name}”。原先通过它登录的运维人员会失去这条登录途径，账号、权限、密码和 Passkey 都保留；没有其他登录方式的人会被挡在门外。此操作无法撤销。",
       toast: {
         updated: "提供方已更新",
+        skipOn: "通过 {name} 登录现在无需身份验证器验证码即可打开控制台",
         created: "提供方已创建",
         saveFailed: "保存失败",
         deleted: "提供方已删除",
@@ -435,6 +451,7 @@ export default {
         active: "{n} 个有效",
         providers: "{n} 个身份提供方",
         enabled: "{n} 个已启用",
+        skipsCode: "{n} 个免身份验证器验证码",
       },
     },
   },
