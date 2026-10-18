@@ -227,7 +227,7 @@ export default {
         allowedDomains: "Allowed domains",
         actions: "Actions",
         anyDomain: "any",
-        skipsLocalCode: "Skips local code",
+        skipsLocalCode: "Skips authenticator code",
         skipsLocalCodeTitle: "Signing in through this provider opens the console without the authenticator code",
       },
       form: {
@@ -270,11 +270,11 @@ export default {
         allowedDomainsHint: "Comma-separated. Leave empty to allow any verified email domain.",
         allowedDomainsGuide: "Optional verified email-domain allowlist. Leave empty only when every IdP user may sign in.",
         enabled: "Enabled (offer this provider on the login screen)",
-        skipLocalTotp: "Skip the local authenticator code after signing in through this provider",
+        skipLocalTotp: "Skip the Lattice authenticator code after signing in through this provider",
         skipLocalTotpConsequence:
-          "Anyone using a browser that is signed in to an operator's account at this provider can open the console without the authenticator code.",
+          "When on, anyone using a browser that is signed in to an operator's account at this provider can open the console without the authenticator code.",
         skipLocalTotpHint:
-          "Each account still enters its code once: the first time it signs in through this provider after this is turned on, and again after a password change, a two-factor reset or a session revoke. A recovery code does not count. Password sign-in and step-up for sensitive actions always ask for the code.",
+          "Each account enters its code at its first sign-in through this provider after this is turned on, and again after a password change, two-factor reset or session revoke. Signing in with a recovery code instead does not count, so the next sign-in asks again. Password sign-in and step-up for sensitive actions always ask for the code.",
         disableLastWarning:
           "This is the only enabled provider. Turning it off removes SSO from the login screen for everyone.",
       },
@@ -283,7 +283,7 @@ export default {
         description:
           "Turning this on lets a sign-in through {name} open the console without the authenticator code. Enter your code, or use a passkey, to confirm it is you.",
         submit: "Confirm and save",
-        audit: "The change is recorded in the audit log with the old and new setting.",
+        audit: "The change is recorded in the audit log.",
         required: "Turning this on needs a fresh second factor.",
         failed: "The second factor could not be checked.",
         passkeyFailed: "The passkey could not be checked.",
@@ -307,6 +307,7 @@ export default {
       toast: {
         updated: "Provider updated",
         created: "Provider created",
+        skipOn: "{name} now opens the console without the authenticator code",
         saveFailed: "Save failed",
         deleted: "Provider deleted",
         deleteFailed: "Delete failed",
@@ -463,6 +464,7 @@ export default {
         active: "{n} active",
         providers: "{n} provider | {n} providers",
         enabled: "{n} enabled",
+        skipsCode: "{n} skips the authenticator code | {n} skip the authenticator code",
       },
     },
   },

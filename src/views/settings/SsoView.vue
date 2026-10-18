@@ -23,6 +23,7 @@ import {
   type OIDCProviderView,
   type UserView,
 } from "@/lib/api";
+import { ApiError } from "@/lib/api/client";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { providerDeleteImpact, skipLocalTotpOf } from "./ssoModel";
 import { useAuthStore } from "@/stores/auth";
@@ -155,24 +156,50 @@ const canSubmit = computed(
 // ── Provider-trusted second factor (skip_local_totp) ─────────────────────────
 // Turning it on lets a sign-in through this provider open the console without
 // the local authenticator code, so the server asks for a fresh step-up first;
-// turning it off, or saving with it unchanged, needs none.
-const enablingSkip = computed(() => form.skip_local_totp && !skipLocalTotpOf(editing.value));
+// turning it off, or saving with it unchanged, needs none. The baseline is the
+// provider as the list holds it now, not as it was when the editor opened, so
+// a refresh while the dialog is open moves it too.
+const storedSkip = computed(() => {
+  const id = editing.value?.id;
+  if (!id) return false;
+  return skipLocalTotpOf(providers.value.find((provider) => provider.id === id) ?? editing.value);
+});
+const enablingSkip = computed(() => form.skip_local_totp && !storedSkip.value);
 const skipStepUp = useStepUp({
   required: t("settings.sso.skipStepUp.required"),
   failed: t("settings.sso.skipStepUp.failed"),
   passkeyFailed: t("settings.sso.skipStepUp.passkeyFailed"),
 });
 
+// One prompt at a time: a second submit while it is open does nothing.
+let awaitingGrant = false;
+
+/** A step-up grant, or undefined when the operator closed the prompt. */
+async function skipGrant(): Promise<string | undefined> {
+  // Every time, even with a grant from a moment ago: the prompt is where the
+  // operator reads which provider this is for and what it lets in.
+  skipStepUp.invalidate();
+  awaitingGrant = true;
+  try {
+    return await skipStepUp.request();
+  } catch {
+    return undefined;
+  } finally {
+    awaitingGrant = false;
+  }
+}
+
+function isStepUpRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.code === "step_up_required";
+}
+
 async function submitForm() {
-  if (!canSubmit.value || !canAdmin.value) return;
-  let grant = "";
+  if (!canSubmit.value || !canAdmin.value || saving.value || awaitingGrant) return;
+  let grant: string | undefined = "";
   if (enablingSkip.value) {
-    try {
-      grant = await skipStepUp.request();
-    } catch {
-      // The operator closed the prompt: nothing was saved, and the form stays as it was.
-      return;
-    }
+    grant = await skipGrant();
+    // The operator closed the prompt: nothing was saved, and the form stays as it was.
+    if (!grant) return;
   }
   saving.value = true;
   try {
@@ -190,12 +217,39 @@ async function submitForm() {
     // Write-only: only send when non-empty (empty preserves the stored secret).
     if (form.client_secret.trim()) req.client_secret = form.client_secret;
 
-    await api.oidc.upsertProvider(req);
-    toast.success(editing.value ? t("settings.sso.toast.updated") : t("settings.sso.toast.created"));
+    try {
+      await api.oidc.upsertProvider(req);
+    } catch (error) {
+      // The server judges "turning it on" against what it stores, so a list
+      // that was stale, or a grant it no longer holds, ends here: drop the
+      // cached grant, ask once, and send again.
+      if (!isStepUpRequired(error)) throw error;
+      saving.value = false;
+      grant = await skipGrant();
+      if (!grant) return;
+      saving.value = true;
+      req.step_up_grant = grant;
+      await api.oidc.upsertProvider(req);
+    }
+    const name = form.display_name.trim() || req.issuer;
+    toast.success(
+      req.step_up_grant
+        ? t("settings.sso.toast.skipOn", { name })
+        : editing.value
+          ? t("settings.sso.toast.updated")
+          : t("settings.sso.toast.created"),
+    );
     formOpen.value = false;
     providersQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("settings.sso.toast.saveFailed"));
+    if (isStepUpRequired(error)) skipStepUp.invalidate();
+    toast.error(
+      isStepUpRequired(error)
+        ? t("settings.sso.skipStepUp.required")
+        : error instanceof Error
+          ? error.message
+          : t("settings.sso.toast.saveFailed"),
+    );
   } finally {
     saving.value = false;
   }
@@ -380,6 +434,10 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const n = providers.value.length;
   const parts: ProofSegment[] = [{ key: "providers", text: t("settings.access.proof.providers", { n }, n) }];
   if (n) parts.push({ key: "enabled", text: t("settings.access.proof.enabled", { n: providers.value.filter((provider) => provider.enabled).length }) });
+  // A relaxed sign-in policy is never quiet: said here too, where it shows at
+  // every width, not only in the table's Status column.
+  const skipping = providers.value.filter(skipLocalTotpOf).length;
+  if (skipping) parts.push({ key: "skips", text: t("settings.access.proof.skipsCode", { n: skipping }, skipping) });
   return parts;
 });
 
@@ -655,38 +713,28 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
             </p>
           </div>
 
+          <!--
+            The provider-trusted second factor. A checkbox, like Enabled above:
+            every field in this editor takes effect on Save, and a switch would
+            promise an immediate change it does not make. The consequence is
+            stated conditionally, so it is true whichever way the box is set,
+            and turns to warning ink while it is on.
+          -->
           <div
             :class="cn(
               'grid gap-2 rounded-md border p-3 transition-colors',
               form.skip_local_totp ? 'border-warning/40 bg-warning/5' : 'border-border',
             )"
           >
-            <button
-              type="button"
-              role="switch"
-              :aria-checked="form.skip_local_totp"
-              aria-labelledby="oidc-skip-totp-label"
-              aria-describedby="oidc-skip-totp-consequence oidc-skip-totp-hint"
-              class="flex w-full items-start gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
-              data-testid="oidc-skip-local-totp"
-              @click="form.skip_local_totp = !form.skip_local_totp"
-            >
-              <span
-                :class="cn(
-                  'relative mt-0.5 inline-flex h-5 w-9 shrink-0 rounded-full border border-border transition-colors',
-                  form.skip_local_totp ? 'bg-foreground' : 'bg-muted',
-                )"
-                aria-hidden="true"
-              >
-                <span
-                  :class="cn(
-                    'absolute top-0.5 size-3.5 rounded-full bg-card shadow-sm transition-[inset-inline-start]',
-                    form.skip_local_totp ? 'start-[1.125rem]' : 'start-0.5',
-                  )"
-                />
-              </span>
-              <span id="oidc-skip-totp-label" class="text-sm font-medium">{{ $t("settings.sso.form.skipLocalTotp") }}</span>
-            </button>
+            <label class="flex cursor-pointer items-start gap-2 text-sm font-medium">
+              <Checkbox
+                v-model="form.skip_local_totp"
+                class="mt-0.5"
+                aria-describedby="oidc-skip-totp-consequence oidc-skip-totp-hint"
+                data-testid="oidc-skip-local-totp"
+              />
+              <span>{{ $t("settings.sso.form.skipLocalTotp") }}</span>
+            </label>
             <p
               id="oidc-skip-totp-consequence"
               :class="cn('text-xs', form.skip_local_totp ? 'font-medium text-warning-text' : 'text-muted-foreground')"

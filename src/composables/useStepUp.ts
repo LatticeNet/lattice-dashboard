@@ -103,6 +103,12 @@ export function useStepUp(copy: StepUpCopy) {
     }
   }
 
+  /** Forget the cached grant, so the next request() prompts: the server refused it. */
+  function invalidate() {
+    grant.value = "";
+    grantExpiresAt.value = 0;
+  }
+
   function cancel() {
     open.value = false;
     rejectGrant?.(new Error(copy.required));
@@ -119,6 +125,7 @@ export function useStepUp(copy: StepUpCopy) {
     /** The grant still inside its lifetime, or "", without prompting. */
     peek: cachedGrant,
     request,
+    invalidate,
     submitTotp,
     submitPasskey,
     cancel,
