@@ -52,3 +52,12 @@ export function providerDeleteImpact(input: ProviderDeleteInput): ProviderDelete
   for (const user of passwordless) lines.push(othersLeft ? { kind: "maybeLocked", user } : { kind: "locked", user });
   return { lines, typed: passwordless.length > 0, waiting: false };
 }
+
+/**
+ * Whether a provider stands in for the local authenticator code
+ * (skip_local_totp). Off unless the server says it is on: a new provider, and
+ * a provider read from a server that predates the field, both start off.
+ */
+export function skipLocalTotpOf(provider: { skip_local_totp?: boolean } | undefined): boolean {
+  return provider?.skip_local_totp === true;
+}

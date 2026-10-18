@@ -10,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  ShieldOff,
   Trash2,
   Unlock,
   ExternalLink,
@@ -23,7 +24,7 @@ import {
   type UserView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { providerDeleteImpact } from "./ssoModel";
+import { providerDeleteImpact, skipLocalTotpOf } from "./ssoModel";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 import { statusMeta } from "@/lib/status";
@@ -33,6 +34,8 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import StepUpDialog from "@/components/common/StepUpDialog.vue";
+import { useStepUp } from "@/composables/useStepUp";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import { Button } from "@/components/ui/button";
@@ -86,6 +89,7 @@ const form = reactive({
   scopes: DEFAULT_SCOPES,
   allowed_domains: "",
   enabled: true,
+  skip_local_totp: false,
 });
 
 function resetForm() {
@@ -96,6 +100,7 @@ function resetForm() {
   form.scopes = DEFAULT_SCOPES;
   form.allowed_domains = "";
   form.enabled = true;
+  form.skip_local_totp = false;
   testResult.value = undefined;
 }
 
@@ -116,6 +121,7 @@ function openEdit(provider: OIDCProviderView) {
   form.scopes = (provider.scopes ?? []).join(", ");
   form.allowed_domains = (provider.allowed_domains ?? []).join(", ");
   form.enabled = provider.enabled;
+  form.skip_local_totp = skipLocalTotpOf(provider);
   testResult.value = undefined;
   formOpen.value = true;
 }
@@ -146,8 +152,28 @@ const canSubmit = computed(
     !!form.client_id.trim(),
 );
 
+// ── Provider-trusted second factor (skip_local_totp) ─────────────────────────
+// Turning it on lets a sign-in through this provider open the console without
+// the local authenticator code, so the server asks for a fresh step-up first;
+// turning it off, or saving with it unchanged, needs none.
+const enablingSkip = computed(() => form.skip_local_totp && !skipLocalTotpOf(editing.value));
+const skipStepUp = useStepUp({
+  required: t("settings.sso.skipStepUp.required"),
+  failed: t("settings.sso.skipStepUp.failed"),
+  passkeyFailed: t("settings.sso.skipStepUp.passkeyFailed"),
+});
+
 async function submitForm() {
   if (!canSubmit.value || !canAdmin.value) return;
+  let grant = "";
+  if (enablingSkip.value) {
+    try {
+      grant = await skipStepUp.request();
+    } catch {
+      // The operator closed the prompt: nothing was saved, and the form stays as it was.
+      return;
+    }
+  }
   saving.value = true;
   try {
     const req: OIDCProviderUpsertRequest = {
@@ -156,7 +182,9 @@ async function submitForm() {
       scopes: splitCsv(form.scopes),
       allowed_domains: splitCsv(form.allowed_domains),
       enabled: form.enabled,
+      skip_local_totp: form.skip_local_totp,
     };
+    if (grant) req.step_up_grant = grant;
     if (editing.value) req.id = editing.value.id;
     if (form.display_name.trim()) req.display_name = form.display_name.trim();
     // Write-only: only send when non-empty (empty preserves the stored secret).
@@ -436,9 +464,16 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-status="{ row }">
-        <Badge :variant="enabledBadge(row)">
-          {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
-        </Badge>
+        <div class="flex flex-wrap gap-1">
+          <Badge :variant="enabledBadge(row)">
+            {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
+          </Badge>
+          <!-- A relaxed sign-in policy is never quiet: it says so on the row. -->
+          <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
+            <ShieldOff class="size-3" aria-hidden="true" />
+            {{ $t("settings.sso.list.skipsLocalCode") }}
+          </Badge>
+        </div>
       </template>
 
       <template #cell-scopes="{ row }">
@@ -491,7 +526,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
             <li>{{ $t("settings.sso.form.stepCreateApp") }}</li>
             <li>
               {{ $t("settings.sso.form.stepRedirect") }}
-              <code class="block mt-1 relative overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
+              <code class="mt-1 block break-all rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
                 {{ redirectUri }}
               </code>
             </li>
@@ -620,6 +655,49 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
             </p>
           </div>
 
+          <div
+            :class="cn(
+              'grid gap-2 rounded-md border p-3 transition-colors',
+              form.skip_local_totp ? 'border-warning/40 bg-warning/5' : 'border-border',
+            )"
+          >
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="form.skip_local_totp"
+              aria-labelledby="oidc-skip-totp-label"
+              aria-describedby="oidc-skip-totp-consequence oidc-skip-totp-hint"
+              class="flex w-full items-start gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+              data-testid="oidc-skip-local-totp"
+              @click="form.skip_local_totp = !form.skip_local_totp"
+            >
+              <span
+                :class="cn(
+                  'relative mt-0.5 inline-flex h-5 w-9 shrink-0 rounded-full border border-border transition-colors',
+                  form.skip_local_totp ? 'bg-foreground' : 'bg-muted',
+                )"
+                aria-hidden="true"
+              >
+                <span
+                  :class="cn(
+                    'absolute top-0.5 size-3.5 rounded-full bg-card shadow-sm transition-[inset-inline-start]',
+                    form.skip_local_totp ? 'start-[1.125rem]' : 'start-0.5',
+                  )"
+                />
+              </span>
+              <span id="oidc-skip-totp-label" class="text-sm font-medium">{{ $t("settings.sso.form.skipLocalTotp") }}</span>
+            </button>
+            <p
+              id="oidc-skip-totp-consequence"
+              :class="cn('text-xs', form.skip_local_totp ? 'font-medium text-warning-text' : 'text-muted-foreground')"
+            >
+              {{ $t("settings.sso.form.skipLocalTotpConsequence") }}
+            </p>
+            <p id="oidc-skip-totp-hint" class="text-xs text-muted-foreground">
+              {{ $t("settings.sso.form.skipLocalTotpHint") }}
+            </p>
+          </div>
+
           <DialogFooter>
             <DialogClose as-child>
               <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
@@ -638,6 +716,17 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <!-- Turning on the provider-trusted second factor asks for a fresh step-up. -->
+    <StepUpDialog
+      :step-up="skipStepUp"
+      :title="$t('settings.sso.skipStepUp.title')"
+      :description="$t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || form.issuer.trim() })"
+      :submit-label="$t('settings.sso.skipStepUp.submit')"
+      :submit-icon="ShieldOff"
+      :audit="$t('settings.sso.skipStepUp.audit')"
+      test-id="sso-skip-step-up"
+    />
 
     <!-- Disabling the last enabled provider -->
     <ConfirmDialog

@@ -15,7 +15,7 @@
  * Every way out (Cancel, Escape, a click outside) goes through cancel(), so
  * whatever waits on the grant ends instead of staying pending.
  */
-import { useId } from "vue";
+import { useId, type Component } from "vue";
 import { Eye, KeyRound, RefreshCw } from "lucide-vue-next";
 
 import type { useStepUp } from "@/composables/useStepUp";
@@ -30,6 +30,8 @@ const props = withDefaults(
     title: string;
     description: string;
     submitLabel: string;
+    /** The submit button's icon; a reveal's eye unless the caller names another. */
+    submitIcon?: Component;
     /** Shown under the passcode field: where the reveal is recorded. */
     audit?: string;
     /** Open in confirm mode, independent of the step-up handle's own open state. */
@@ -99,7 +101,7 @@ function cancel(): void {
           </Button>
           <Button type="submit" :disabled="!!pending || !code.trim()" :data-testid="`${testId}-submit`">
             <RefreshCw v-if="pending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
-            <Eye v-else class="size-4" aria-hidden="true" />
+            <component :is="submitIcon ?? Eye" v-else class="size-4" aria-hidden="true" />
             {{ submitLabel }}
           </Button>
         </div>

@@ -204,7 +204,7 @@ export default {
       guide: "配置指南",
       explainer: {
         title: "带 PKCE 的授权码流程",
-        body: "Lattice 使用带 PKCE 的授权码流程与各提供方进行认证。启用后,SSO 登录之后仍会强制执行 Lattice 本地的 TOTP 第二因子,单点登录绝不会绕过 2FA。客户端密钥为只写,API 永不返回。",
+        body: "Lattice 使用带 PKCE 的授权码流程与各提供方进行认证。账号启用了 Lattice 本地 TOTP 第二因子时,通过提供方登录后仍会要求输入验证码,除非管理员将该提供方设为可代替这一步。客户端密钥为只写,API 永不返回。",
         guideLink: "打开 OIDC 提供方配置指南",
       },
       list: {
@@ -221,6 +221,8 @@ export default {
         allowedDomains: "允许的域名",
         actions: "操作",
         anyDomain: "任意",
+        skipsLocalCode: "免本地验证码",
+        skipsLocalCodeTitle: "通过该提供方登录,无需身份验证器验证码即可打开控制台",
       },
       form: {
         editTitle: "编辑身份提供方",
@@ -262,7 +264,20 @@ export default {
         allowedDomainsHint: "以逗号分隔。留空则允许任意已验证的邮箱域名。",
         allowedDomainsGuide: "可选的已验证邮箱域名 allowlist。只有当该 IdP 下所有用户都可登录时才留空。",
         enabled: "启用(在登录页提供该提供方)",
+        skipLocalTotp: "通过该提供方登录后跳过本地身份验证器验证码",
+        skipLocalTotpConsequence: "任何人只要使用已登录运维人员在该提供方账号的浏览器,就能不输入身份验证器验证码直接打开控制台。",
+        skipLocalTotpHint:
+          "每个账号仍需输入一次验证码:开启后首次通过该提供方登录时,以及修改密码、重置二次验证或吊销会话之后。恢复码不算。密码登录和敏感操作的二次确认始终要求验证码。",
         disableLastWarning: "这是唯一启用的提供方。关闭后,登录页将对所有人隐藏 SSO 入口。",
+      },
+      skipStepUp: {
+        title: "开启前请确认身份",
+        description: "开启后,通过 {name} 登录无需身份验证器验证码即可打开控制台。请输入验证码或使用通行密钥,确认是你本人。",
+        submit: "确认并保存",
+        audit: "此次修改会连同新旧设置记入审计日志。",
+        required: "开启此项需要重新验证第二因子。",
+        failed: "无法验证第二因子。",
+        passkeyFailed: "无法验证通行密钥。",
       },
       disableLastTitle: "停用唯一的 SSO 提供方？",
       disableLastDescription:

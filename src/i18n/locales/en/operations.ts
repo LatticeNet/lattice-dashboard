@@ -873,6 +873,8 @@ export default {
         webauthnRename: "Passkey renamed",
         webauthnDelete: "Passkey removed",
         loginOidc: "Signed in with single sign-on",
+        loginOidcTotpSkipped: "Signed in with single sign-on, local code skipped by provider policy",
+        loginOidcSecondFactorConfirmed: "Confirmed a single sign-on account with the authenticator code",
         loginTotp: "Signed in with a one-time code",
         loginTotpRecoveryUsed: "Signed in with a recovery code",
         loginWebauthn: "Signed in with a passkey",
