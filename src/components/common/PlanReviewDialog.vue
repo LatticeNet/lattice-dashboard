@@ -96,6 +96,12 @@ const props = withDefaults(
     approvalsLabel?: string;
     /** Target route for the "go to approvals" CTA. */
     approvalsTo?: string;
+    /**
+     * Where focus lands when the dialog closes, as ConfirmDialog takes it.
+     * Left out, it returns to what had focus when the dialog opened, which
+     * is gone when a form or a row menu item filed the plan.
+     */
+    returnFocus?: () => HTMLElement | null;
   }>(),
   {
     planText: "",
@@ -113,8 +119,16 @@ const props = withDefaults(
     approveLabel: "Approve",
     approvalsLabel: "Go to approvals",
     approvalsTo: "/approvals",
+    returnFocus: undefined,
   },
 );
+
+function onCloseAutoFocus(event: Event) {
+  const target = props.returnFocus?.();
+  if (!target?.isConnected) return;
+  event.preventDefault();
+  target.focus();
+}
 
 const emit = defineEmits<{
   /** v-model:open update. */
@@ -141,7 +155,7 @@ const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "she
 
 <template>
   <Dialog :open="props.open" @update:open="setOpen">
-    <DialogScrollContent class="sm:max-w-2xl">
+    <DialogScrollContent class="sm:max-w-2xl" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader>
         <DialogTitle>{{ props.title }}</DialogTitle>
         <DialogDescription>{{ props.description }}</DialogDescription>
@@ -163,6 +177,10 @@ const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "she
             </Badge>
           </slot>
         </div>
+
+        <!-- A JSON plan read for the reviewer (the agent.mirrors readout)
+             comes before its text; the text below stays what is hashed. -->
+        <slot name="summary" />
 
         <!-- The plan as text nodes (CSP-safe, NOT v-html), coloured only
              when it declares itself shell; Copy copies planText itself. -->

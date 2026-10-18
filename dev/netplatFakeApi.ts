@@ -13,7 +13,7 @@
  *
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
- *                     dns, monitors, tunnels, geo, agents, release, artifacts,
+ *                     dns, monitors, tunnels, geo, agents, release, artifacts, mirrors, groups,
  *                     webhooks, channels, rules, deliveries, sent, catalogue, users, tokens, oidc,
  *                     version, capabilities, machines, vpnusers, shares, witness
  *   ?ddns=empty       no DDNS profiles
@@ -24,6 +24,8 @@
  *   ?users=slow       the account list answers after 1.5 s
  *   ?system=...       the System page's fixture (dev/systemFixture.ts lists its modes)
  *   ?probe=...        the outbound probe on the System page (same file)
+ *   ?import=full      an agent import verifies but is not stored (the store is full), with the server's note
+ *   ?confined         the session is confined to six nodes (netplatMirrorsFixture.ts)
  *
  * Page fixtures carry their own switches (netplatPolicyFixture,
  * netplatPluginsFixture, ...); each file's header lists them.
@@ -37,6 +39,8 @@ import type {
   NotifyRuleUpsertRequest,
   OIDCProviderUpsertRequest,
   WitnessPlanRequest,
+  AgentMirrorPlanRequest,
+  ApprovalListParams,
   Principal,
   TokenCreateRequest,
   UserCreateRequest,
@@ -50,6 +54,7 @@ import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netpla
 import { cataloguePage, sentPage, testStoredChannel } from "./netplatSentFixture";
 import { planWitness, witnessStatus } from "./netplatWitnessFixture";
 import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
+import { CONFINED_TO, MIRROR_GROUPS, mirrorApprovals, mirrorsView, planMirror } from "./netplatMirrorsFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
@@ -86,7 +91,7 @@ const principal: Principal = {
     : flags.has("readonly")
       ? ["node:read", "ddns:read", "netpolicy:read", "audit:read", "dns:read", "geo:read", "tunnel:read", "notify:read"]
       : ["*"],
-  server_allowlist: [],
+  server_allowlist: CONFINED_TO,
   csrf_token: "harness",
 };
 
@@ -118,7 +123,8 @@ export const api = {
       systemRead(() => systemSeries(owner, series, range, points, flags.get("system"))),
   },
   nodes: {
-    list: () => read("nodes", () => ({ nodes: NODES.map((node) => ({ ...node })) })),
+    // ?confined: a node-restricted session reads only its own nodes.
+    list: () => read("nodes", () => ({ nodes: NODES.filter((node) => !CONFINED_TO.length || CONFINED_TO.includes(node.id)).map((node) => ({ ...node })) })),
   },
   /* Settings: Access (users, tokens, SSO), About, Capability Gates. */
   users: {
@@ -379,9 +385,19 @@ export const api = {
       if (at >= 0) AGENT_POLICIES.splice(at, 1);
       return { ok: true };
     },
-    importArtifact: async () => {
+    importArtifact: async (input: { version: string; arch: string }) => {
       await delay(undefined, WRITE_MS);
-      return AGENT_ARTIFACTS.artifacts[0];
+      const artifact = AGENT_ARTIFACTS.artifacts.find((entry) => entry.arch === input.arch) ?? AGENT_ARTIFACTS.artifacts[0]!;
+      // lattice-server importAgentArtifact when the store is full: 200, stored false, and why.
+      if (flags.get("import") === "full") {
+        return { ...artifact, version: input.version === "latest" ? artifact.version : input.version, stored: false, note: "recorded the verified digest and chunk manifest without storing the bytes: agent release storage is full" };
+      }
+      return { ...artifact, stored: true };
+    },
+    mirrors: () => read("mirrors", () => mirrorsView()),
+    planMirror: async (input: AgentMirrorPlanRequest) => {
+      await delay(undefined, WRITE_MS);
+      return planMirror(input);
     },
     deleteArtifact: async () => {
       await delay(undefined, WRITE_MS);
@@ -470,7 +486,11 @@ export const api = {
     },
   },
   approvals: {
-    list: () => read("approvals", () => ({ approvals: AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
+    list: (params?: ApprovalListParams) =>
+      read("approvals", () => ({ approvals: mirrorApprovals(params) ?? AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
+  },
+  groups: {
+    list: () => read("groups", () => ({ groups: MIRROR_GROUPS.map((group) => ({ ...group })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } })),
   },
   /* The share list, read by the command palette (tokens included, as the server sends them). */
   subscriptionShares: {

@@ -79,6 +79,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import ApprovalReview from "./ApprovalReview.vue";
+import { AGENT_MIRRORS_PLUGIN, isNodeConfined, mirrorPlanStale, parseAgentMirrorPlan, parseSourceList } from "@/views/platform/agentMirrorsModel";
 import {
   UNKNOWN_WRITER,
   agentUpdateStaleValueKind,
@@ -109,6 +110,7 @@ import {
   AUTO_LAYER,
   HISTORY_RANGES,
   HISTORY_STATUSES,
+  appliesOnApproval,
   approvesWithoutQueue,
   defaultApprovalLayer,
   historyRequest,
@@ -349,6 +351,7 @@ function extraScope(approval: ApprovalView): string {
     case "nftpolicy":
       return "netpolicy:admin";
     case "agentupdate":
+    case "agent.mirrors":
       return "node:admin";
     case "selfdns":
       return "dns:admin";
@@ -363,12 +366,55 @@ function extraScope(approval: ApprovalView): string {
 
 function canDecide(approval?: ApprovalView): boolean {
   if (!approval || !canApply.value) return false;
+  // agentMirrorsApprove: the registry steers every node, so only node:admin
+  // over the whole fleet decides it, never a session confined to some nodes.
+  if (approval.plugin === AGENT_MIRRORS_PLUGIN && isNodeConfined(auth.principal?.server_allowlist)) return false;
   const scope = extraScope(approval);
   return scope === "" || auth.can(scope);
 }
 
+/*
+ * A registry plan (agent.mirrors, design 31 S5) is stale when it is still
+ * pending and was made against an older registry revision: the server would
+ * refuse it. The listing carries no plan text, so the base revisions of the
+ * pending registry plans and the registry's revision now are read once,
+ * together, whenever the inbox holds one, and every 30 s while it does.
+ */
+const pendingMirrorIds = computed(() => inbox.value.filter((row) => row.plugin === AGENT_MIRRORS_PLUGIN && row.status === "pending").map((row) => row.id));
+const mirrorStaleQuery = useAsyncData<{ revision?: number; bases: Map<string, number> }>(
+  async (signal) => {
+    if (!pendingMirrorIds.value.length || !auth.can("node:read")) return { revision: undefined, bases: new Map() };
+    const [view, rows] = await Promise.all([
+      api.agentUpdates.mirrors({ signal }),
+      api.approvals.list({ plugin: AGENT_MIRRORS_PLUGIN, status: "pending", include: "plan" }, { signal }).then((r) => unwrap(r, "approvals")),
+    ]);
+    const bases = new Map<string, number>();
+    for (const row of rows) {
+      const plan = parseAgentMirrorPlan(row.plan);
+      if (plan) bases.set(row.id, plan.base_revision);
+    }
+    return { revision: view.revision, bases };
+  },
+  { pollInterval: 30_000 },
+);
+watch(
+  () => pendingMirrorIds.value.join(","),
+  () => void mirrorStaleQuery.refresh(),
+);
+const registryRevision = computed(() => mirrorStaleQuery.data.value?.revision);
+
+function mirrorPlanBase(approval: ApprovalView): number | undefined {
+  return mirrorStaleQuery.data.value?.bases.get(approval.id) ?? parseAgentMirrorPlan(approval.plan)?.base_revision;
+}
+
+function isStaleMirrorPlan(approval?: ApprovalView): boolean {
+  if (!approval || approval.plugin !== AGENT_MIRRORS_PLUGIN) return false;
+  const base = mirrorPlanBase(approval);
+  return mirrorPlanStale(approval.status, base === undefined ? undefined : { base_revision: base }, registryRevision.value);
+}
+
 function isStale(approval?: ApprovalView): boolean {
-  return isStaleAgentUpdateApprovalView(approval);
+  return isStaleAgentUpdateApprovalView(approval) || isStaleMirrorPlan(approval);
 }
 
 /**
@@ -377,9 +423,26 @@ function isStale(approval?: ApprovalView): boolean {
  * grouped with its unit (two sizes a few bytes apart must not both read
  * 5.3 MiB), a flag is on or off.
  */
+/** One source of an order, as the Mirrors layer names it; "*" marks an entry that changed in place. */
+function staleSource(source: ReturnType<typeof parseSourceList>[number]): string {
+  const name =
+    source.kind === "mirror"
+      ? t("platform.agentUpdatesPage.mirrors.source.mirror", { id: source.mirror ?? "" })
+      : source.kind === "controlPlane"
+        ? t("platform.agentUpdatesPage.mirrors.source.controlPlane")
+        : source.kind === "upstream"
+          ? t("platform.agentUpdatesPage.mirrors.source.upstream")
+          : source.raw;
+  return source.changed ? t("platform.agentUpdatesPage.mirrors.source.changedInPlace", { source: name }) : name;
+}
+
 function staleValue(field: AgentUpdateStaleField, value: string): string {
   const kind = agentUpdateStaleValueKind(field);
   if (!value || (kind === "bytes" && value === "0")) return t("operations.approvals.staleWhy.none");
+  if (kind === "sources") {
+    const sources = parseSourceList(value);
+    return sources.length ? sources.map(staleSource).join(t("operations.approvals.staleWhy.sourceSeparator")) : t("operations.approvals.staleWhy.none");
+  }
   if (kind === "bytes" && /^\d+$/.test(value)) return t("operations.approvals.staleWhy.bytes", { n: Number(value).toLocaleString(locale.value) });
   if (kind === "flag" && (value === "true" || value === "false")) return t(`operations.approvals.staleWhy.flag.${value}`);
   return value;
@@ -393,6 +456,9 @@ function staleValue(field: AgentUpdateStaleField, value: string): string {
  * server wrote it. The raw text stays available through staleRaw.
  */
 function staleReason(approval?: ApprovalView): string {
+  if (approval && isStaleMirrorPlan(approval)) {
+    return t("operations.approvals.mirrorStale.reason", { planned: mirrorPlanBase(approval) ?? "?", current: registryRevision.value ?? "?" });
+  }
   if (!approval || approval.plugin !== "agentupdate") return "";
   const raw = approval.reason?.trim() ?? "";
   if (!(approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED)) return raw;
@@ -674,7 +740,13 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
     await api.approvals.approve(approval.id, queueApply, await decisionDigest(approval));
     decidedOpenId = approval.id;
     rememberSheetDecision(approval);
-    toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
+    toast.success(
+      appliesOnApproval(approval)
+        ? t("operations.approvals.toastApplied")
+        : queueApply
+          ? t("operations.approvals.toastQueued")
+          : t("operations.approvals.toastRecorded"),
+    );
     // The sheet stays open on the decided plan and its footer is gone.
     if (sheet.openId.value === approval.id) focusSheetTitle();
   } catch (error) {
@@ -1338,7 +1410,10 @@ function refreshAll(): void {
                       · {{ $t('operations.approvals.events.newest', { age: formatRelativeTime(group.newestCreatedAt) }) }}
                     </p>
                   </div>
-                  <Badge v-if="group.isSystem" variant="secondary" class="shrink-0">{{ $t('operations.approvals.events.systemBadge') }}</Badge>
+                  <span class="flex shrink-0 flex-wrap items-center gap-1">
+                    <Badge v-if="group.items.some(isStaleMirrorPlan)" variant="outline" data-testid="approvals-card-stale">{{ $t('operations.approvals.staleBadge') }}</Badge>
+                    <Badge v-if="group.isSystem" variant="secondary">{{ $t('operations.approvals.events.systemBadge') }}</Badge>
+                  </span>
                 </div>
                 <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <span v-for="id in nodePreview(group).ids" :key="id" class="max-w-48 truncate rounded border border-border px-1.5 py-0.5">
@@ -1668,6 +1743,7 @@ function refreshAll(): void {
         :can-replan="canReplan(openRecord)"
         :can-dismiss-stale="canDismissStale(openRecord)"
         :can-dismiss-waiting="canDismissWaiting(openRecord)"
+        :registry-revision="registryRevision"
         :dismissing="dismissing === openRecord.id"
         :replanning="replanning === openRecord.id"
         :decision-error="decisionError?.id === openRecord.id ? decisionError.message : null"
@@ -1685,9 +1761,16 @@ function refreshAll(): void {
         <Button type="button" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, true)">
           <RefreshCw v-if="pending === openRecord.id" class="size-4 animate-spin" aria-hidden="true" />
           <Play v-else class="size-4" aria-hidden="true" />
-          {{ $t('operations.approvals.approveAndQueue') }}
+          {{ appliesOnApproval(openRecord) ? $t('operations.approvals.approveAndApply') : $t('operations.approvals.approveAndQueue') }}
         </Button>
         <RowMenu v-if="approvesWithoutQueue(openRecord)" align="start" :name="changeLabel(openRecord)" :items="approveWithoutQueueMenu(openRecord)" />
+        <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
+          <Ban class="size-4" aria-hidden="true" />
+          {{ $t('operations.approvals.reject') }}
+        </Button>
+      </template>
+      <!-- A stale registry plan: approving it would be refused, so only Reject stays; the review links to a fresh plan. -->
+      <template v-else-if="openRecord && openRecord.status === 'pending' && isStaleMirrorPlan(openRecord)" #actions>
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}

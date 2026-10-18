@@ -7,6 +7,10 @@
  * Names follow production's pattern. Addresses are documentation ranges
  * (203.0.113.0/24, 198.51.100.0/24, 2001:db8::/32), and which node is offline,
  * which runs which agent version, are invented to production's counts.
+ *
+ * `?fleet=40` adds six invented nodes, fixture-edge-35 to fixture-edge-40,
+ * for renders at the 40-node fleet size design 31's Mirrors review asked
+ * for; without it every page sees production's 34.
  */
 import type { Node, NodeStatus } from "@/lib/api/index";
 
@@ -75,6 +79,16 @@ const FLEET: FleetEntry[] = [
   { name: "gomami-hk-turin-mini", v4: "203.0.113.42", tags: ["openjobs-vpn"] },
   { name: "mkcloud-hr-iplc", v4: "203.0.113.43", tags: ["openjobs-vpn"] },
 ];
+
+const FLEET_40: FleetEntry[] = [
+  { name: "fixture-edge-35", v4: "203.0.113.51", tags: ["fixture"] },
+  { name: "fixture-edge-36", v4: "203.0.113.52", tags: ["fixture"] },
+  { name: "fixture-edge-37", v4: "203.0.113.53", agent: "0.3.8", tags: ["fixture"] },
+  { name: "fixture-edge-38", v4: "203.0.113.61", tags: ["fixture", "NAT"] },
+  { name: "fixture-edge-39", v4: "203.0.113.62", tags: ["fixture"] },
+  { name: "fixture-edge-40", v4: "203.0.113.33", tags: ["fixture"] },
+];
+if (flags.get("fleet") === "40") FLEET.push(...FLEET_40);
 
 /**
  * Where a node sits, by the provider and city in its name (invented to that

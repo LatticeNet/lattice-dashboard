@@ -36,6 +36,8 @@ export default {
       diffTruncated: "Plan too large to diff: showing new content.",
       approveOnly: "Approve without queueing",
       approveAndQueue: "Approve and queue",
+      // A plan whose effect is the control plane's own state (agent.mirrors): nothing is queued, it applies on approval.
+      approveAndApply: "Approve and apply",
       reject: "Reject",
       rejectTitle: "Reject {change} on {node}?",
       rejectConfirm: "This closes the plan without queuing any task.",
@@ -43,6 +45,7 @@ export default {
       applyRequired: "Approving a plan needs `network:apply` plus the admin scope of the plugin that produced it.",
       toastQueued: "Approved and queued. The node applies it once its agent picks the task up.",
       toastRecorded: "Approved without queueing, so no node will apply this plan.",
+      toastApplied: "Approved and applied. The next update plan for each node reads the changed registry.",
       toastRejected: "Approval rejected",
       toastDismissed: "Approval dismissed",
       toastFailed: "Approval failed",
@@ -94,13 +97,23 @@ export default {
         witnessConfigure: "Set up the control-plane witness",
         witnessRemove: "Remove the control-plane witness",
         nodeBeacon: "Open, change or close a node's beacon",
+        agentMirrors: "Change the agent download mirrors",
         generic: "{action} ({plugin})",
+      },
+      /** A registry plan (agent.mirrors) made against an older registry revision. */
+      mirrorStale: {
+        title: "The mirror registry changed since this plan was made",
+        description: "Approving it would be refused. File a fresh plan from Agent updates, or reject this one.",
+        reason: "Made against registry revision {planned}; the registry is at revision {current} now.",
+        freshPlan: "File a fresh plan",
       },
       /** An agent update plan's stale reason, read from the server's English (approvalsModel.describeAgentUpdateStale). */
       staleWhy: {
         changed: "The update policy changed after this plan was written: {changes}.",
         change: "{field} {planned}\u00a0→ {current}",
         listSeparator: "; ",
+        /** Between the sources of one order, which is read first to last. */
+        sourceSeparator: ", then ",
         none: "(none)",
         flag: { true: "on", false: "off" },
         bytes: "{n} bytes",
@@ -117,6 +130,8 @@ export default {
           compressed_sha256: "compressed checksum",
           compressed_size: "compressed size",
           binary_size: "binary size",
+          sources: "download sources",
+          chunk_manifest: "chunk manifest",
         },
         causes: {
           policyMissing: "This node no longer has an update policy.",

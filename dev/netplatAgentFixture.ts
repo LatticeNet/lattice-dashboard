@@ -15,6 +15,11 @@
  * budget, and the second pass goes to the source with the largest share of
  * its own file. Nodes past the list carry none, as most of a fleet does
  * before its first walk. `?fetch=none` drops them all.
+ *
+ * Two records come from plans that list mirrors (design 31 S5,
+ * netplatMirrorsFixture.ts): hk-cache, first for a NAT node, sent its whole
+ * file wrong, the manifest check cut it back and the control plane finished;
+ * and r2, global, finished for a node whose control plane fetch was refused.
  */
 import type { AgentArtifactListing, AgentReleaseInfo, AgentUpdateFetch, AgentUpdatePolicy, ApprovalView } from "@/lib/api/index";
 
@@ -81,6 +86,25 @@ const FETCH_LINES: Array<[ageHours: number, FetchLine]> = [
   [30, { exit_code: 0, stage: "done" }],
   // No systemd: the script stops before any fetch.
   [50, { exit_code: 1, stage: "prepare" }],
+  // A mirror listed first sent wrong bytes fast: 3 of its chunks failed the
+  // manifest, the script kept the 3 chunks before them and moved on.
+  [4, {
+    fetches: [
+      { source: 1, kind: "m.hk-cache", exit_code: 0, bytes: 786_432, seconds: 3, bad_chunks: 3 },
+      { source: 2, kind: "cp.gz", exit_code: 0, bytes: PACKED, seconds: 44 },
+    ],
+    exit_code: 0,
+    stage: "done",
+  }],
+  // The control plane refused the ranged request (HTTP error); the global R2 mirror finished.
+  [6, {
+    fetches: [
+      { source: 1, kind: "cp.gz", exit_code: 22, bytes: 0, seconds: 1 },
+      { source: 2, kind: "m.r2", exit_code: 0, bytes: PLAIN, seconds: 19 },
+    ],
+    exit_code: 0,
+    stage: "done",
+  }],
 ];
 
 function lastFetch(index: number): AgentUpdateFetch | undefined {
@@ -88,7 +112,7 @@ function lastFetch(index: number): AgentUpdateFetch | undefined {
   const entry = FETCH_LINES[index];
   if (!entry) return undefined;
   const [ageHours, line] = entry;
-  return { ...line, approval_id: `approval_${"qrstuvwx"[index]}3v7q2mzx5c4b6na`, target_version: LATEST_AGENT, at: iso(-ageHours * HOUR) };
+  return { ...line, approval_id: `approval_${"qrstuvwxyz"[index]}3v7q2mzx5c4b6na`, target_version: LATEST_AGENT, at: iso(-ageHours * HOUR) };
 }
 
 export const AGENT_POLICIES: AgentUpdatePolicy[] = NODES.filter((node) => node.id !== withoutPolicy).map((node, index) => {

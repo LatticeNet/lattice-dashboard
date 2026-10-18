@@ -9,6 +9,7 @@
  *   open http://127.0.0.1:5185/dev/approvals.html?state=small   (the eleven hand-written rows only)
  *   open http://127.0.0.1:5185/dev/approvals.html?scope=read
  *   open http://127.0.0.1:5185/dev/approvals.html?legacy=1      (every listing carries plan text, as before)
+ *   open http://127.0.0.1:5185/dev/approvals.html?mirrors=current (the registry is at the revision the pending agent.mirrors plan was made against, so it is not stale)
  *
  * The default fixture is a fleet's worth: production's 1,084 applied and 190
  * rejected rows, a pending wave, and every way an approved change can be
@@ -22,7 +23,7 @@
  * nothing.
  */
 import type { ApprovalView, Principal } from "@/lib/api/index";
-import { HAND_WRITTEN, buildApprovalsFixture, fakeApprovalsApi, isLineChain, type FakeRequest } from "./approvalsFixture";
+import { HAND_WRITTEN, MIRROR_GROUPS, buildApprovalsFixture, fakeApprovalsApi, isLineChain, type FakeRequest } from "./approvalsFixture";
 
 export * from "@/lib/api/index";
 
@@ -52,7 +53,7 @@ function find(id: string): ApprovalView | undefined {
 // A read-only operator must be able to see the explanation and be told plainly
 // that the exits are not theirs to take.
 const READ_ONLY_SCOPES = ["node:read", "approval:read", "task:read", "audit:read"];
-const FULL_SCOPES = [...READ_ONLY_SCOPES, "network:apply", "network:plan", "node:admin", "netpolicy:admin", "proxy:admin", "sshguard:admin"];
+const FULL_SCOPES = [...READ_ONLY_SCOPES, "group:read", "network:apply", "network:plan", "node:admin", "netpolicy:admin", "proxy:admin", "sshguard:admin"];
 
 const principal: Principal = {
   actor_id: "cdcd",
@@ -89,9 +90,15 @@ export const api = {
         return Promise.reject(new Error(`${approval.plugin} approvals must queue their apply task: approve with queue_apply, since an approval approved without one can never be applied`));
       }
       if (!queue_apply && isLineChain(approval)) return Promise.reject(new Error("line chain approvals must atomically queue their apply task"));
-      approval.status = "approved";
       approval.approved_by = "cdcd";
       approval.updated_at = new Date().toISOString();
+      // agentMirrorsApprove: the registry is the control plane's own state, so the plan applies at once.
+      if (approval.plugin === "agent.mirrors") {
+        approval.status = "applied";
+        approval.waiting = undefined;
+        return delay(undefined);
+      }
+      approval.status = "approved";
       approval.waiting = queue_apply
         ? {
             code: "task_queued",
@@ -134,8 +141,14 @@ export const api = {
   },
   agentUpdates: {
     plan: () => Promise.reject(new Error("fake api: re-planning is not implemented in the approvals harness")),
+    // The registry has moved past the revision the pending agent.mirrors
+    // fixture plan was made against (7), so it reads stale; ?mirrors=current
+    // keeps the registry at 7.
+    mirrors: () => delay({ mirrors: [], revision: query("mirrors") === "current" ? 7 : 8, order: [], pending: [], health: [] }),
   },
   nodes: { list: () => delay({ nodes: [] }) },
+  // The agent.mirrors review names prefer_for groups by name.
+  groups: { list: () => delay({ groups: MIRROR_GROUPS.map((group) => ({ ...group, resolved_members: group.members, rollup: { total: group.members.length, online: group.members.length, offline: 0, disabled: 0 } })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } }) },
   // The plan sheet lists the tasks a plan queued; this harness holds none.
   tasks: { query: (params?: Record<string, unknown>) => delay({ tasks: [], total: 0, limit: Number(params?.limit ?? 20), offset: 0 }) },
   audit: unimplemented,

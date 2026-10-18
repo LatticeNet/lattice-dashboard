@@ -222,11 +222,25 @@ function isLineChainApproval(approval: QueueGateFields): boolean {
 }
 
 /**
+ * Plugins whose plan changes the control plane's own state when it is
+ * approved and queues no node task (agentMirrorsApprove in server.go: an
+ * agent.mirrors approval becomes applied at once, whatever queue_apply
+ * says). The sheet calls the decision "Approve and apply" for these and
+ * offers no unqueued variant, since there is nothing to queue.
+ */
+export const APPLIES_ON_APPROVAL_PLUGINS = ["agent.mirrors"] as const;
+
+export function appliesOnApproval(approval: Pick<ApprovalView, "plugin">): boolean {
+  return (APPLIES_ON_APPROVAL_PLUGINS as readonly string[]).includes(approval.plugin);
+}
+
+/**
  * Whether the sheet offers "Approve without queueing" beside "Approve and
  * queue". Every other kind may be approved and left unqueued; its waiting
  * reason then says nothing will run on its own.
  */
 export function approvesWithoutQueue(approval: QueueGateFields): boolean {
   if ((QUEUE_REQUIRED_PLUGINS as readonly string[]).includes(approval.plugin)) return false;
+  if (appliesOnApproval(approval)) return false;
   return !isLineChainApproval(approval);
 }

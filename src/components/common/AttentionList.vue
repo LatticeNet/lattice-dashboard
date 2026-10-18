@@ -12,14 +12,15 @@
  */
 import { computed, ref } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
-import { AlertTriangle, Info, OctagonAlert } from "lucide-vue-next";
+import { AlertTriangle, Info, OctagonAlert, RefreshCw } from "lucide-vue-next";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ATTENTION_DEFAULT_MAX, attentionView, type AttentionItem as ModelItem } from "./attentionModel";
 
 export interface AttentionItem extends ModelItem {
-  action?: { label: string; to?: RouteLocationRaw; run?: () => void };
+  /** busy: the action's request is in flight; the button shows it and takes no second click. */
+  action?: { label: string; to?: RouteLocationRaw; run?: () => void; busy?: boolean };
   /**
    * Where the cause most likely sits, with what that rests on (Monitoring's
    * triangulation, design 29 D13): a label, never a state of its own.
@@ -83,7 +84,8 @@ const ICON_TONE = { danger: "text-destructive", warning: "text-warning-text", in
           <Button v-if="item.action.to" variant="outline" size="sm" as-child>
             <RouterLink :to="item.action.to">{{ item.action.label }}</RouterLink>
           </Button>
-          <Button v-else variant="outline" size="sm" type="button" @click="item.action.run?.()">
+          <Button v-else variant="outline" size="sm" type="button" :disabled="item.action.busy" :aria-busy="item.action.busy || undefined" @click="item.action.run?.()">
+            <RefreshCw v-if="item.action.busy" class="size-4 animate-spin" aria-hidden="true" />
             {{ item.action.label }}
           </Button>
         </div>
