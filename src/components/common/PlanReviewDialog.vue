@@ -164,6 +164,10 @@ const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "she
           </slot>
         </div>
 
+        <!-- A JSON plan read for the reviewer (the agent.mirrors readout)
+             comes before its text; the text below stays what is hashed. -->
+        <slot name="summary" />
+
         <!-- The plan as text nodes (CSP-safe, NOT v-html), coloured only
              when it declares itself shell; Copy copies planText itself. -->
         <ScriptView

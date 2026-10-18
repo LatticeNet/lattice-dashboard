@@ -10,7 +10,9 @@
  * row opens the node's policy in the sheet on `?open=`. "Plan behind nodes"
  * files one plan per behind node with a policy, after a confirm that names
  * each one and the ones it cannot plan. The release card and the binaries the
- * control plane serves itself move to a Distribution layer on `?view=`.
+ * control plane serves itself move to a Distribution layer on `?view=`, and
+ * the download mirrors with every node's source order (design 31 S5) to a
+ * Mirrors layer beside it.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -35,6 +37,7 @@ import {
   isStaleAgentUpdateApprovalView,
   type AgentArtifactListing,
   type AgentArtifactView,
+  type AgentMirrorsView,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
   type AgentReleaseCandidate,
@@ -81,6 +84,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import AgentFetchReadout from "./AgentFetchReadout.vue";
+import AgentMirrorsLayer from "./AgentMirrorsLayer.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -177,6 +181,13 @@ const artifactStorageLabel = computed(() =>
 const importVersion = ref("");
 const importArches = ref<string[]>(["amd64"]);
 const importing = ref(false);
+/**
+ * Imports that verified but were not stored (design 31 S5: the store was
+ * full). The control plane recorded the digest and chunk manifest, so
+ * mirrors and plans can use the version, but it does not serve the bytes;
+ * the server's note stays under the form until the next import.
+ */
+const importNotes = ref<Array<{ key: string; version: string; arch: string; note?: string }>>([]);
 
 function toggleImportArch(arch: string, on: boolean): void {
   const next = new Set(importArches.value);
@@ -191,14 +202,23 @@ async function runImport(): Promise<void> {
   if (importing.value || !importArches.value.length) return;
   const version = importVersion.value.trim() || "latest";
   importing.value = true;
+  importNotes.value = [];
   let failed = 0;
   try {
     for (const arch of importArches.value) {
       try {
-        const stored = await api.agentUpdates.importArtifact({ version, os: "linux", arch });
-        toast.success(
-          t("platform.agentUpdates.importDone", { version: stored.version, arch: stored.arch }),
-        );
+        const imported = await api.agentUpdates.importArtifact({ version, os: "linux", arch });
+        // A server from before S5 sends no `stored`; its imports always stored the bytes.
+        if (imported.stored === false) {
+          importNotes.value = [...importNotes.value, { key: `${imported.version}/${imported.arch}`, version: imported.version, arch: imported.arch, note: imported.note }];
+          toast.warning(t("platform.agentUpdates.importRecorded", { version: imported.version, arch: imported.arch }), {
+            description: imported.note || t("platform.agentUpdates.importRecordedHint"),
+            duration: 15_000,
+            closeButton: true,
+          });
+        } else {
+          toast.success(t("platform.agentUpdates.importDone", { version: imported.version, arch: imported.arch }));
+        }
       } catch (error) {
         failed += 1;
         toast.error(
@@ -248,6 +268,13 @@ function nodeName(id: string): string {
 function staleApprovalCount(nodeId: string): number {
   return staleApprovalsByNode.value.get(nodeId)?.length ?? 0;
 }
+
+// ── Download mirrors (design 31 S5) ──────────────────────────────────────────
+// Read here rather than in the layer so the tab carries its count; the layer
+// owns everything else.
+const mirrorsQuery = useAsyncData<AgentMirrorsView>((signal) => api.agentUpdates.mirrors({ signal }), {
+  pollInterval: 30000,
+});
 
 const artifactColumns = computed<DataTableColumn<AgentArtifactView>[]>(() => [
   { key: "version", label: t("platform.agentUpdates.artifactColVersion"), sortable: true },
@@ -566,7 +593,7 @@ watch(
 
 provideNodeDirectory(computed(() => nodesQuery.data.value));
 
-const LAYERS = ["nodes", "distribution"] as const;
+const LAYERS = ["nodes", "distribution", "mirrors"] as const;
 type Layer = (typeof LAYERS)[number];
 const layer = useLayer<Layer>(() => LAYERS, () => "nodes");
 
@@ -682,6 +709,7 @@ function refreshAll(): void {
   void releaseQuery.refresh();
   if (canPlan.value) void approvalsQuery.refresh();
   void artifactsQuery.refresh();
+  void mirrorsQuery.refresh();
 }
 
 const sheet = useRouteOpen();
@@ -733,6 +761,7 @@ const attention = computed<AttentionItem[]>(() => {
 const layerTabs = computed<LayerTab<Layer>[]>(() => [
   { value: "nodes", label: t("platform.agentUpdatesPage.layers.nodes"), count: nodesQuery.data.value !== undefined ? nodes.value.length : undefined },
   { value: "distribution", label: t("platform.agentUpdatesPage.layers.distribution"), count: artifactsQuery.data.value !== undefined ? artifacts.value.length : undefined },
+  { value: "mirrors", label: t("platform.agentUpdatesPage.layers.mirrors"), count: mirrorsQuery.data.value !== undefined ? mirrorsQuery.data.value.mirrors.length : undefined },
 ]);
 
 const STANDING_TONE: Record<AgentStanding, string> = {
@@ -1024,7 +1053,7 @@ const deleteImpact = computed(() => {
     </template>
 
     <!-- Distribution: the release the control plane follows, and the binaries it serves itself. -->
-    <template v-else>
+    <template v-else-if="layer === 'distribution'">
       <section class="space-y-2" aria-labelledby="agent-release-heading">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="agent-release-heading" class="text-sm font-medium">{{ $t('platform.agentUpdates.releaseTitle') }}</h2>
@@ -1139,9 +1168,28 @@ const deleteImpact = computed(() => {
               {{ importing ? $t('platform.agentUpdates.importing') : $t('platform.agentUpdates.importAction') }}
             </Button>
           </div>
+          <ul v-if="importNotes.length" class="space-y-2" data-testid="import-notes">
+            <li v-for="entry in importNotes" :key="entry.key" class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm">
+              <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning-text" aria-hidden="true" />
+              <span class="min-w-0">
+                <span class="block font-medium text-foreground">{{ $t('platform.agentUpdates.importRecorded', { version: entry.version, arch: entry.arch }) }}</span>
+                <span class="block break-words text-muted-foreground">{{ entry.note || $t('platform.agentUpdates.importRecordedHint') }}</span>
+              </span>
+            </li>
+          </ul>
         </div>
       </section>
     </template>
+
+    <!-- Mirrors: the registry, its pending plans, and every node's download order (design 31 S5). -->
+    <AgentMirrorsLayer
+      v-else
+      :view="mirrorsQuery.data.value"
+      :error="mirrorsQuery.error.value ?? null"
+      :loading="mirrorsQuery.loading.value"
+      :nodes="nodes"
+      @refresh="mirrorsQuery.refresh()"
+    />
 
     <!-- One node's policy, in the sheet on ?open=<node id>. -->
     <ObjectSheet

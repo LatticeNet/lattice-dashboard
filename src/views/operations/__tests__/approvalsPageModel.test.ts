@@ -7,6 +7,7 @@ import {
   APPROVAL_HISTORY_GRAMMAR,
   LINE_CHAIN_BINDING,
   QUEUE_REQUIRED_PLUGINS,
+  appliesOnApproval,
   approvesWithoutQueue,
   defaultApprovalLayer,
   historyRequest,
@@ -163,4 +164,14 @@ test("approve without queueing is offered for every kind but those the server re
   assert.equal(approvesWithoutQueue(row({ ...chain, method: undefined })), true);
   assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_set_apply", service: undefined })), true);
   assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_set_apply", action: "apply-line-chains:d1d1" })), true);
+});
+
+test("an agent.mirrors plan applies on approval, so the sheet offers no unqueued variant and names the decision so", () => {
+  // agentMirrorsApprove (lattice-server S5) marks the approval applied at once and queues no task.
+  const mirrors = row({ plugin: "agent.mirrors", action: "agent.mirrors", node_id: "", status: "pending" });
+  assert.equal(appliesOnApproval(mirrors), true);
+  assert.equal(approvesWithoutQueue(mirrors), false);
+  for (const plugin of ["agentupdate", "beacon", "singbox-lineuser", "agent.mirrors-v2"]) {
+    assert.equal(appliesOnApproval(row({ plugin })), false, plugin);
+  }
 });

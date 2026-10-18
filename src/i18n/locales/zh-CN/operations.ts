@@ -35,6 +35,8 @@ export default {
       diffTruncated: "计划过大无法逐行比对：显示新内容。",
       approveOnly: "仅批准，不排队",
       approveAndQueue: "批准并排队",
+      // 效果只落在控制面自身状态上的计划(agent.mirrors):不排队，批准即生效。
+      approveAndApply: "批准并生效",
       reject: "驳回",
       rejectTitle: "驳回 {node} 上的“{change}”？",
       rejectConfirm: "这会关闭该计划，且不会排队执行任何任务。",
@@ -42,6 +44,7 @@ export default {
       applyRequired: "批准一份计划需要 `network:apply`，外加生成它的那个插件的管理权限。",
       toastQueued: "已批准并排队。节点的 agent 领到这个任务后才会应用。",
       toastRecorded: "已批准，但没有排队，所以不会有节点应用这份计划。",
+      toastApplied: "已批准并生效。之后为每台节点生成的更新计划都会按新的镜像登记来排下载来源。",
       toastRejected: "审批已驳回",
       toastDismissed: "审批已归档",
       toastFailed: "审批失败",
@@ -93,6 +96,7 @@ export default {
         witnessConfigure: "设置控制面见证者",
         witnessRemove: "移除控制面见证者",
         nodeBeacon: "开启、修改或关闭节点信标",
+        agentMirrors: "修改 agent 下载镜像",
         generic: "{action}（{plugin}）",
       },
       /** agent 更新计划过时的原因，从服务端的英文原因解析而来(approvalsModel.describeAgentUpdateStale)。 */
@@ -100,6 +104,8 @@ export default {
         changed: "这份计划写好之后，更新策略变了：{changes}。",
         change: "{field} {planned}\u00a0→ {current}",
         listSeparator: "；",
+        /** 同一下载顺序里来源之间的分隔，按先后读。 */
+        sourceSeparator: "，然后",
         none: "（空）",
         flag: { true: "开启", false: "关闭" },
         bytes: "{n} 字节",
@@ -116,6 +122,8 @@ export default {
           compressed_sha256: "压缩包校验值",
           compressed_size: "压缩包大小",
           binary_size: "二进制大小",
+          sources: "下载来源",
+          chunk_manifest: "分块清单",
         },
         causes: {
           policyMissing: "这台节点已经没有更新策略。",

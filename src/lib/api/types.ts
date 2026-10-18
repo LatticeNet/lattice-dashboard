@@ -3242,14 +3242,20 @@ export interface AgentUpdateFetchAttempt {
   /** The source's place in the first pass, from 1; absent on a second-pass fetch. */
   source?: number;
   second_pass?: boolean;
-  /** cp, cp.gz or up; accept any other. */
+  /** cp, cp.gz, up, or m.<mirror id> for a registry mirror (design 31 S5); accept any other. */
   kind: string;
   /** curl's or wget's exit status, or 124 when timeout stopped wget. */
   exit_code: number;
-  /** What this fetch added to its file. */
+  /** What this fetch added to its file; on a plan with a chunk manifest, what survived the check after it. */
   bytes: number;
   /** Absent when the node had no usable clock. */
   seconds?: number;
+  /**
+   * The chunks this fetch wrote that failed the plan's chunk manifest; absent
+   * when none did. The script cut the download back to the first of them and
+   * never gave this source the second pass.
+   */
+  bad_chunks?: number;
 }
 
 export interface AgentUpdatePolicyUpsertRequest {
@@ -3310,6 +3316,116 @@ export interface AgentArtifactRequest {
   version: string;
   os?: string;
   arch: string;
+}
+
+/**
+ * What an import answers once the release bytes verify (design 31 S5). With
+ * stored false the store was full: the control plane recorded the digest and
+ * the chunk manifest, so mirrors and plans can use the version, but it does
+ * not serve the bytes itself, and `note` says so. A server from before S5
+ * sends neither field, and its import always stored the bytes.
+ */
+export interface AgentArtifactImportView extends AgentArtifactView {
+  stored?: boolean;
+  note?: string;
+}
+
+// ── Agent download mirrors (design 31 S5, lattice-sdk model/agent_mirrors.go) ──
+// A registry change is an approval with plugin and action "agent.mirrors" and
+// node_id "" (fleet-wide).
+
+export type AgentMirrorAction = "create" | "change" | "delete";
+
+/**
+ * One registry entry: an HTTPS server holding release binaries at
+ * <base_url>/<version>/<os>/<arch>/<sha256>. The server stamps the times;
+ * everything else is what an approved plan wrote.
+ */
+export interface AgentMirror {
+  /** Lowercase letters, digits and hyphens, at most 31, starting with a letter or digit. */
+  id: string;
+  name?: string;
+  base_url: string;
+  /** Node ids and static group ids that try this mirror before the control plane. */
+  prefer_for?: string[];
+  /** After the control plane for every node it is not preferred for. */
+  global?: boolean;
+  /** Smaller first within the preferred and the global group; ties go by id. */
+  priority: number;
+  /** A disabled entry is kept but never listed in a plan. */
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * One node's source order as the registry makes it, for a version the
+ * control plane holds: labels "mirror:<id>", "control-plane" and "upstream",
+ * in the order a plan would list them.
+ */
+export interface AgentMirrorOrder {
+  node_id: string;
+  name?: string;
+  sources: string[];
+}
+
+/**
+ * What the nodes' last update downloads say about one mirror: how many nodes
+ * fetched from it, and how many of those fetches wrote a chunk that failed
+ * the manifest. Node-reported, for display; it never feeds the order.
+ */
+export interface AgentMirrorHealth {
+  mirror: string;
+  fetches: number;
+  chunk_failures: number;
+}
+
+/** GET /api/nodes/agent-updates/mirrors (node:read). */
+export interface AgentMirrorsView {
+  mirrors: AgentMirror[];
+  revision: number;
+  /** The order of every node the caller may read. */
+  order: AgentMirrorOrder[];
+  /** Ids of open agent.mirrors approvals. */
+  pending: string[];
+  health: AgentMirrorHealth[];
+}
+
+/** Create and change carry the whole entry; delete names it by mirror.id alone. */
+export interface AgentMirrorPlanRequest {
+  action: AgentMirrorAction;
+  mirror: Partial<AgentMirror> & { id: string };
+}
+
+/** One node whose order a plan changes, as AgentMirrorOrder labels. */
+export interface AgentMirrorOrderChange {
+  node_id: string;
+  name?: string;
+  before: string[];
+  after: string[];
+}
+
+/**
+ * The document an agent.mirrors approval carries as its plan text, pretty
+ * printed. The registry changes only when that approval is approved, and a
+ * plan made against an older revision is refused as stale.
+ */
+export interface AgentMirrorPlan {
+  kind: "agent.mirrors";
+  action: AgentMirrorAction;
+  /** The entry as the plan leaves it; for a delete, the entry removed. */
+  mirror: AgentMirror;
+  /** The entry before a change or a delete. */
+  previous?: AgentMirror;
+  /** "field: before -> after", where "-" means absent. */
+  diff: string[];
+  base_revision: number;
+  changes: AgentMirrorOrderChange[];
+}
+
+export interface AgentMirrorPlanResponse {
+  approval: ApprovalView;
+  plan: AgentMirrorPlan;
 }
 
 export interface AgentReleaseCandidate {

@@ -440,7 +440,8 @@ export const STALE: ApprovalView = {
   reason:
     "agent update policy changed since this approval was planned; changed fields: target_version planned=0.3.8 current=0.3.9-alpha.7; " +
     "resume_download planned=false current=true; compressed_sha256 planned= current=5d0f3c2a9b8e7d6c...; compressed_size planned=0 current=5552813; " +
-    "binary_size planned=0 current=14037154; re-plan before approving",
+    "binary_size planned=0 current=14037154; sources planned= current=mirror:hk-cache,control-plane,mirror:r2,upstream; " +
+    "chunk_manifest planned= current=3f9a0c51d27e84b6...; re-plan before approving",
   stale: true,
   stale_code: "agent_update_policy_changed",
   actor_id: "lattice-server",
@@ -464,6 +465,35 @@ export function pendingWave(count: number): ApprovalView[] {
       updated_at: iso(-(50 + i) * MINUTE),
     };
   });
+}
+
+/** Static groups the agent.mirrors plan names in prefer_for; the approvals fake serves them. */
+export const MIRROR_GROUPS = [
+  { id: "grp_apac_edges", name: "APAC edges", slug: "apac-edges", color: "#0f766e", order: 1, members: [0, 1, 6, 7, 8].map(nodeIdFor) },
+  { id: "grp_home_lines", name: "Home and NAT lines", slug: "home-lines", color: "#c2410c", order: 2, members: [9, 10].map(nodeIdFor) },
+];
+
+/** An agent.mirrors change plan, shaped as json.MarshalIndent writes model.AgentMirrorPlan. */
+function agentMirrorsPlan(): string {
+  const base = "https://hkg-edge-cache-01.objects.storage.lattice-mirror.example/lattice-node-agent/releases/linux-binaries";
+  const previous = { id: "hk-cache", name: "Hong Kong edge cache", base_url: base, prefer_for: ["grp_home_lines"], priority: 20, enabled: true };
+  const mirror = { id: "hk-cache", name: "Hong Kong edge cache", base_url: base, prefer_for: ["grp_apac_edges", "grp_home_lines"], priority: 10, enabled: true };
+  const node = (index: number, before: string[], after: string[]) => ({ node_id: nodeIdFor(index), name: NODE_NAMES[index % NODE_NAMES.length], before, after });
+  const plain = ["control-plane", "mirror:r2", "upstream"];
+  const first = ["mirror:hk-cache", "control-plane", "mirror:r2", "upstream"];
+  return JSON.stringify(
+    {
+      kind: "agent.mirrors",
+      action: "change",
+      mirror,
+      previous,
+      diff: ["prefer_for: grp_home_lines -> grp_apac_edges,grp_home_lines", "priority: 20 -> 10"],
+      base_revision: 7,
+      changes: [node(0, plain, first), node(1, plain, first), node(6, plain, first), node(7, plain, first), node(8, plain, first)],
+    },
+    null,
+    2,
+  );
 }
 
 /**
@@ -547,6 +577,20 @@ export const PENDING_KINDS: ApprovalView[] = [
     actor_id: "cdcd",
     created_at: iso(-4 * HOUR),
     updated_at: iso(-4 * HOUR),
+  },
+  {
+    // Design 31 S5: a registry change as lattice-server files it, plugin and
+    // action "agent.mirrors", no node, and the plan document pretty-printed.
+    // Making hk-cache preferred for one more group moves five nodes the same way.
+    id: "approval_k8agentmirrors1",
+    node_id: "",
+    plugin: "agent.mirrors",
+    action: "agent.mirrors",
+    plan: agentMirrorsPlan(),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-25 * MINUTE),
+    updated_at: iso(-25 * MINUTE),
   },
   {
     id: "approval_k6runtimeplugin",

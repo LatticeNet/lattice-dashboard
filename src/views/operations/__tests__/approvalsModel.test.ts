@@ -417,6 +417,33 @@ test("the stale reason names every field the server's change summary can list, S
   );
 });
 
+test("the stale reason reads S5's download sources and chunk manifest as fields, not as the verbatim tail", () => {
+  // lattice-server agentUpdatesSourcesChange and the chunk_manifest line of
+  // agentUpdatePayloadChangeSummary: a plan made before a mirror was added,
+  // and one whose control-plane entry changed in place (same label, so "*").
+  const added = describeAgentUpdateStale(
+    "agent update policy changed since this approval was planned; changed fields: sources planned=control-plane,upstream current=mirror:r2,control-plane,upstream; " +
+      "chunk_manifest planned= current=3f9a0c51d27e84b6...; re-plan before approving",
+  );
+  assert.deepEqual(added.other, []);
+  assert.deepEqual(
+    added.changes.map((change) => [change.field, change.planned, change.current, agentUpdateStaleValueKind(change.field)]),
+    [
+      ["sources", "control-plane,upstream", "mirror:r2,control-plane,upstream", "sources"],
+      ["chunk_manifest", "", "3f9a0c51d27e84b6...", "text"],
+    ],
+  );
+  const inPlace = describeAgentUpdateStale(
+    "agent update policy changed since this approval was planned; changed fields: sources planned=mirror:r2,control-plane,upstream current=mirror:r2*,control-plane,upstream; re-plan before approving",
+  );
+  assert.deepEqual(inPlace.changes, [{ field: "sources", planned: "mirror:r2,control-plane,upstream", current: "mirror:r2*,control-plane,upstream" }]);
+  // A plan that listed sources against a policy that now resolves to none.
+  assert.deepEqual(
+    describeAgentUpdateStale("agent update policy changed since this approval was planned; changed fields: sources planned=control-plane,upstream current=; re-plan before approving").changes,
+    [{ field: "sources", planned: "control-plane,upstream", current: "" }],
+  );
+});
+
 test("every stale field and cause has copy in both locales", () => {
   const causes = ["policyMissing", "policyDisabled", "nodeMissing", "payloadInvalid", "payloadChanged"];
   for (const messages of [enOperations, zhOperationsForStale]) {

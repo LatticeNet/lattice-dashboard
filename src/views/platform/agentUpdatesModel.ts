@@ -184,6 +184,8 @@ export interface FetchAttemptLike {
   exit_code: number;
   bytes: number;
   seconds?: number | null;
+  /** Chunks this fetch wrote that failed the plan's chunk manifest (design 31 S5); absent when none did. */
+  bad_chunks?: number;
 }
 
 /** A policy's `last_fetch` (lattice-sdk model.AgentUpdateFetch). */
@@ -214,6 +216,14 @@ export function fetchKindKey(kind: string): string | undefined {
   return Object.prototype.hasOwnProperty.call(FETCH_KIND_KEYS, kind) ? FETCH_KIND_KEYS[kind] : undefined;
 }
 
+/** A registry mirror's fetch is named m.<mirror id> (design 31 S5). */
+export const FETCH_MIRROR_PREFIX = "m.";
+
+/** The mirror id of a mirror fetch's kind, or undefined for any other kind. */
+export function fetchMirrorId(kind: string): string | undefined {
+  return kind.startsWith(FETCH_MIRROR_PREFIX) && kind.length > FETCH_MIRROR_PREFIX.length ? kind.slice(FETCH_MIRROR_PREFIX.length) : undefined;
+}
+
 /**
  * What a fetcher's exit status says, for the statuses that mean one thing
  * whichever fetcher ran. The summary does not say whether curl or wget ran,
@@ -222,7 +232,7 @@ export function fetchKindKey(kind: string): string | undefined {
  * a server that ignored the range, 124 the timeout wrapped around wget, and
  * 28 curl's time or speed limit, read by fetchAttemptReading.
  */
-export type FetchExitReading = "finished" | "cut" | "http" | "range" | "timeout" | "other";
+export type FetchExitReading = "finished" | "cut" | "http" | "range" | "timeout" | "other" | "corrupt";
 
 export function fetchExitReading(code: number): FetchExitReading {
   switch (code) {
@@ -252,6 +262,9 @@ export function fetchExitReading(code: number): FetchExitReading {
  * usable source.
  */
 export function fetchAttemptReading(record: FetchRecordLike, attempt: FetchAttemptLike): FetchExitReading {
+  // A fetch that wrote chunks failing the manifest sent wrong bytes, whatever
+  // its fetcher's status: the script cut them back (design 31 S5).
+  if (attempt.bad_chunks && attempt.bad_chunks > 0) return "corrupt";
   const reading = fetchExitReading(attempt.exit_code);
   if (reading !== "cut") return reading;
   const firstPass = (record.fetches ?? []).filter((fetch) => !fetch.second_pass).length;
@@ -271,6 +284,12 @@ export interface FetchSourceTotal {
   lastExit: number;
   /** fetchAttemptReading of that last fetch. */
   lastReading: FetchExitReading;
+  /**
+   * Chunks this source's fetches wrote that failed the chunk manifest. The
+   * script cuts every source's unchecked tail before the next one continues,
+   * so the count blames exactly this source.
+   */
+  badChunks: number;
 }
 
 export interface FetchReadout {
@@ -287,6 +306,8 @@ export interface FetchReadout {
    * could not reach) comes last.
    */
   sources: FetchSourceTotal[];
+  /** Chunks that failed the manifest across every fetch: some source sent wrong bytes. */
+  badChunks: number;
 }
 
 /** Read a node's last fetch into what its row and its sheet say. */
@@ -296,14 +317,17 @@ export function fetchReadout(record: FetchRecordLike): FetchReadout {
   for (const fetch of fetches) {
     let total = byKind.get(fetch.kind);
     if (!total) {
-      total = { kind: fetch.kind, bytes: 0, seconds: 0, fetches: 0, finished: false, lastExit: 0, lastReading: "finished", clockless: false };
+      total = { kind: fetch.kind, bytes: 0, seconds: 0, fetches: 0, finished: false, lastExit: 0, lastReading: "finished", badChunks: 0, clockless: false };
       byKind.set(fetch.kind, total);
     }
     total.bytes += Math.max(0, fetch.bytes);
     total.fetches += 1;
     total.lastExit = fetch.exit_code;
     total.lastReading = fetchAttemptReading(record, fetch);
-    if (fetch.exit_code === 0) total.finished = true;
+    total.badChunks += Math.max(0, fetch.bad_chunks ?? 0);
+    // Exit 0 from a fetch whose chunks failed the manifest is a source that
+    // sent the whole file wrong: the script cut it back, so it finished nothing.
+    if (fetch.exit_code === 0 && !(fetch.bad_chunks && fetch.bad_chunks > 0)) total.finished = true;
     if (typeof fetch.seconds === "number") total.seconds = (total.seconds ?? 0) + fetch.seconds;
     else total.clockless = true;
   }
@@ -317,6 +341,7 @@ export function fetchReadout(record: FetchRecordLike): FetchReadout {
     stageKnown: (FETCH_STAGES as readonly string[]).includes(record.stage),
     exitCode: record.exit_code,
     sources,
+    badChunks: sources.reduce((sum, source) => sum + source.badChunks, 0),
   };
 }
 

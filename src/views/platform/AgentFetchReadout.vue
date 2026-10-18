@@ -21,6 +21,12 @@
  * so a source left by the cutoff reads "cut off" and a fetch that ran out of
  * budget reads "out of time".
  *
+ * A registry mirror's fetch (m.<id>, design 31 S5) is named by its id. A
+ * fetch that wrote chunks failing the plan's chunk manifest is the one
+ * problem flagged in --destructive on a source line: the source sent wrong
+ * bytes, the script cut them back, and the row says so even when another
+ * source finished the download.
+ *
  * The record comes from the node: it is shown, never acted on.
  */
 import { computed } from "vue";
@@ -34,6 +40,7 @@ import { cn } from "@/lib/utils";
 import {
   fetchAttemptReading,
   fetchKindKey,
+  fetchMirrorId,
   fetchRate,
   fetchReadout,
   fetchSecondsText,
@@ -65,7 +72,13 @@ const outcome = computed(() => {
 
 function kindLabel(kind: string): string {
   const key = fetchKindKey(kind);
-  return key ? t(`platform.agentUpdatesPage.fetch.kind.${key}`) : kind;
+  if (key) return t(`platform.agentUpdatesPage.fetch.kind.${key}`);
+  const mirror = fetchMirrorId(kind);
+  return mirror ? t("platform.agentUpdatesPage.fetch.kind.mirror", { id: mirror }) : kind;
+}
+
+function badChunksText(n: number): string {
+  return t("platform.agentUpdatesPage.fetch.badChunks", { n }, n);
 }
 
 // A narrow cell wraps, but never between a number and its unit.
@@ -116,9 +129,12 @@ function attemptLabel(attempt: FetchAttemptLike, index: number): string {
       <li v-for="source in readout.sources" :key="source.kind">
         <span :class="cn('break-words', source.finished && 'text-foreground')">{{ kindLabel(source.kind) }}<span v-if="source.finished" class="sr-only"> ({{ $t('platform.agentUpdatesPage.fetch.finishedSource') }})</span></span>
         {{ ' ' }}<span class="font-mono tabular-nums md:whitespace-nowrap">{{ sourceAmount(source) }}</span>
+        <span v-if="source.badChunks" class="block text-destructive" data-testid="fetch-bad-chunks">{{ badChunksText(source.badChunks) }}</span>
       </li>
     </ul>
     <p v-else-if="readout.outcome === 'failed' && readout.stage !== 'prepare'" :class="cn('text-muted-foreground', !detailed && 'hidden md:block')">{{ $t('platform.agentUpdatesPage.fetch.noFetch') }}</p>
+    <!-- Below 768 px the row hides its source lines; bad chunks still show, since they are the one problem a source line flags. -->
+    <p v-if="!detailed && readout.badChunks" class="text-destructive md:hidden">{{ badChunksText(readout.badChunks) }}</p>
     <p v-if="detailed && readout.outcome === 'kept'" class="text-muted-foreground">{{ $t('platform.agentUpdatesPage.fetch.keptDetail') }}</p>
 
     <template v-if="detailed">
@@ -143,6 +159,7 @@ function attemptLabel(attempt: FetchAttemptLike, index: number): string {
             <span class="text-muted-foreground">{{ exitText(fetchAttemptReading(fetch, attempt), attempt.exit_code) }}</span>
           </span>
           <span class="font-mono tabular-nums text-muted-foreground">{{ attemptAmount(attempt) }}</span>
+          <span v-if="attempt.bad_chunks" class="col-start-2 text-destructive">{{ $t('platform.agentUpdatesPage.fetch.badChunksDetail', { n: attempt.bad_chunks }, attempt.bad_chunks) }}</span>
         </li>
       </ol>
     </template>

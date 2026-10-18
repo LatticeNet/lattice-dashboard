@@ -458,7 +458,8 @@ export function countApprovalInbox<T extends ApprovalInboxItem>(
  * order it lists them. The server compares the whole resolved payload, and
  * the summary names every field of it but the node id, which cannot differ:
  * resume_download since S1 of design 31, the compressed digest and both
- * sizes since S3.
+ * sizes since S3, and since S5 the ordered download sources and the digest
+ * of the chunk manifest a plan that lists a mirror carries.
  */
 export const AGENT_UPDATE_STALE_FIELDS = [
   "current_version",
@@ -473,17 +474,23 @@ export const AGENT_UPDATE_STALE_FIELDS = [
   "compressed_sha256",
   "compressed_size",
   "binary_size",
+  "sources",
+  "chunk_manifest",
 ] as const;
 export type AgentUpdateStaleField = (typeof AGENT_UPDATE_STALE_FIELDS)[number];
 
 /**
  * How a stale field's value reads. The sizes are byte counts the server
  * prints as 0 when a plan pins none (a plan made before compression), and
- * resume_download is a Go bool.
+ * resume_download is a Go bool. sources is the comma-joined order labels
+ * (mirror:r2,control-plane,upstream), an entry that changed in place ending
+ * with "*"; chunk_manifest is a 16-hex digest prefix with "...". Either is
+ * empty when the plan has none.
  */
-export function agentUpdateStaleValueKind(field: AgentUpdateStaleField): "bytes" | "flag" | "text" {
+export function agentUpdateStaleValueKind(field: AgentUpdateStaleField): "bytes" | "flag" | "sources" | "text" {
   if (field === "compressed_size" || field === "binary_size") return "bytes";
   if (field === "resume_download") return "flag";
+  if (field === "sources") return "sources";
   return "text";
 }
 

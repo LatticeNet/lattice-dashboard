@@ -9,12 +9,17 @@
  * Reads of its own: the applied plans of the same node and plugin, once per
  * target, for the diff baseline; and the tasks queued by this plan, through
  * GET /api/tasks?approval_id=.
+ *
+ * An agent.mirrors plan (design 31 S5) is a JSON document; it is read into
+ * what it does, each field before and after, and every node whose download
+ * order changes, above the plan text the hash covers. Its prefer_for names
+ * groups by id, so the group list is read once for their names.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { AlertTriangle, ArchiveX, Clock, ExternalLink, FileCode2, GitCompare, RefreshCw, ServerOff } from "lucide-vue-next";
 
-import { api, unwrap, type ApprovalView, type TaskView } from "@/lib/api";
+import { api, unwrap, type ApprovalView, type GroupView, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { approvalStatusMeta } from "@/lib/status";
@@ -24,6 +29,7 @@ import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { taskStateStyle } from "@/lib/taskLease";
 import { looksLikeShell } from "@/lib/shellTokens";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
 
 import CopyButton from "@/components/common/CopyButton.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
@@ -31,6 +37,9 @@ import PlanDiff from "@/components/common/PlanDiff.vue";
 import ScriptView from "@/components/common/ScriptView.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
+import AgentMirrorPlanReadout from "@/views/platform/AgentMirrorPlanReadout.vue";
+import { AGENT_MIRRORS_PLUGIN, parseAgentMirrorPlan } from "@/views/platform/agentMirrorsModel";
 
 import { approvalWaitLabelKey, approvalWaitTone, approvalWaitWayKey, isApprovalStuck } from "./approvalsModel";
 import { baselineKey, baselineParams, previousAppliedPlan } from "./approvalsListModel";
@@ -75,6 +84,36 @@ const planSummary = computed(() => approvalPlanSummary(props.approval.plan));
 const stuck = computed(() => isApprovalStuck(props.approval));
 const moving = computed(() => props.approval.status === "approved" && !!props.approval.waiting && !props.approval.waiting.blocked);
 
+/* ------------------------------------------------------------------ */
+/* An agent.mirrors plan, read                                         */
+/* ------------------------------------------------------------------ */
+
+const auth = useAuthStore();
+const mirrorPlan = computed(() => (props.approval.plugin === AGENT_MIRRORS_PLUGIN ? parseAgentMirrorPlan(props.approval.plan) : undefined));
+const needsGroups = computed(
+  () => !!mirrorPlan.value && auth.can("group:read") && [...(mirrorPlan.value.mirror.prefer_for ?? []), ...(mirrorPlan.value.previous?.prefer_for ?? [])].length > 0,
+);
+const groupsQuery = useAsyncData<GroupView[]>(
+  (signal) => (needsGroups.value ? api.groups.list({ signal }).then((r) => r.groups ?? []) : Promise.resolve([])),
+  { pollInterval: 0 },
+);
+watch(needsGroups, (needed) => {
+  if (needed && !groupsQuery.data.value?.length) void groupsQuery.refresh();
+});
+const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((group) => [group.id, group.name] as const)));
+// The registry's revision now, so a plan made against an older one says it
+// will be refused as stale before anyone decides it.
+const registryQuery = useAsyncData<number | undefined>(
+  (signal) => (mirrorPlan.value && auth.can("node:read") ? api.agentUpdates.mirrors({ signal }).then((view) => view.revision) : Promise.resolve(undefined)),
+  { pollInterval: 0 },
+);
+watch(
+  () => (mirrorPlan.value ? props.approval.id : ""),
+  (id) => {
+    if (id) void registryQuery.refresh();
+  },
+);
+
 function waitingVariant(): "warning" | "destructive" | "outline" {
   if (!waiting.value) return "outline";
   const tone = approvalWaitTone(waiting.value);
@@ -86,6 +125,14 @@ function waitingVariant(): "warning" | "destructive" | "outline" {
 /* ------------------------------------------------------------------ */
 
 const planView = ref<"diff" | "full">("diff");
+/**
+ * The diff's baseline is the last applied plan of the same node and plugin.
+ * Every agent.mirrors plan shares node "" and plugin, whatever mirror it
+ * touches, so that baseline would be an unrelated entry's plan; the plan
+ * carries its own previous entry, which the readout above shows instead.
+ */
+const diffable = computed(() => props.approval.plugin !== AGENT_MIRRORS_PLUGIN);
+const shownView = computed(() => (diffable.value ? planView.value : "full"));
 /** Coloured only when the plan declares itself shell (lib/shellTokens, looksLikeShell); no server-rendered plan does today. */
 const planLanguage = computed(() => (looksLikeShell(props.approval.plan || "") ? "shell" : "plain"));
 
@@ -102,7 +149,9 @@ async function loadBaseline(row: ApprovalView): Promise<void> {
 }
 watch(
   () => baselineKey(props.approval),
-  () => void loadBaseline(props.approval),
+  () => {
+    if (diffable.value) void loadBaseline(props.approval);
+  },
   { immediate: true },
 );
 const previousPlan = computed(() => previousAppliedPlan(props.approval, baselines.value[baselineKey(props.approval)] ?? []));
@@ -280,21 +329,27 @@ function statusLabel(status: string): string {
       <p class="mt-1 break-words">{{ approval.reason }}</p>
     </section>
 
+    <section v-if="mirrorPlan" class="space-y-2" data-testid="approval-mirror-plan">
+      <h3 class="text-sm font-medium">{{ $t('platform.agentUpdatesPage.mirrors.plan.reviewHeading') }}</h3>
+      <AgentMirrorPlanReadout :plan="mirrorPlan" :revision="registryQuery.data.value" :group-names="groupNames" />
+    </section>
+
     <section class="space-y-2" :aria-label="$t('operations.approvals.plan')">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-sm font-medium">{{ $t('operations.approvals.plan') }}</h3>
         <div class="flex items-center gap-1">
           <Button
-            :variant="planView === 'diff' ? 'secondary' : 'ghost'"
+            v-if="diffable"
+            :variant="shownView === 'diff' ? 'secondary' : 'ghost'"
             size="sm"
             type="button"
-            :aria-pressed="planView === 'diff'"
+            :aria-pressed="shownView === 'diff'"
             @click="planView = 'diff'"
           >
             <GitCompare class="size-3.5" aria-hidden="true" />
             {{ $t('operations.approvals.viewDiff') }}
           </Button>
-          <Button :variant="planView === 'full' ? 'secondary' : 'ghost'" size="sm" type="button" :aria-pressed="planView === 'full'" @click="planView = 'full'">
+          <Button :variant="shownView === 'full' ? 'secondary' : 'ghost'" size="sm" type="button" :aria-pressed="shownView === 'full'" @click="planView = 'full'">
             {{ $t('operations.approvals.viewFull') }}
           </Button>
           <CopyButton :value="approval.plan || ''" />
@@ -319,7 +374,7 @@ function statusLabel(status: string): string {
           {{ $t('operations.approvals.history.retry') }}
         </Button>
       </div>
-      <template v-else-if="planView === 'diff'">
+      <template v-else-if="shownView === 'diff'">
         <p class="text-xs text-muted-foreground">
           {{ previousPlan ? $t('operations.approvals.diffAgainstApplied') : $t('operations.approvals.diffNoPrior') }}
         </p>

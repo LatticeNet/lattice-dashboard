@@ -45,6 +45,8 @@ const SERVER_KINDS: Array<[plugin: string, action: string, method: string | unde
   ["controlplane-witness", "witness-configure:v1", undefined, "witnessConfigure"],
   ["controlplane-witness", "witness-remove:v1", undefined, "witnessRemove"],
   ["beacon", "node.beacon", undefined, "nodeBeacon"],
+  // Design 31 S5: plugin and action are both "agent.mirrors", node_id is "".
+  ["agent.mirrors", "agent.mirrors", undefined, "agentMirrors"],
 ];
 
 function lookup(messages: Record<string, unknown>, key: string): unknown {

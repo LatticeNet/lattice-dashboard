@@ -9,6 +9,7 @@ import {
   fetchAttemptReading,
   fetchExitReading,
   fetchKindKey,
+  fetchMirrorId,
   fetchRate,
   fetchReadout,
   fetchSecondsText,
@@ -168,6 +169,37 @@ test("exit 28 is a cutoff only in a first pass with more than one source", () =>
 
 test("a source kind reads under a key without a dot, and an unknown kind has none", () => {
   assert.deepEqual(["cp", "cp.gz", "up", "ftp", "toString"].map(fetchKindKey), ["cp", "cpGz", "up", undefined, undefined]);
+});
+
+test("a mirror fetch is named by its registry id, and no other kind reads as a mirror", () => {
+  assert.deepEqual(["m.r2", "m.hk-cache", "m.", "cp", "cp.gz", "up", "mirror.r2"].map(fetchMirrorId), ["r2", "hk-cache", undefined, undefined, undefined, undefined, undefined]);
+  assert.equal(fetchKindKey("m.r2"), undefined, "a mirror kind has no fixed key; it is read through fetchMirrorId");
+});
+
+test("bad chunks add up per source and across the record, and blame only the source that sent them", () => {
+  // Design 31 S5: a mirror first in the order appends wrong bytes fast; the
+  // script cuts its file back to the first failing chunk, the control plane
+  // continues, and the mirror gets no second pass.
+  const readout = fetchReadout({
+    fetches: [
+      { source: 1, kind: "m.r2", exit_code: 0, bytes: 1_310_720, seconds: 4, bad_chunks: 3 },
+      { source: 2, kind: "cp.gz", exit_code: 0, bytes: 5_552_813, seconds: 41 },
+    ],
+    exit_code: 0,
+    stage: "done",
+  });
+  assert.equal(readout.outcome, "installed");
+  assert.equal(readout.badChunks, 3);
+  assert.deepEqual(
+    readout.sources.map((source) => [source.kind, source.finished, source.badChunks]),
+    [
+      ["cp.gz", true, 0],
+      ["m.r2", false, 3],
+    ],
+    "the mirror's exit 0 delivered a file the manifest cut back, so only the control plane finished",
+  );
+  assert.equal(readout.sources[1]?.lastReading, "corrupt", "its exit 0 reads as wrong bytes, not as finished");
+  assert.equal(fetchReadout({ fetches: [{ source: 1, kind: "cp", exit_code: 0, bytes: 10, seconds: 1 }], exit_code: 0, stage: "done" }).badChunks, 0, "absent means none");
 });
 
 test("no fetch is a kept file on success and a stop before downloading on failure", () => {

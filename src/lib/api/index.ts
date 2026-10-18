@@ -8,10 +8,14 @@ import type {
   IncidentListResponse,
   MaintenanceWindow,
   MaintenanceWindowInput,
+  AgentArtifactImportView,
   AgentArtifactListing,
   AgentArtifactRequest,
   AgentArtifactView,
   AgentLaunchConfig,
+  AgentMirrorPlanRequest,
+  AgentMirrorPlanResponse,
+  AgentMirrorsView,
   AgentReleaseInfo,
   AgentUpdatePolicy,
   AgentUpdatePolicyUpsertRequest,
@@ -995,13 +999,24 @@ export const api = {
       http.post<ApprovalView>("/api/nodes/agent-updates/plan", { node_id, force }),
     artifacts: (opts?: RequestOptions) =>
       http.get<AgentArtifactListing>("/api/nodes/agent-updates/artifacts", undefined, opts),
+    // 200 once the release bytes verify; stored=false with a note when the
+    // store was full and only the digest and chunk manifest were recorded.
     importArtifact: (input: AgentArtifactRequest) =>
-      http.post<AgentArtifactView>("/api/nodes/agent-updates/artifacts/import", input),
+      http.post<AgentArtifactImportView>("/api/nodes/agent-updates/artifacts/import", input),
     deleteArtifact: (input: AgentArtifactRequest) =>
       http.post<{ deleted: boolean; sha256: string }>(
         "/api/nodes/agent-updates/artifacts/delete",
         input,
       ),
+    // Design 31 S5: the mirror registry, every readable node's source order,
+    // the open registry plans and what the last downloads say per mirror.
+    mirrors: (opts?: RequestOptions) =>
+      http.get<AgentMirrorsView>("/api/nodes/agent-updates/mirrors", undefined, opts),
+    // Files an agent.mirrors plan; the registry changes only when its
+    // approval is approved. Fleet agent admins only (403 for a principal
+    // confined to some nodes).
+    planMirror: (input: AgentMirrorPlanRequest) =>
+      http.post<AgentMirrorPlanResponse>("/api/nodes/agent-updates/mirrors/plan", input),
   },
 
   oidc: {

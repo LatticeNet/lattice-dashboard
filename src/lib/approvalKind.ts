@@ -57,6 +57,7 @@ export const APPROVAL_KINDS = [
   "witnessConfigure",
   "witnessRemove",
   "nodeBeacon",
+  "agentMirrors",
 ] as const;
 
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
@@ -114,6 +115,9 @@ export function approvalKind(source: ApprovalKindSource): ApprovalKind | null {
     case "beacon":
       // Design 29 D12: a node.beacon plan opens, changes or closes a node's measurement beacon.
       return prefix === "node.beacon" ? "nodeBeacon" : null;
+    case "agent.mirrors":
+      // Design 31 S5: an agent.mirrors plan adds, changes or removes a download mirror, fleet-wide.
+      return prefix === "agent.mirrors" ? "agentMirrors" : null;
     case "controlplane-witness":
       if (prefix === "witness-configure") return "witnessConfigure";
       if (prefix === "witness-remove") return "witnessRemove";
