@@ -210,10 +210,14 @@ function onCloseAutoFocus(event: Event) {
         />
       </form>
 
-      <DialogFooter>
+      <!-- sm:flex-wrap: three buttons are wider than the dialog, so they wrap rather than overflow it. -->
+      <DialogFooter class="sm:flex-wrap">
         <Button type="button" variant="outline" :disabled="pending" @click="onCancel">
           {{ cancelLabel ?? $t('common.actions.cancel') }}
         </Button>
+        <!-- A lesser action beside the two, after Cancel, so the dialog still
+             opens with focus on Cancel and Enter never takes it by accident. -->
+        <slot name="footer-secondary" />
         <Button
         type="button"
         :variant="confirmVariant"

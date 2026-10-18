@@ -117,7 +117,8 @@ const props = defineProps<{
   focusMirror?: { id: string; seq: number };
 }>();
 
-const emit = defineEmits<{ refresh: [] }>();
+/** focused: a focusMirror request has landed, so the page can drop it. */
+const emit = defineEmits<{ refresh: []; focused: [] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -328,6 +329,7 @@ watch(
     const request = props.focusMirror;
     if (!request || !props.view || request.seq === handledFocus) return;
     handledFocus = request.seq;
+    emit("focused");
     highlighted.value = request.id;
     await nextTick();
     const row = document.querySelector<HTMLElement>(`[data-mirror-row="${CSS.escape(request.id)}"]`)?.closest("tr");
@@ -1023,9 +1025,11 @@ async function confirmDelete(): Promise<void> {
       @update:open="(v) => { if (!v) duplicate = undefined; }"
       @confirm="reviewWaiting"
     >
-      <Button type="button" variant="outline" size="sm" data-testid="mirror-duplicate-file" @click="fileAnother">
-        {{ $t(`${K}.duplicate.confirm`) }}
-      </Button>
+      <template #footer-secondary>
+        <Button type="button" variant="outline" data-testid="mirror-duplicate-file" @click="fileAnother">
+          {{ $t(`${K}.duplicate.confirm`) }}
+        </Button>
+      </template>
     </ConfirmDialog>
 
     <!-- Disable moves nodes off the mirror once approved: it asks first, and names how many. -->

@@ -282,8 +282,13 @@ const mirrorsQuery = useAsyncData<AgentMirrorsView>((signal) => api.agentUpdates
  * own attention item puts a button that files a plan.
  */
 const mirrorFocus = ref<{ id: string; seq: number } | undefined>();
+// The count lives here, not in the request: the layer clears a request once it
+// has landed, so a later visit to the tab does not land again, and the next
+// request still gets a number the layer has not handled.
+let mirrorFocusSeq = 0;
 function openMirror(id: string): void {
-  mirrorFocus.value = { id, seq: (mirrorFocus.value?.seq ?? 0) + 1 };
+  mirrorFocusSeq += 1;
+  mirrorFocus.value = { id, seq: mirrorFocusSeq };
   layer.value = "mirrors";
 }
 
@@ -1212,6 +1217,7 @@ const deleteImpact = computed(() => {
       :nodes="nodes"
       :focus-mirror="mirrorFocus"
       @refresh="mirrorsQuery.refresh()"
+      @focused="mirrorFocus = undefined"
     />
 
     <!-- One node's policy, in the sheet on ?open=<node id>. -->
