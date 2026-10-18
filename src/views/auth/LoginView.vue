@@ -157,6 +157,12 @@ async function onSubmitTotp() {
 
 function backToPassword() {
   clearError();
+  // Going back abandons the pending challenge. After an SSO round trip the
+  // server also holds it, bound to this browser, so ask it to spend it now
+  // instead of leaving it to expire. Best effort: an older server or an
+  // already expired challenge has nothing to cancel.
+  auth.pendingTotpChallenge = undefined;
+  void api.auth.cancelPendingSecondFactor().catch(() => undefined);
   ssoIdentity.value = undefined;
   code.value = "";
   recovery.value = "";
