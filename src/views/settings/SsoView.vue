@@ -168,14 +168,61 @@ const storedProvider = computed(() => {
   if (!id) return undefined;
   return providers.value.find((provider) => provider.id === id) ?? editing.value;
 });
+/** The issuer as the server stores it: trimmed, without a trailing slash. */
+function normalIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
 const enablingSkip = computed(() => form.skip_local_totp && !skipLocalTotpOf(storedProvider.value));
 const changesIdentityProvider = computed(() => {
   const stored = storedProvider.value;
   if (!stored) return true;
-  return form.issuer.trim().replace(/\/+$/, "") !== stored.issuer || form.client_id.trim() !== stored.client_id;
+  return normalIssuer(form.issuer) !== stored.issuer || form.client_id.trim() !== stored.client_id;
 });
-/** Which prompt a save asks for: the policy's own words when it is being turned on. */
-const stepUpReason = computed<"skip" | "identity">(() => (enablingSkip.value ? "skip" : "identity"));
+/**
+ * Which prompt a save asks for: the policy's own words when only the policy
+ * is turning on, the provider change's words otherwise, and both
+ * consequences when one save does both.
+ */
+const stepUpReason = computed<"skip" | "identity" | "both">(() => {
+  if (!changesIdentityProvider.value) return "skip";
+  return enablingSkip.value ? "both" : "identity";
+});
+
+interface ProviderChangeFact {
+  key: string;
+  label: string;
+  /** The stored value; absent for a new provider. */
+  from?: string;
+  to: string;
+}
+/**
+ * What the prompt puts on the record: the issuer and client a new provider
+ * will trust, or the old and new value of whichever one changes. Every
+ * Google provider has the same issuer, so the client is what tells two apart.
+ */
+const providerChangeFacts = computed<ProviderChangeFact[]>(() => {
+  const stored = storedProvider.value;
+  const issuer = normalIssuer(form.issuer);
+  const clientId = form.client_id.trim();
+  const facts: ProviderChangeFact[] = [];
+  const issuerLabel = t("settings.sso.list.issuer");
+  const clientLabel = t("settings.sso.list.clientId");
+  if (!stored) {
+    facts.push({ key: "issuer", label: issuerLabel, to: issuer }, { key: "client", label: clientLabel, to: clientId });
+  } else {
+    if (issuer !== stored.issuer) facts.push({ key: "issuer", label: issuerLabel, from: stored.issuer, to: issuer });
+    if (clientId !== stored.client_id) facts.push({ key: "client", label: clientLabel, from: stored.client_id, to: clientId });
+  }
+  if (enablingSkip.value) {
+    facts.push({
+      key: "skip",
+      label: t("settings.sso.identityStepUp.skipFact"),
+      from: stored ? t("settings.sso.identityStepUp.asked") : undefined,
+      to: t("settings.sso.identityStepUp.skipped"),
+    });
+  }
+  return facts;
+});
 const providerStepUp = useStepUp({
   required: t("settings.sso.identityStepUp.required"),
   failed: t("settings.sso.skipStepUp.failed"),
@@ -216,7 +263,7 @@ async function submitForm() {
   saving.value = true;
   try {
     const req: OIDCProviderUpsertRequest = {
-      issuer: form.issuer.trim().replace(/\/+$/, ""),
+      issuer: normalIssuer(form.issuer),
       client_id: form.client_id.trim(),
       scopes: splitCsv(form.scopes),
       allowed_domains: splitCsv(form.allowed_domains),
@@ -778,20 +825,43 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Turning on the provider-trusted second factor asks for a fresh step-up. -->
+    <!-- Turning on the provider-trusted second factor, or changing which IdP is trusted, asks for a fresh step-up. -->
     <StepUpDialog
       :step-up="providerStepUp"
       :title="stepUpReason === 'skip' ? $t('settings.sso.skipStepUp.title') : $t('settings.sso.identityStepUp.title')"
       :description="
         stepUpReason === 'skip'
-          ? $t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || form.issuer.trim() })
-          : $t('settings.sso.identityStepUp.description', { issuer: form.issuer.trim() })
+          ? $t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || normalIssuer(form.issuer) })
+          : stepUpReason === 'both'
+            ? $t('settings.sso.identityStepUp.descriptionWithSkip', { name: form.display_name.trim() || normalIssuer(form.issuer) })
+            : $t('settings.sso.identityStepUp.description')
       "
       :submit-label="$t('settings.sso.skipStepUp.submit')"
-      :submit-icon="stepUpReason === 'skip' ? ShieldOff : ShieldCheck"
+      :submit-icon="stepUpReason === 'identity' ? ShieldCheck : ShieldOff"
       :audit="$t('settings.sso.skipStepUp.audit')"
       test-id="sso-skip-step-up"
-    />
+    >
+      <dl
+        v-if="stepUpReason !== 'skip' && providerChangeFacts.length"
+        class="space-y-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
+        data-testid="sso-provider-change-facts"
+      >
+        <div v-for="fact in providerChangeFacts" :key="fact.key">
+          <dt class="text-muted-foreground">{{ fact.label }}</dt>
+          <dd class="font-mono [overflow-wrap:anywhere]">
+            <!-- Old above new, each on its own line: two long client IDs run together read as one. -->
+            <template v-if="fact.from !== undefined">
+              <span class="block text-muted-foreground">{{ fact.from }}</span>
+              <span class="block">
+                <span aria-hidden="true">→ </span>
+                <span class="sr-only">{{ $t("settings.sso.identityStepUp.changesTo") }} </span>{{ fact.to }}
+              </span>
+            </template>
+            <template v-else>{{ fact.to }}</template>
+          </dd>
+        </div>
+      </dl>
+    </StepUpDialog>
 
     <!-- Disabling the last enabled provider -->
     <ConfirmDialog

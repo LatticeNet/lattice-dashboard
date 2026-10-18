@@ -65,7 +65,8 @@ function cancel(): void {
     <DialogScrollContent class="sm:max-w-md" :data-testid="testId">
       <DialogHeader>
         <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription>{{ description }}</DialogDescription>
+        <!-- Callers put URLs and IDs in the sentence; one with nowhere to break must not widen the prompt past a phone. -->
+        <DialogDescription class="[overflow-wrap:anywhere]">{{ description }}</DialogDescription>
       </DialogHeader>
       <slot />
       <div v-if="confirm" class="space-y-4">
