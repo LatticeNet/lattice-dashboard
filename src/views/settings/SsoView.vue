@@ -542,6 +542,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       :columns="columns"
       :rows="sortedProviders"
       :row-key="(provider) => provider.id"
+      :row-click="canAdmin ? (provider) => openEdit(provider) : undefined"
       :loading="providersQuery.loading.value"
       :error="providersQuery.error.value"
       :has-data="providersQuery.data.value !== undefined"
