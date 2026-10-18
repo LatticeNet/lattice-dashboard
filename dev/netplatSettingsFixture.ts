@@ -65,7 +65,7 @@ const DENSE_TOKENS: TokenView[] = [
 export const TOKENS: TokenView[] = ACCESS === "dense" ? DENSE_TOKENS : [];
 
 const DENSE_PROVIDERS: OIDCProviderView[] = [
-  { id: "oidc_google_workspace", display_name: "Google Workspace", issuer: "https://accounts.google.com", client_id: "123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com", has_secret: true, scopes: ["openid", "email", "profile"], allowed_domains: ["openjobs.ai"], enabled: true },
+  { id: "oidc_google_workspace", display_name: "Google Workspace", issuer: "https://accounts.google.com", client_id: "123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com", has_secret: true, scopes: ["openid", "email", "profile"], allowed_domains: ["openjobs.ai"], enabled: true, skip_local_totp: true },
   { id: "oidc_authentik_home", display_name: "", issuer: "https://auth.home.example/application/o/lattice/", client_id: "lattice-console", has_secret: false, scopes: ["openid", "email"], allowed_domains: [], enabled: false },
 ];
 

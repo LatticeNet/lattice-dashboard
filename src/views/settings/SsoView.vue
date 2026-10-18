@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import {
   Fingerprint,
-  Lock,
   Pencil,
   Plug,
   Plus,
@@ -399,33 +398,27 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
     searchable: true,
     value: (row) => row.display_name || row.issuer,
   },
+  // Where the provider points and as whom: the issuer, with the client ID on
+  // a second line. Both stay searchable through the one value.
   {
     key: "issuer",
-    label: t("settings.sso.list.issuer"),
+    label: t("settings.sso.list.issuerAndClient"),
     sortable: true,
     searchable: true,
+    value: (row) => `${row.issuer} ${row.client_id}`,
   },
-  {
-    key: "client_id",
-    label: t("settings.sso.list.clientId"),
-    sortable: true,
-    searchable: true,
-  },
-  {
-    key: "secret",
-    label: t("settings.sso.list.secret"),
-    sortable: true,
-    value: (row) => (row.has_secret ? 0 : 1),
-  },
+  // Everything about the provider's state in one cell: enabled, a missing
+  // secret, a relaxed sign-in policy. A set secret is the normal case and
+  // says nothing.
   {
     key: "status",
     label: t("settings.sso.list.status"),
     sortable: true,
-    value: (row) => (row.enabled ? 0 : 1),
+    value: (row) => (row.enabled ? 0 : 2) + (row.has_secret ? 0 : 1),
   },
   { key: "scopes", label: t("settings.sso.list.scopes") },
   { key: "allowed_domains", label: t("settings.sso.list.allowedDomains") },
-  { key: "actions", label: t("settings.sso.list.actions"), align: "right" },
+  { key: "actions", label: t("settings.sso.list.actions"), align: "right", pin: "end" },
 ]);
 
 /* The proof line (design 23, section 3.1): read once, so no age promise. */
@@ -500,31 +493,27 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-display_name="{ row }">
-        <div class="font-medium">{{ row.display_name || row.issuer }}</div>
+        <!-- A provider saved without a name is named by its issuer: wrapped, never one wide line. -->
+        <div class="max-w-52 font-medium [overflow-wrap:anywhere]">{{ row.display_name || row.issuer }}</div>
         <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
       </template>
 
       <template #cell-issuer="{ row }">
         <!-- A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line. -->
-        <span class="line-clamp-2 block w-48 break-all font-mono text-xs text-muted-foreground lg:w-60" :title="row.issuer">{{ row.issuer }}</span>
-      </template>
-
-      <template #cell-client_id="{ row }">
-        <span class="line-clamp-2 block w-40 break-all font-mono text-xs text-muted-foreground lg:w-44" :title="row.client_id">{{ row.client_id }}</span>
-      </template>
-
-      <template #cell-secret="{ row }">
-        <Badge :variant="secretMeta(row).badgeVariant">
-          <Lock v-if="row.has_secret" class="size-3" aria-hidden="true" />
-          <Unlock v-else class="size-3" aria-hidden="true" />
-          {{ row.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
-        </Badge>
+        <span class="line-clamp-2 block w-52 break-all font-mono text-xs text-muted-foreground" :title="row.issuer">{{ row.issuer }}</span>
+        <span class="mt-1 line-clamp-2 block w-52 break-all font-mono text-xs text-muted-foreground/80" :title="row.client_id">
+          <span class="sr-only">{{ $t("settings.sso.list.clientId") }}: </span>{{ row.client_id }}
+        </span>
       </template>
 
       <template #cell-status="{ row }">
-        <div class="flex flex-wrap gap-1">
+        <div class="flex flex-col items-start gap-1">
           <Badge :variant="enabledBadge(row)">
             {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
+          </Badge>
+          <Badge v-if="!row.has_secret" :variant="secretMeta(row).badgeVariant">
+            <Unlock class="size-3" aria-hidden="true" />
+            {{ $t("settings.sso.list.secretMissing") }}
           </Badge>
           <!-- A relaxed sign-in policy is never quiet: it says so on the row. -->
           <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
@@ -535,7 +524,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-scopes="{ row }">
-        <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+        <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[150px]">
           <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
             {{ scope }}
           </Badge>
