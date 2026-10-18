@@ -280,6 +280,12 @@ export default {
         disableLastWarning:
           "This is the only enabled provider. Turning it off removes SSO from the login screen for everyone.",
       },
+      identityStepUp: {
+        title: "Confirm this provider change",
+        description:
+          "Adding an identity provider, or changing its issuer or client, decides who can sign in to this console ({issuer}). Enter your code, or use a passkey, to confirm it is you.",
+        required: "This change needs a fresh second factor. If you have none yet, enroll an authenticator app or a passkey in Security first.",
+      },
       skipStepUp: {
         title: "Confirm before turning this on",
         description:

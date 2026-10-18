@@ -152,20 +152,32 @@ const canSubmit = computed(
     !!form.client_id.trim(),
 );
 
-// ── Provider-trusted second factor (skip_local_totp) ─────────────────────────
-// Turning it on lets a sign-in through this provider open the console without
-// the local authenticator code, so the server asks for a fresh step-up first;
-// turning it off, or saving with it unchanged, needs none. The baseline is the
-// provider as the list holds it now, not as it was when the editor opened, so
-// a refresh while the dialog is open moves it too.
-const storedSkip = computed(() => {
+// ── Changes that need a fresh step-up ────────────────────────────────────────
+// The server asks for a fresh second factor before two kinds of change, and
+// refuses them to tokens:
+//  - turning skip_local_totp on, which lets a sign-in through this provider
+//    open the console without the local authenticator code;
+//  - adding a provider, or changing its issuer or client, which decides which
+//    IdP asserts identities and so who can sign in.
+// Everything else (name, domains, scopes, secret, enabled, turning the policy
+// off) saves directly. The baseline is the provider as the list holds it now,
+// not as it was when the editor opened, so a refresh while the dialog is open
+// moves it too.
+const storedProvider = computed(() => {
   const id = editing.value?.id;
-  if (!id) return false;
-  return skipLocalTotpOf(providers.value.find((provider) => provider.id === id) ?? editing.value);
+  if (!id) return undefined;
+  return providers.value.find((provider) => provider.id === id) ?? editing.value;
 });
-const enablingSkip = computed(() => form.skip_local_totp && !storedSkip.value);
-const skipStepUp = useStepUp({
-  required: t("settings.sso.skipStepUp.required"),
+const enablingSkip = computed(() => form.skip_local_totp && !skipLocalTotpOf(storedProvider.value));
+const changesIdentityProvider = computed(() => {
+  const stored = storedProvider.value;
+  if (!stored) return true;
+  return form.issuer.trim().replace(/\/+$/, "") !== stored.issuer || form.client_id.trim() !== stored.client_id;
+});
+/** Which prompt a save asks for: the policy's own words when it is being turned on. */
+const stepUpReason = computed<"skip" | "identity">(() => (enablingSkip.value ? "skip" : "identity"));
+const providerStepUp = useStepUp({
+  required: t("settings.sso.identityStepUp.required"),
   failed: t("settings.sso.skipStepUp.failed"),
   passkeyFailed: t("settings.sso.skipStepUp.passkeyFailed"),
 });
@@ -174,13 +186,13 @@ const skipStepUp = useStepUp({
 let awaitingGrant = false;
 
 /** A step-up grant, or undefined when the operator closed the prompt. */
-async function skipGrant(): Promise<string | undefined> {
+async function providerGrant(): Promise<string | undefined> {
   // Every time, even with a grant from a moment ago: the prompt is where the
-  // operator reads which provider this is for and what it lets in.
-  skipStepUp.invalidate();
+  // operator reads which provider this is for and what the change does.
+  providerStepUp.invalidate();
   awaitingGrant = true;
   try {
-    return await skipStepUp.request();
+    return await providerStepUp.request();
   } catch {
     return undefined;
   } finally {
@@ -194,9 +206,10 @@ function isStepUpRequired(error: unknown): boolean {
 
 async function submitForm() {
   if (!canSubmit.value || !canAdmin.value || saving.value || awaitingGrant) return;
+  const turningSkipOn = enablingSkip.value;
   let grant: string | undefined = "";
-  if (enablingSkip.value) {
-    grant = await skipGrant();
+  if (turningSkipOn || changesIdentityProvider.value) {
+    grant = await providerGrant();
     // The operator closed the prompt: nothing was saved, and the form stays as it was.
     if (!grant) return;
   }
@@ -219,12 +232,11 @@ async function submitForm() {
     try {
       await api.oidc.upsertProvider(req);
     } catch (error) {
-      // The server judges "turning it on" against what it stores, so a list
-      // that was stale, or a grant it no longer holds, ends here: drop the
-      // cached grant, ask once, and send again.
+      // The server judges against what it stores, so a list that was stale,
+      // or a grant it no longer holds, ends here: ask once and send again.
       if (!isStepUpRequired(error)) throw error;
       saving.value = false;
-      grant = await skipGrant();
+      grant = await providerGrant();
       if (!grant) return;
       saving.value = true;
       req.step_up_grant = grant;
@@ -232,7 +244,7 @@ async function submitForm() {
     }
     const name = form.display_name.trim() || req.issuer;
     toast.success(
-      req.step_up_grant
+      turningSkipOn
         ? t("settings.sso.toast.skipOn", { name })
         : editing.value
           ? t("settings.sso.toast.updated")
@@ -241,16 +253,26 @@ async function submitForm() {
     formOpen.value = false;
     providersQuery.refresh();
   } catch (error) {
-    if (isStepUpRequired(error)) skipStepUp.invalidate();
+    if (isStepUpRequired(error)) providerStepUp.invalidate();
     toast.error(
       isStepUpRequired(error)
-        ? t("settings.sso.skipStepUp.required")
+        ? t(turningSkipOn ? "settings.sso.skipStepUp.required" : "settings.sso.identityStepUp.required")
         : error instanceof Error
           ? error.message
           : t("settings.sso.toast.saveFailed"),
     );
   } finally {
     saving.value = false;
+  }
+}
+
+/** A provider saved without a name is named by its issuer's host, not the whole URL. */
+function providerName(provider: OIDCProviderView): string {
+  if (provider.display_name && provider.display_name !== provider.issuer) return provider.display_name;
+  try {
+    return new URL(provider.issuer).host || provider.issuer;
+  } catch {
+    return provider.issuer;
   }
 }
 
@@ -418,7 +440,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
   },
   { key: "scopes", label: t("settings.sso.list.scopes") },
   { key: "allowed_domains", label: t("settings.sso.list.allowedDomains") },
-  { key: "actions", label: t("settings.sso.list.actions"), align: "right", pin: "end" },
+  { key: "actions", label: t("settings.sso.list.actions"), align: "right" },
 ]);
 
 /* The proof line (design 23, section 3.1): read once, so no age promise. */
@@ -493,15 +515,15 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-display_name="{ row }">
-        <!-- A provider saved without a name is named by its issuer: wrapped, never one wide line. -->
-        <div class="max-w-52 font-medium [overflow-wrap:anywhere]">{{ row.display_name || row.issuer }}</div>
+        <!-- A provider saved without a name is named by its issuer's host; the whole URL is in the next column. -->
+        <div class="max-w-52 font-medium [overflow-wrap:anywhere]">{{ providerName(row) }}</div>
         <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
       </template>
 
       <template #cell-issuer="{ row }">
         <!-- A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line. -->
-        <span class="line-clamp-2 block w-52 break-all font-mono text-xs text-muted-foreground" :title="row.issuer">{{ row.issuer }}</span>
-        <span class="mt-1 line-clamp-2 block w-52 break-all font-mono text-xs text-muted-foreground/80" :title="row.client_id">
+        <span class="block w-52 break-all font-mono text-xs text-muted-foreground">{{ row.issuer }}</span>
+        <span class="mt-1 block w-52 break-all font-mono text-xs text-muted-foreground">
           <span class="sr-only">{{ $t("settings.sso.list.clientId") }}: </span>{{ row.client_id }}
         </span>
       </template>
@@ -516,7 +538,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
             {{ $t("settings.sso.list.secretMissing") }}
           </Badge>
           <!-- A relaxed sign-in policy is never quiet: it says so on the row. -->
-          <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
+          <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" class="max-w-36 whitespace-normal text-left" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
             <ShieldOff class="size-3" aria-hidden="true" />
             {{ $t("settings.sso.list.skipsLocalCode") }}
           </Badge>
@@ -533,21 +555,23 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-allowed_domains="{ row }">
-        <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+        <!-- Capped like Scopes: a long domain is cut with an ellipsis and its whole name is in the title. -->
+        <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[150px]">
           <Badge
             v-for="domain in row.allowed_domains"
             :key="domain"
             variant="outline"
-            class="font-mono"
+            class="max-w-full font-mono"
+            :title="domain"
           >
-            {{ domain }}
+            <span class="truncate">{{ domain }}</span>
           </Badge>
         </div>
         <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
       </template>
 
       <template #cell-actions="{ row }">
-        <RowMenu v-if="canAdmin" :name="row.display_name || row.id" :items="menuFor(row)" />
+        <RowMenu v-if="canAdmin" :name="providerName(row)" :items="menuFor(row)" />
       </template>
     </DataTable>
 
@@ -756,11 +780,15 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
 
     <!-- Turning on the provider-trusted second factor asks for a fresh step-up. -->
     <StepUpDialog
-      :step-up="skipStepUp"
-      :title="$t('settings.sso.skipStepUp.title')"
-      :description="$t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || form.issuer.trim() })"
+      :step-up="providerStepUp"
+      :title="stepUpReason === 'skip' ? $t('settings.sso.skipStepUp.title') : $t('settings.sso.identityStepUp.title')"
+      :description="
+        stepUpReason === 'skip'
+          ? $t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || form.issuer.trim() })
+          : $t('settings.sso.identityStepUp.description', { issuer: form.issuer.trim() })
+      "
       :submit-label="$t('settings.sso.skipStepUp.submit')"
-      :submit-icon="ShieldOff"
+      :submit-icon="stepUpReason === 'skip' ? ShieldOff : ShieldCheck"
       :audit="$t('settings.sso.skipStepUp.audit')"
       test-id="sso-skip-step-up"
     />
