@@ -294,7 +294,7 @@ function statusLabel(status: string): string {
     <section v-if="stale" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground" data-testid="approval-stale">
       <p class="flex items-center gap-2 font-medium text-foreground">
         <AlertTriangle class="size-4 text-warning-text" aria-hidden="true" />
-        {{ $t('operations.approvals.staleTitle') }}
+        {{ mirrorPlan ? $t('operations.approvals.mirrorStale.title') : $t('operations.approvals.staleTitle') }}
       </p>
       <template v-if="mirrorPlan">
         <!-- A registry plan made against an older revision: the server would refuse it, so the way out is a fresh plan. -->
@@ -340,7 +340,8 @@ function statusLabel(status: string): string {
 
     <section v-if="mirrorPlan" class="space-y-2" data-testid="approval-mirror-plan">
       <h3 class="text-sm font-medium">{{ $t('platform.agentUpdatesPage.mirrors.plan.reviewHeading') }}</h3>
-      <AgentMirrorPlanReadout :plan="mirrorPlan" :revision="mirrorRevision" :group-names="groupNames" />
+      <!-- The stale box above already says the registry moved on; the readout does not say it twice. -->
+      <AgentMirrorPlanReadout :plan="mirrorPlan" :revision="stale ? undefined : mirrorRevision" :group-names="groupNames" />
     </section>
 
     <section class="space-y-2" :aria-label="$t('operations.approvals.plan')">

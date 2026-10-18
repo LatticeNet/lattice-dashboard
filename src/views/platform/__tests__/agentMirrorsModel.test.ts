@@ -8,6 +8,7 @@ import {
   preferForChange,
   pruneFiledPlans,
   serverProblemField,
+  stalePlans,
   waitingPlans,
   draftChangesMirror,
   draftFromMirror,
@@ -418,4 +419,21 @@ test("the picker's count splits what is chosen into groups, nodes and ids the pa
   const groups = new Set(["grp_a"]);
   assert.deepEqual(chosenSummary(["node_1", "grp_a", "node_2", "grp_gone", "node_1"], nodes, groups), { total: 4, groups: 1, nodes: 2, unknown: 1 });
   assert.deepEqual(chosenSummary([], nodes, groups), { total: 0, groups: 0, nodes: 0, unknown: 0 });
+});
+
+test("a stale pending plan is not waiting: the guard, the attention item and the menu see none, and stalePlans names it", () => {
+  const plan = parseAgentMirrorPlan(CHANGE_PLAN)!; // base_revision 7, mirror r2
+  const stale = { id: "approval_old", plan: { ...plan, base_revision: 6 } };
+  const fresh = { id: "approval_fresh", plan };
+  // r2's only pending plan is stale: nothing waits for it, and it is named as stale.
+  assert.equal(pendingByMirror(waitingPlans([stale], [], 7)).get("r2"), undefined);
+  assert.deepEqual(stalePlans([stale], 7).map((entry) => entry.id), ["approval_old"]);
+  // A fresh plan beside it still waits.
+  assert.deepEqual(pendingByMirror(waitingPlans([stale, fresh], [], 7)).get("r2"), ["approval_fresh"]);
+  // A plan this page filed against an older revision is no longer waiting either.
+  assert.deepEqual(waitingPlans([], [{ id: "approval_filed", plan: { ...plan, base_revision: 6 }, at: 0 }], 7), []);
+  // Without a registry revision nothing is called stale, and a plan the page could not read counts as waiting.
+  assert.equal(waitingPlans([stale], [], undefined).length, 1);
+  assert.deepEqual(stalePlans([stale, { id: "approval_unread" }], 7).map((entry) => entry.id), ["approval_old"]);
+  assert.equal(waitingPlans([{ id: "approval_unread" }], [], 7).length, 1);
 });

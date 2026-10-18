@@ -276,6 +276,16 @@ function staleApprovalCount(nodeId: string): number {
 const mirrorsQuery = useAsyncData<AgentMirrorsView>((signal) => api.agentUpdates.mirrors({ signal }), {
   pollInterval: 30000,
 });
+/**
+ * Open Mirrors lands on the failing mirror's row (highlighted, in view, its
+ * actions focused) instead of leaving the pointer where the Mirrors layer's
+ * own attention item puts a button that files a plan.
+ */
+const mirrorFocus = ref<{ id: string; seq: number } | undefined>();
+function openMirror(id: string): void {
+  mirrorFocus.value = { id, seq: (mirrorFocus.value?.seq ?? 0) + 1 };
+  layer.value = "mirrors";
+}
 
 const artifactColumns = computed<DataTableColumn<AgentArtifactView>[]>(() => [
   { key: "version", label: t("platform.agentUpdates.artifactColVersion"), sortable: true },
@@ -741,7 +751,7 @@ const attention = computed<AttentionItem[]>(() => {
       tone: "danger",
       claim: t("platform.agentUpdatesPage.mirrors.attention.chunksClaim", { id: entry.mirror, n: entry.chunk_failures }, entry.chunk_failures),
       proof: t("platform.agentUpdatesPage.mirrors.attention.chunksProof"),
-      action: { label: t("platform.agentUpdatesPage.mirrors.attention.openMirrors"), run: () => (layer.value = "mirrors") },
+      action: { label: t("platform.agentUpdatesPage.mirrors.attention.openMirrors"), run: () => openMirror(entry.mirror) },
     });
   }
   if (staleAgentUpdateApprovals.value.length) {
@@ -1200,6 +1210,7 @@ const deleteImpact = computed(() => {
       :error="mirrorsQuery.error.value ?? null"
       :loading="mirrorsQuery.loading.value"
       :nodes="nodes"
+      :focus-mirror="mirrorFocus"
       @refresh="mirrorsQuery.refresh()"
     />
 

@@ -586,10 +586,24 @@ export function pruneFiledPlans(
   return filed.filter((entry) => !read.has(entry.id) && (listed.has(entry.id) || now - entry.at < graceMs));
 }
 
-/** The plans waiting, as read and as just filed, each once. */
-export function waitingPlans<T extends { id: string; plan?: AgentMirrorPlan }>(read: readonly T[], filed: readonly FiledPlan[]): Array<T | FiledPlan> {
+/**
+ * The plans waiting, as read and as just filed, each once, leaving out any
+ * made against an older registry revision than the one read: the server
+ * would refuse such a plan, so it waits for nothing, and a mirror whose only
+ * plan is stale has none waiting. stalePlans names those.
+ */
+export function waitingPlans<T extends { id: string; plan?: AgentMirrorPlan }>(
+  read: readonly T[],
+  filed: readonly FiledPlan[],
+  revision?: number,
+): Array<T | FiledPlan> {
   const known = new Set(read.map((entry) => entry.id));
-  return [...read, ...filed.filter((entry) => !known.has(entry.id))];
+  return [...read, ...filed.filter((entry) => !known.has(entry.id))].filter((entry) => !(entry.plan && planBehindRegistry(entry.plan, revision)));
+}
+
+/** The pending plans made against an older registry revision: they can only be rejected and filed afresh. */
+export function stalePlans<T extends { id: string; plan?: AgentMirrorPlan }>(read: readonly T[], revision: number | undefined): T[] {
+  return read.filter((entry) => !!entry.plan && planBehindRegistry(entry.plan, revision));
 }
 
 /** Mirror ids with a plan waiting, from the pending plans the page could read. */

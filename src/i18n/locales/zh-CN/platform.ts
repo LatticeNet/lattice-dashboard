@@ -2198,6 +2198,7 @@ export default {
           disabled: "已停用",
           disabledHint: "不会出现在任何计划里",
           pending: "有一份相关计划等待审阅",
+          stalePending: "待审的计划已过时，请重新提交",
         },
         health: {
           fetches: "最近的下载里取了 {n} 次",
@@ -2210,6 +2211,7 @@ export default {
           enable: "启用",
           delete: "删除",
           review: "审阅待批计划",
+          reviewStale: "查看过时的计划",
         },
         attention: {
           chunksClaim: "{id}：有 {n} 次下载写入的分块没有通过清单校验",
@@ -2218,6 +2220,11 @@ export default {
           reviewPending: "审阅待批计划",
           reviewDisable: "审阅停用计划",
           openMirrors: "打开镜像",
+        },
+        disable: {
+          title: "停用镜像 {id}？",
+          description: "这会提交一份停用 {id} 的计划。计划批准之前什么都不会变。",
+          confirm: "提交停用计划",
         },
         duplicate: {
           title: "{id} 已有一份计划等待审阅",

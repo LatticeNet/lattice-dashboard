@@ -11,9 +11,12 @@
  * every node whose order changes), and hand the decision to Approvals; the
  * registry on this page changes only when that plan is approved. Delete
  * confirms first, like every delete in the console, and names how many nodes
- * list the mirror now. A mirror with a plan waiting says so in its row, its
- * attention item links to that plan, and filing a second plan for it asks
- * first: approving either would make the other stale.
+ * list the mirror now, and so does disable, which moves nodes off a mirror.
+ * A mirror with a plan waiting says so in its row, its attention item links
+ * to that plan, and filing a second plan for it asks first: approving either
+ * would make the other stale. A plan made against an older registry
+ * revision waits for nothing (the server would refuse it), so a mirror whose
+ * only plan is stale says that instead and files a fresh plan directly.
  *
  * Changing the registry needs node:admin and network:plan over the whole
  * fleet. A session without them, or confined to some nodes, reads the
@@ -24,9 +27,9 @@
  * fleet of a hundred nodes on a few mirrors reads as a handful of rows; a
  * filter finds a node, or every row that lists a mirror, by id or name.
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import { AlertTriangle, FileCode2, Pencil, Plus, Power, PowerOff, RefreshCw, Search, Trash2 } from "lucide-vue-next";
 
 import {
@@ -91,6 +94,7 @@ import {
   pruneFiledPlans,
   serverProblemField,
   sortMirrors,
+  stalePlans,
   waitingPlans,
   type FiledPlan,
   type MirrorDraft,
@@ -104,12 +108,20 @@ const props = defineProps<{
   loading: boolean;
   /** The node list, for the preferred-for picker and names. */
   nodes: readonly Node[];
+  /**
+   * A mirror the page asked to land on (its attention item's Open Mirrors):
+   * the row is highlighted, scrolled into view and its actions button
+   * focused, so the pointer is not left over a button that files a plan.
+   * seq tells two requests for the same mirror apart.
+   */
+  focusMirror?: { id: string; seq: number };
 }>();
 
 const emit = defineEmits<{ refresh: [] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const router = useRouter();
 
 const K = "platform.agentUpdatesPage.mirrors";
 
@@ -181,9 +193,11 @@ watch(
   },
 );
 
-/** The plans waiting for each mirror, so its row says one exists before anyone files a second. */
-const pendingPlans = computed(() => waitingPlans(pendingRows.value, localFiled.value));
+/** The plans waiting for each mirror, so its row says one exists before anyone files a second; a stale one is not waiting. */
+const pendingPlans = computed(() => waitingPlans(pendingRows.value, localFiled.value, props.view?.revision));
 const pendingForMirror = computed(() => pendingByMirror(pendingPlans.value));
+/** Plans for each mirror the server would refuse as stale: the row says so, and a fresh plan files without the guard. */
+const staleForMirror = computed(() => pendingByMirror(stalePlans(pendingRows.value, props.view?.revision)));
 
 function planSentence(plan: AgentMirrorPlan): string {
   return mirrorPlanSentence(t, plan);
@@ -207,7 +221,7 @@ const attention = computed<AttentionItem[]>(() =>
         to: { name: "approvals", query: { open: waiting[0] } },
       };
     } else if (canChange.value && mirror?.enabled) {
-      action = { label: t(`${K}.attention.disable`), run: () => void toggleEnabled(mirror), busy: planning.value === mirror.id };
+      action = { label: t(`${K}.attention.disable`), run: () => askToggle(mirror), busy: planning.value === mirror.id };
     }
     return {
       key: `chunks:${entry.mirror}`,
@@ -261,17 +275,81 @@ function fileAnother(): void {
   duplicate.value = undefined;
   pending?.run();
 }
+/** The guard's primary action: the waiting plan, in Approvals. */
+function reviewWaiting(): void {
+  const id = duplicate.value ? pendingForMirror.value.get(duplicate.value.mirror.id)?.[0] : undefined;
+  duplicate.value = undefined;
+  if (id) void router.push({ name: "approvals", query: { open: id } });
+}
+
+/**
+ * Enable files at once (the plan still opens for review). Disable moves every
+ * node that lists the mirror on to its next source once approved, so it asks
+ * first, wherever it is chosen, and says how many nodes that is; a button in
+ * an attention item must never file it on a stray second click.
+ */
+const disableTarget = ref<AgentMirror | undefined>();
+const disabling = ref(false);
+function askToggle(mirror: AgentMirror): void {
+  guarded(mirror, () => {
+    if (mirror.enabled) disableTarget.value = mirror;
+    else void toggleEnabled(mirror);
+  });
+}
+const disableImpact = computed(() => {
+  const mirror = disableTarget.value;
+  if (!mirror) return [];
+  const reach = mirrorReach(order.value, mirror.id);
+  return [
+    reach ? t(`${K}.delete.impactReach`, { id: mirror.id, n: reach }, reach) : t(`${K}.delete.impactNone`, { id: mirror.id }),
+    t(`${K}.delete.impactReview`),
+  ];
+});
+async function confirmDisable(): Promise<void> {
+  const mirror = disableTarget.value;
+  if (!mirror) return;
+  disabling.value = true;
+  try {
+    await toggleEnabled(mirror);
+  } finally {
+    disabling.value = false;
+    disableTarget.value = undefined;
+  }
+}
+
+// ── landing on a mirror from elsewhere on the page ───────────────────────────
+const highlighted = ref<string | undefined>();
+let handledFocus = 0;
+let clearHighlight: ReturnType<typeof setTimeout> | undefined;
+onScopeDispose(() => clearTimeout(clearHighlight));
+watch(
+  () => [props.focusMirror?.seq, !!props.view] as const,
+  async () => {
+    const request = props.focusMirror;
+    if (!request || !props.view || request.seq === handledFocus) return;
+    handledFocus = request.seq;
+    highlighted.value = request.id;
+    await nextTick();
+    const row = document.querySelector<HTMLElement>(`[data-mirror-row="${CSS.escape(request.id)}"]`)?.closest("tr");
+    row?.scrollIntoView({ block: "center" });
+    rowTrigger(request.id)?.focus({ preventScroll: true });
+    clearTimeout(clearHighlight);
+    clearHighlight = setTimeout(() => (highlighted.value = undefined), 6000);
+  },
+  { immediate: true },
+);
 
 function menuFor(mirror: AgentMirror): RowMenuItem[] {
   const busy = planning.value === mirror.id;
   const waiting = pendingForMirror.value.get(mirror.id) ?? [];
+  const stale = staleForMirror.value.get(mirror.id) ?? [];
   return [
     {
       key: "review",
-      label: t(`${K}.actions.review`),
+      label: waiting.length ? t(`${K}.actions.review`) : t(`${K}.actions.reviewStale`),
       icon: FileCode2,
-      hidden: !waiting.length,
-      to: { name: "approvals", query: { open: waiting[0] } },
+      hidden: !waiting.length && !stale.length,
+      to: { name: "approvals", query: { open: waiting[0] ?? stale[0] } },
     },
     { key: "change", label: t(`${K}.actions.change`), icon: Pencil, disabled: busy, run: () => guarded(mirror, () => openChange(mirror)) },
     {
@@ -279,7 +357,7 @@ function menuFor(mirror: AgentMirror): RowMenuItem[] {
       label: mirror.enabled ? t(`${K}.actions.disable`) : t(`${K}.actions.enable`),
       icon: mirror.enabled ? PowerOff : Power,
       disabled: busy,
-      run: () => guarded(mirror, () => void toggleEnabled(mirror)),
+      run: () => askToggle(mirror),
     },
     { key: "delete", label: t(`${K}.actions.delete`), icon: Trash2, danger: true, disabled: busy, run: () => guarded(mirror, () => (deleteTarget.value = mirror)) },
   ];
@@ -467,8 +545,12 @@ const chosenText = computed(() => {
   ].filter(Boolean);
   return t(`${K}.form.chosen`, { n: summary.total, parts: parts.join(t(`${K}.plan.fieldSeparator`)) });
 });
-function toggleShowChosen(): void {
+const pickerList = ref<HTMLElement | null>(null);
+async function toggleShowChosen(): Promise<void> {
   chosenSnapshot.value = chosenSnapshot.value ? null : new Set(draft.value.prefer_for);
+  // The list starts at its top in either mode, not wherever the other one was scrolled.
+  await nextTick();
+  if (pickerList.value) pickerList.value.scrollTop = 0;
 }
 
 function toggleRef(id: string, on: boolean): void {
@@ -618,10 +700,11 @@ async function confirmDelete(): Promise<void> {
         :has-data="!!view"
         :expression-filter="false"
         :show-summary="false"
+        :active-row-id="highlighted"
         @retry="emit('refresh')"
       >
         <template #cell-id="{ row }">
-          <span class="block break-all font-mono text-xs font-medium">{{ row.id }}</span>
+          <span class="block break-all font-mono text-xs font-medium" :data-mirror-row="row.id">{{ row.id }}</span>
           <span v-if="row.name" class="block break-words text-xs text-muted-foreground">{{ row.name }}</span>
         </template>
         <template #cell-base_url="{ row }">
@@ -673,6 +756,12 @@ async function confirmDelete(): Promise<void> {
             class="touch-target mt-0.5 block min-w-28 text-xs text-primary underline-offset-4 hover:underline"
             data-testid="mirror-row-pending"
           >{{ $t(`${K}.state.pending`) }}</RouterLink>
+          <RouterLink
+            v-else-if="staleForMirror.get(row.id)?.length"
+            :to="{ name: 'approvals', query: { open: staleForMirror.get(row.id)![0] } }"
+            class="touch-target mt-0.5 block min-w-28 text-xs text-warning-text underline-offset-4 hover:underline"
+            data-testid="mirror-row-stale"
+          >{{ $t(`${K}.state.stalePending`) }}</RouterLink>
         </template>
         <template #cell-health="{ row }">
           <div class="text-xs md:min-w-36">
@@ -828,6 +917,7 @@ async function confirmDelete(): Promise<void> {
                 <Input v-model="refFilter" type="search" class="ps-8" :aria-label="$t(`${K}.form.refFilter`)" :placeholder="$t(`${K}.form.refFilter`)" @keydown.enter.prevent />
               </div>
               <div
+                ref="pickerList"
                 class="grid max-h-56 gap-0.5 overflow-auto rounded-md border border-border bg-background p-1.5"
                 role="group"
                 aria-labelledby="mirror-prefer-label"
@@ -921,24 +1011,38 @@ async function confirmDelete(): Promise<void> {
     />
 
     <!-- A second plan for a mirror with one waiting: say so, offer the waiting one, file another only when asked. -->
+    <!-- Reviewing the waiting plan is the primary way out; filing another stays possible, as the lesser button. -->
     <ConfirmDialog
       :open="!!duplicate"
       variant="default"
       :title="$t(`${K}.duplicate.title`, { id: duplicate?.mirror.id ?? '' })"
       :description="$t(`${K}.duplicate.description`)"
-      :confirm-label="$t(`${K}.duplicate.confirm`)"
+      :confirm-label="$t(`${K}.actions.review`)"
       :cancel-label="$t('common.actions.cancel')"
       :return-focus="() => (duplicate ? rowTrigger(duplicate.mirror.id) : null)"
       @update:open="(v) => { if (!v) duplicate = undefined; }"
-      @confirm="fileAnother"
+      @confirm="reviewWaiting"
     >
-      <RouterLink
-        v-if="duplicate && pendingForMirror.get(duplicate.mirror.id)?.length"
-        :to="{ name: 'approvals', query: { open: pendingForMirror.get(duplicate.mirror.id)![0] } }"
-        class="touch-target text-sm text-primary underline-offset-4 hover:underline"
-        data-testid="mirror-duplicate-review"
-      >{{ $t(`${K}.actions.review`) }}</RouterLink>
+      <Button type="button" variant="outline" size="sm" data-testid="mirror-duplicate-file" @click="fileAnother">
+        {{ $t(`${K}.duplicate.confirm`) }}
+      </Button>
     </ConfirmDialog>
+
+    <!-- Disable moves nodes off the mirror once approved: it asks first, and names how many. -->
+    <ConfirmDialog
+      :open="!!disableTarget"
+      variant="default"
+      :title="$t(`${K}.disable.title`, { id: disableTarget?.id ?? '' })"
+      :description="$t(`${K}.disable.description`, { id: disableTarget?.id ?? '' })"
+      :impact="disableImpact"
+      :impact-title="$t(`${K}.delete.impactTitle`)"
+      :confirm-label="$t(`${K}.disable.confirm`)"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="disabling"
+      :return-focus="() => (disableTarget ? rowTrigger(disableTarget.id) : null)"
+      @update:open="(v) => { if (!v && !disabling) disableTarget = undefined; }"
+      @confirm="confirmDisable"
+    />
 
     <!--
       SECURITY-CRITICAL: PlanReviewDialog is a pure renderer. `:plan-text` is the

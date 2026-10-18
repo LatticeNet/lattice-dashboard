@@ -101,7 +101,8 @@ export default {
       },
       /** 基于旧版本登记表生成的镜像计划(agent.mirrors)。 */
       mirrorStale: {
-        description: "这份计划生成之后镜像登记表已经变了，批准时会被拒绝。请在 Agent 更新页重新提交计划，或者驳回这一份。",
+        title: "这份计划生成之后，镜像登记表已经变了",
+        description: "批准时会被拒绝。请在 Agent 更新页重新提交计划，或者驳回这一份。",
         reason: "基于登记版本 {planned}；登记表现在是版本 {current}。",
         freshPlan: "重新提交计划",
       },

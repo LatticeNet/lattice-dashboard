@@ -2337,6 +2337,7 @@ export default {
           disabled: "disabled",
           disabledHint: "listed in no plan",
           pending: "a plan for it waits for review",
+          stalePending: "its waiting plan is stale; file a fresh one",
         },
         health: {
           fetches: "{n} fetch in the last downloads | {n} fetches in the last downloads",
@@ -2349,6 +2350,7 @@ export default {
           enable: "Enable",
           delete: "Delete",
           review: "Review the waiting plan",
+          reviewStale: "Review the stale plan",
         },
         attention: {
           chunksClaim: "{id}: {n} fetch wrote chunks that failed the manifest | {id}: {n} fetches wrote chunks that failed the manifest",
@@ -2357,6 +2359,11 @@ export default {
           reviewPending: "Review the waiting plan",
           reviewDisable: "Review the disable plan",
           openMirrors: "Open Mirrors",
+        },
+        disable: {
+          title: "Disable mirror {id}?",
+          description: "This files a plan that disables {id}. Nothing changes until the plan is approved.",
+          confirm: "File disable plan",
         },
         duplicate: {
           title: "A plan for {id} already waits for review",

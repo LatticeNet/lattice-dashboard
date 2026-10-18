@@ -102,7 +102,8 @@ export default {
       },
       /** A registry plan (agent.mirrors) made against an older registry revision. */
       mirrorStale: {
-        description: "The mirror registry has changed since this plan was made, so approving it would be refused. File a fresh plan from Agent updates, or reject this one.",
+        title: "The mirror registry changed since this plan was made",
+        description: "Approving it would be refused. File a fresh plan from Agent updates, or reject this one.",
         reason: "Made against registry revision {planned}; the registry is at revision {current} now.",
         freshPlan: "File a fresh plan",
       },
