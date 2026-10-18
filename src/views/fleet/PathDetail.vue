@@ -448,7 +448,7 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
       <div v-if="judgesDegraded && source === 'paths'" class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.chart') }}</p>
         <label
-          :class="cn('inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/60 pointer-coarse:min-h-11', compareParam ? 'text-foreground' : 'text-muted-foreground')"
+          :class="cn('-mx-2 inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/60 pointer-coarse:min-h-11', compareParam ? 'text-foreground' : 'text-muted-foreground')"
         >
           <Checkbox v-model="compareParam" data-testid="path-compare" />
           {{ $t('fleet.monitoring.paths.sheet.compare') }}
