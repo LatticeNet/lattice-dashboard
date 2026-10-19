@@ -27,6 +27,7 @@ import { formatDateTime, formatDateTimeRange, formatDuration, formatRelativeTime
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import { latestCertExpiry } from "./checksModel";
 import { formatLoss, formatMs } from "./latencyModel";
@@ -439,22 +440,19 @@ const tableLive = (t: number) => !!series.value && stepInProgress(series.value, 
     </section>
 
     <section class="space-y-2" :aria-label="$t('fleet.monitoring.paths.sheet.chart')">
-      <!-- The chart header: the comparison, off by default (D13). -->
+      <!--
+        The chart header: the comparison, off by default (D13). The shared
+        checkbox, whose border holds 3:1 against the card in both themes; the
+        hand-made switch it replaces had an off state that read as disabled.
+      -->
       <div v-if="judgesDegraded && source === 'paths'" class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.chart') }}</p>
-        <button
-          type="button"
-          role="switch"
-          :aria-checked="compareParam"
-          :class="cn('inline-flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11', compareParam ? 'text-foreground' : 'text-muted-foreground')"
-          data-testid="path-compare"
-          @click="compareParam = !compareParam"
+        <label
+          :class="cn('-mx-2 inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/60 pointer-coarse:min-h-11', compareParam ? 'text-foreground' : 'text-muted-foreground')"
         >
-          <span :class="cn('relative inline-flex h-4 w-7 shrink-0 rounded-full border border-border transition-colors', compareParam ? 'bg-foreground' : 'bg-muted')" aria-hidden="true">
-            <span :class="cn('absolute top-0.5 size-2.5 rounded-full bg-card transition-[inset-inline-start]', compareParam ? 'start-3.5' : 'start-0.5')" />
-          </span>
+          <Checkbox v-model="compareParam" data-testid="path-compare" />
           {{ $t('fleet.monitoring.paths.sheet.compare') }}
-        </button>
+        </label>
       </div>
       <p v-if="seriesQuery.error.value" class="rounded-md border border-border p-3 text-xs text-destructive" role="alert">
         {{ $t('fleet.monitoring.paths.sheet.seriesFailed', { reason: seriesQuery.error.value.message }) }}

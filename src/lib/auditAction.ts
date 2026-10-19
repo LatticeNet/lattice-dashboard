@@ -178,6 +178,7 @@ export const LABELLED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   "login.oidc",
   "login.oidc.totp_skipped",
   "login.oidc.second_factor_confirmed",
+  "login.oidc.stale_link_ignored",
   "login.totp",
   "login.totp.recovery_used",
   "login.webauthn",

@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import {
   Fingerprint,
-  Lock,
   Pencil,
   Plug,
   Plus,
@@ -153,20 +152,79 @@ const canSubmit = computed(
     !!form.client_id.trim(),
 );
 
-// ── Provider-trusted second factor (skip_local_totp) ─────────────────────────
-// Turning it on lets a sign-in through this provider open the console without
-// the local authenticator code, so the server asks for a fresh step-up first;
-// turning it off, or saving with it unchanged, needs none. The baseline is the
-// provider as the list holds it now, not as it was when the editor opened, so
-// a refresh while the dialog is open moves it too.
-const storedSkip = computed(() => {
+// ── Changes that need a fresh step-up ────────────────────────────────────────
+// The server asks for a fresh second factor before two kinds of change, and
+// refuses them to tokens:
+//  - turning skip_local_totp on, which lets a sign-in through this provider
+//    open the console without the local authenticator code;
+//  - adding a provider, or changing its issuer or client, which decides which
+//    IdP asserts identities and so who can sign in.
+// Everything else (name, domains, scopes, secret, enabled, turning the policy
+// off) saves directly. The baseline is the provider as the list holds it now,
+// not as it was when the editor opened, so a refresh while the dialog is open
+// moves it too.
+const storedProvider = computed(() => {
   const id = editing.value?.id;
-  if (!id) return false;
-  return skipLocalTotpOf(providers.value.find((provider) => provider.id === id) ?? editing.value);
+  if (!id) return undefined;
+  return providers.value.find((provider) => provider.id === id) ?? editing.value;
 });
-const enablingSkip = computed(() => form.skip_local_totp && !storedSkip.value);
-const skipStepUp = useStepUp({
-  required: t("settings.sso.skipStepUp.required"),
+/** The issuer as the server stores it: trimmed, without a trailing slash. */
+function normalIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+const enablingSkip = computed(() => form.skip_local_totp && !skipLocalTotpOf(storedProvider.value));
+const changesIdentityProvider = computed(() => {
+  const stored = storedProvider.value;
+  if (!stored) return true;
+  return normalIssuer(form.issuer) !== stored.issuer || form.client_id.trim() !== stored.client_id;
+});
+/**
+ * Which prompt a save asks for: the policy's own words when only the policy
+ * is turning on, the provider change's words otherwise, and both
+ * consequences when one save does both.
+ */
+const stepUpReason = computed<"skip" | "identity" | "both">(() => {
+  if (!changesIdentityProvider.value) return "skip";
+  return enablingSkip.value ? "both" : "identity";
+});
+
+interface ProviderChangeFact {
+  key: string;
+  label: string;
+  /** The stored value; absent for a new provider. */
+  from?: string;
+  to: string;
+}
+/**
+ * What the prompt puts on the record: the issuer and client a new provider
+ * will trust, or the old and new value of whichever one changes. Every
+ * Google provider has the same issuer, so the client is what tells two apart.
+ */
+const providerChangeFacts = computed<ProviderChangeFact[]>(() => {
+  const stored = storedProvider.value;
+  const issuer = normalIssuer(form.issuer);
+  const clientId = form.client_id.trim();
+  const facts: ProviderChangeFact[] = [];
+  const issuerLabel = t("settings.sso.list.issuer");
+  const clientLabel = t("settings.sso.list.clientId");
+  if (!stored) {
+    facts.push({ key: "issuer", label: issuerLabel, to: issuer }, { key: "client", label: clientLabel, to: clientId });
+  } else {
+    if (issuer !== stored.issuer) facts.push({ key: "issuer", label: issuerLabel, from: stored.issuer, to: issuer });
+    if (clientId !== stored.client_id) facts.push({ key: "client", label: clientLabel, from: stored.client_id, to: clientId });
+  }
+  if (enablingSkip.value) {
+    facts.push({
+      key: "skip",
+      label: t("settings.sso.identityStepUp.skipFact"),
+      from: stored ? t("settings.sso.identityStepUp.asked") : undefined,
+      to: t("settings.sso.identityStepUp.skipped"),
+    });
+  }
+  return facts;
+});
+const providerStepUp = useStepUp({
+  required: t("settings.sso.identityStepUp.required"),
   failed: t("settings.sso.skipStepUp.failed"),
   passkeyFailed: t("settings.sso.skipStepUp.passkeyFailed"),
 });
@@ -175,13 +233,13 @@ const skipStepUp = useStepUp({
 let awaitingGrant = false;
 
 /** A step-up grant, or undefined when the operator closed the prompt. */
-async function skipGrant(): Promise<string | undefined> {
+async function providerGrant(): Promise<string | undefined> {
   // Every time, even with a grant from a moment ago: the prompt is where the
-  // operator reads which provider this is for and what it lets in.
-  skipStepUp.invalidate();
+  // operator reads which provider this is for and what the change does.
+  providerStepUp.invalidate();
   awaitingGrant = true;
   try {
-    return await skipStepUp.request();
+    return await providerStepUp.request();
   } catch {
     return undefined;
   } finally {
@@ -195,16 +253,17 @@ function isStepUpRequired(error: unknown): boolean {
 
 async function submitForm() {
   if (!canSubmit.value || !canAdmin.value || saving.value || awaitingGrant) return;
+  const turningSkipOn = enablingSkip.value;
   let grant: string | undefined = "";
-  if (enablingSkip.value) {
-    grant = await skipGrant();
+  if (turningSkipOn || changesIdentityProvider.value) {
+    grant = await providerGrant();
     // The operator closed the prompt: nothing was saved, and the form stays as it was.
     if (!grant) return;
   }
   saving.value = true;
   try {
     const req: OIDCProviderUpsertRequest = {
-      issuer: form.issuer.trim().replace(/\/+$/, ""),
+      issuer: normalIssuer(form.issuer),
       client_id: form.client_id.trim(),
       scopes: splitCsv(form.scopes),
       allowed_domains: splitCsv(form.allowed_domains),
@@ -220,12 +279,11 @@ async function submitForm() {
     try {
       await api.oidc.upsertProvider(req);
     } catch (error) {
-      // The server judges "turning it on" against what it stores, so a list
-      // that was stale, or a grant it no longer holds, ends here: drop the
-      // cached grant, ask once, and send again.
+      // The server judges against what it stores, so a list that was stale,
+      // or a grant it no longer holds, ends here: ask once and send again.
       if (!isStepUpRequired(error)) throw error;
       saving.value = false;
-      grant = await skipGrant();
+      grant = await providerGrant();
       if (!grant) return;
       saving.value = true;
       req.step_up_grant = grant;
@@ -233,7 +291,7 @@ async function submitForm() {
     }
     const name = form.display_name.trim() || req.issuer;
     toast.success(
-      req.step_up_grant
+      turningSkipOn
         ? t("settings.sso.toast.skipOn", { name })
         : editing.value
           ? t("settings.sso.toast.updated")
@@ -242,16 +300,26 @@ async function submitForm() {
     formOpen.value = false;
     providersQuery.refresh();
   } catch (error) {
-    if (isStepUpRequired(error)) skipStepUp.invalidate();
+    if (isStepUpRequired(error)) providerStepUp.invalidate();
     toast.error(
       isStepUpRequired(error)
-        ? t("settings.sso.skipStepUp.required")
+        ? t(turningSkipOn ? "settings.sso.skipStepUp.required" : "settings.sso.identityStepUp.required")
         : error instanceof Error
           ? error.message
           : t("settings.sso.toast.saveFailed"),
     );
   } finally {
     saving.value = false;
+  }
+}
+
+/** A provider saved without a name is named by its issuer's host, not the whole URL. */
+function providerName(provider: OIDCProviderView): string {
+  if (provider.display_name && provider.display_name !== provider.issuer) return provider.display_name;
+  try {
+    return new URL(provider.issuer).host || provider.issuer;
+  } catch {
+    return provider.issuer;
   }
 }
 
@@ -399,29 +467,23 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
     searchable: true,
     value: (row) => row.display_name || row.issuer,
   },
+  // Where the provider points and as whom: the issuer, with the client ID on
+  // a second line. Both stay searchable through the one value.
   {
     key: "issuer",
-    label: t("settings.sso.list.issuer"),
+    label: t("settings.sso.list.issuerAndClient"),
     sortable: true,
     searchable: true,
+    value: (row) => `${row.issuer} ${row.client_id}`,
   },
-  {
-    key: "client_id",
-    label: t("settings.sso.list.clientId"),
-    sortable: true,
-    searchable: true,
-  },
-  {
-    key: "secret",
-    label: t("settings.sso.list.secret"),
-    sortable: true,
-    value: (row) => (row.has_secret ? 0 : 1),
-  },
+  // Everything about the provider's state in one cell: enabled, a missing
+  // secret, a relaxed sign-in policy. A set secret is the normal case and
+  // says nothing.
   {
     key: "status",
     label: t("settings.sso.list.status"),
     sortable: true,
-    value: (row) => (row.enabled ? 0 : 1),
+    value: (row) => (row.enabled ? 0 : 2) + (row.has_secret ? 0 : 1),
   },
   { key: "scopes", label: t("settings.sso.list.scopes") },
   { key: "allowed_domains", label: t("settings.sso.list.allowedDomains") },
@@ -480,6 +542,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       :columns="columns"
       :rows="sortedProviders"
       :row-key="(provider) => provider.id"
+      :row-click="canAdmin ? (provider) => openEdit(provider) : undefined"
       :loading="providersQuery.loading.value"
       :error="providersQuery.error.value"
       :has-data="providersQuery.data.value !== undefined"
@@ -500,34 +563,36 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-display_name="{ row }">
-        <div class="font-medium">{{ row.display_name || row.issuer }}</div>
+        <!-- A provider saved without a name is named by its issuer's host; the whole URL is in the next column. -->
+        <div class="max-w-52 font-medium [overflow-wrap:anywhere]">{{ providerName(row) }}</div>
         <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
       </template>
 
       <template #cell-issuer="{ row }">
-        <!-- A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line. -->
-        <span class="line-clamp-2 block w-48 break-all font-mono text-xs text-muted-foreground lg:w-60" :title="row.issuer">{{ row.issuer }}</span>
-      </template>
-
-      <template #cell-client_id="{ row }">
-        <span class="line-clamp-2 block w-40 break-all font-mono text-xs text-muted-foreground lg:w-44" :title="row.client_id">{{ row.client_id }}</span>
-      </template>
-
-      <template #cell-secret="{ row }">
-        <Badge :variant="secretMeta(row).badgeVariant">
-          <Lock v-if="row.has_secret" class="size-3" aria-hidden="true" />
-          <Unlock v-else class="size-3" aria-hidden="true" />
-          {{ row.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
-        </Badge>
+        <!--
+          A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line.
+          Outside the row click: operators copy the issuer and client ID from here, and the first
+          click of a double-click would open the editor before the word is selected.
+        -->
+        <div data-no-row-nav>
+          <span class="block w-52 break-all font-mono text-xs text-muted-foreground">{{ row.issuer }}</span>
+          <span class="mt-1 block w-52 break-all font-mono text-xs text-muted-foreground">
+            <span class="sr-only">{{ $t("settings.sso.list.clientId") }}: </span>{{ row.client_id }}
+          </span>
+        </div>
       </template>
 
       <template #cell-status="{ row }">
-        <div class="flex flex-wrap gap-1">
+        <div class="flex flex-col items-start gap-1">
           <Badge :variant="enabledBadge(row)">
             {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
           </Badge>
+          <Badge v-if="!row.has_secret" :variant="secretMeta(row).badgeVariant">
+            <Unlock class="size-3" aria-hidden="true" />
+            {{ $t("settings.sso.list.secretMissing") }}
+          </Badge>
           <!-- A relaxed sign-in policy is never quiet: it says so on the row. -->
-          <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
+          <Badge v-if="skipLocalTotpOf(row)" :variant="statusMeta('degraded').badgeVariant" class="max-w-36 whitespace-normal text-left" :title="$t('settings.sso.list.skipsLocalCodeTitle')">
             <ShieldOff class="size-3" aria-hidden="true" />
             {{ $t("settings.sso.list.skipsLocalCode") }}
           </Badge>
@@ -535,7 +600,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-scopes="{ row }">
-        <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+        <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[150px]">
           <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
             {{ scope }}
           </Badge>
@@ -544,21 +609,23 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </template>
 
       <template #cell-allowed_domains="{ row }">
-        <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+        <!-- Capped like Scopes: a long domain is cut with an ellipsis and its whole name is in the title. -->
+        <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[150px]">
           <Badge
             v-for="domain in row.allowed_domains"
             :key="domain"
             variant="outline"
-            class="font-mono"
+            class="max-w-full font-mono"
+            :title="domain"
           >
-            {{ domain }}
+            <span class="truncate">{{ domain }}</span>
           </Badge>
         </div>
         <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
       </template>
 
       <template #cell-actions="{ row }">
-        <RowMenu v-if="canAdmin" :name="row.display_name || row.id" :items="menuFor(row)" />
+        <RowMenu v-if="canAdmin" :name="providerName(row)" :items="menuFor(row)" />
       </template>
     </DataTable>
 
@@ -765,16 +832,43 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Turning on the provider-trusted second factor asks for a fresh step-up. -->
+    <!-- Turning on the provider-trusted second factor, or changing which IdP is trusted, asks for a fresh step-up. -->
     <StepUpDialog
-      :step-up="skipStepUp"
-      :title="$t('settings.sso.skipStepUp.title')"
-      :description="$t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || form.issuer.trim() })"
+      :step-up="providerStepUp"
+      :title="stepUpReason === 'skip' ? $t('settings.sso.skipStepUp.title') : $t('settings.sso.identityStepUp.title')"
+      :description="
+        stepUpReason === 'skip'
+          ? $t('settings.sso.skipStepUp.description', { name: form.display_name.trim() || normalIssuer(form.issuer) })
+          : stepUpReason === 'both'
+            ? $t('settings.sso.identityStepUp.descriptionWithSkip', { name: form.display_name.trim() || normalIssuer(form.issuer) })
+            : $t('settings.sso.identityStepUp.description')
+      "
       :submit-label="$t('settings.sso.skipStepUp.submit')"
-      :submit-icon="ShieldOff"
+      :submit-icon="stepUpReason === 'identity' ? ShieldCheck : ShieldOff"
       :audit="$t('settings.sso.skipStepUp.audit')"
       test-id="sso-skip-step-up"
-    />
+    >
+      <dl
+        v-if="stepUpReason !== 'skip' && providerChangeFacts.length"
+        class="space-y-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
+        data-testid="sso-provider-change-facts"
+      >
+        <div v-for="fact in providerChangeFacts" :key="fact.key">
+          <dt class="text-muted-foreground">{{ fact.label }}</dt>
+          <dd class="font-mono [overflow-wrap:anywhere]">
+            <!-- Old above new, each on its own line: two long client IDs run together read as one. -->
+            <template v-if="fact.from !== undefined">
+              <span class="block text-muted-foreground">{{ fact.from }}</span>
+              <span class="block">
+                <span aria-hidden="true">→ </span>
+                <span class="sr-only">{{ $t("settings.sso.identityStepUp.changesTo") + " " }}</span>{{ fact.to }}
+              </span>
+            </template>
+            <template v-else>{{ fact.to }}</template>
+          </dd>
+        </div>
+      </dl>
+    </StepUpDialog>
 
     <!-- Disabling the last enabled provider -->
     <ConfirmDialog

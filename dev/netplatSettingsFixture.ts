@@ -65,8 +65,9 @@ const DENSE_TOKENS: TokenView[] = [
 export const TOKENS: TokenView[] = ACCESS === "dense" ? DENSE_TOKENS : [];
 
 const DENSE_PROVIDERS: OIDCProviderView[] = [
-  { id: "oidc_google_workspace", display_name: "Google Workspace", issuer: "https://accounts.google.com", client_id: "123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com", has_secret: true, scopes: ["openid", "email", "profile"], allowed_domains: ["openjobs.ai"], enabled: true },
-  { id: "oidc_authentik_home", display_name: "", issuer: "https://auth.home.example/application/o/lattice/", client_id: "lattice-console", has_secret: false, scopes: ["openid", "email"], allowed_domains: [], enabled: false },
+  { id: "oidc_google_workspace", display_name: "Google Workspace", issuer: "https://accounts.google.com", client_id: "123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com", has_secret: true, scopes: ["openid", "email", "profile"], allowed_domains: ["openjobs.ai"], enabled: true, skip_local_totp: true },
+  { id: "oidc_entra_corp", display_name: "Microsoft Entra ID", issuer: "https://login.microsoftonline.com/7f3c2a9e-5b1d-4c8e-9a20-6d4b8e1f0c37/v2.0", client_id: "a8d4f2c1-93e7-4b6a-8f05-2c19d7e4b3a6", has_secret: true, scopes: ["openid", "email", "profile", "offline_access", "User.Read", "GroupMember.Read.All"], allowed_domains: ["openjobs.ai", "metixai.com", "openjobs-staging.example.org"], enabled: true },
+  { id: "oidc_authentik_home", display_name: "", issuer: "https://auth.home.example/application/o/lattice", client_id: "lattice-console", has_secret: false, scopes: ["openid", "email"], allowed_domains: [], enabled: false },
 ];
 
 export const PROVIDERS: OIDCProviderView[] = ACCESS === "dense" ? DENSE_PROVIDERS : [];

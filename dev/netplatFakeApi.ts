@@ -177,7 +177,7 @@ export const api = {
     upsertProvider: async (input: OIDCProviderUpsertRequest) => {
       await delay(undefined, WRITE_MS);
       const existing = PROVIDERS.find((entry) => entry.id === input.id);
-      const next = { id: existing?.id ?? `oidc_new_${seq++}`, display_name: input.display_name ?? "", issuer: input.issuer, client_id: input.client_id, has_secret: !!input.client_secret || !!existing?.has_secret, scopes: input.scopes, allowed_domains: input.allowed_domains, enabled: input.enabled ?? true };
+      const next = { id: existing?.id ?? `oidc_new_${seq++}`, display_name: input.display_name ?? "", issuer: input.issuer, client_id: input.client_id, has_secret: !!input.client_secret || !!existing?.has_secret, scopes: input.scopes, allowed_domains: input.allowed_domains, enabled: input.enabled ?? true, skip_local_totp: input.skip_local_totp };
       if (existing) Object.assign(existing, next);
       else PROVIDERS.push(next);
       return { ...next };

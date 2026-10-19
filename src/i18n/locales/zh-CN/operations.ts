@@ -868,6 +868,7 @@ export default {
         loginOidc: "通过单点登录登录",
         loginOidcTotpSkipped: "通过单点登录登录,按提供方策略跳过本地验证码",
         loginOidcSecondFactorConfirmed: "用身份验证器验证码确认了单点登录账号",
+        loginOidcStaleLinkIgnored: "单点登录出示了在其他签发方下关联的账号",
         loginTotp: "通过一次性验证码登录",
         loginTotpRecoveryUsed: "通过恢复码登录",
         loginWebauthn: "通过通行密钥登录",

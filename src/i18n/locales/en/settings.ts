@@ -221,7 +221,9 @@ export default {
         displayName: "Display name",
         issuer: "Issuer",
         clientId: "Client ID",
+        issuerAndClient: "Issuer and client",
         secret: "Secret",
+        secretMissing: "No secret",
         status: "Status",
         scopes: "Scopes",
         allowedDomains: "Allowed domains",
@@ -277,6 +279,18 @@ export default {
           "Each account enters its code at its first sign-in through this provider after this is turned on, and again after a password change, two-factor reset or session revoke. Signing in with a recovery code instead does not count, so the next sign-in asks again. Password sign-in and step-up for sensitive actions always ask for the code.",
         disableLastWarning:
           "This is the only enabled provider. Turning it off removes SSO from the login screen for everyone.",
+      },
+      identityStepUp: {
+        title: "Confirm this provider change",
+        description:
+          "Adding an identity provider, or changing its issuer or client, decides who can sign in to this console. Enter your code, or use a passkey, to confirm it is you.",
+        descriptionWithSkip:
+          "Adding an identity provider, or changing its issuer or client, decides who can sign in to this console. This save also lets a sign-in through {name} open the console without the authenticator code. Enter your code, or use a passkey, to confirm it is you.",
+        required: "This change needs a fresh second factor. If you have none yet, enroll an authenticator app or a passkey in Security first.",
+        changesTo: "changes to",
+        skipFact: "Authenticator code after signing in",
+        asked: "asked",
+        skipped: "skipped",
       },
       skipStepUp: {
         title: "Confirm before turning this on",

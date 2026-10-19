@@ -278,6 +278,8 @@ const rowActivatable = computed(() => !!props.rowTo || !!props.rowClick || !!ins
 function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, input, label, [role="checkbox"], [data-no-row-nav]')) return;
+  // A drag that selected text is someone copying a value out of the row, not opening it.
+  if (event instanceof MouseEvent && window.getSelection()?.toString().trim()) return;
   emit("row-select", row);
   if (props.rowClick) props.rowClick(row, event.currentTarget as HTMLElement);
   if (props.rowTo) router.push(props.rowTo(row));

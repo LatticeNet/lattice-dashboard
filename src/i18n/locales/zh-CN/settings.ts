@@ -215,7 +215,9 @@ export default {
         displayName: "显示名称",
         issuer: "签发者",
         clientId: "客户端 ID",
+        issuerAndClient: "签发方与客户端",
         secret: "密钥",
+        secretMissing: "无密钥",
         status: "状态",
         scopes: "权限范围",
         allowedDomains: "允许的域名",
@@ -269,6 +271,17 @@ export default {
         skipLocalTotpHint:
           "开启后,每个账号首次通过该提供方登录时要输入验证码,修改密码、重置二次验证或吊销会话之后也要再输入一次。改用恢复码登录不算数,下次登录仍会要求验证码。密码登录和敏感操作的二次确认始终要求验证码。",
         disableLastWarning: "这是唯一启用的提供方。关闭后,登录页将对所有人隐藏 SSO 入口。",
+      },
+      identityStepUp: {
+        title: "确认提供方变更",
+        description: "添加身份提供方,或修改其签发者或客户端,决定了谁能登录此控制台。请输入验证码或使用通行密钥,确认是你本人。",
+        descriptionWithSkip:
+          "添加身份提供方,或修改其签发者或客户端,决定了谁能登录此控制台。此次保存还会让通过 {name} 的登录无需身份验证器验证码即可打开控制台。请输入验证码或使用通行密钥,确认是你本人。",
+        required: "此项变更需要重新验证第二因子。如果还没有,请先在安全设置中绑定身份验证器或通行密钥。",
+        changesTo: "改为",
+        skipFact: "登录后的身份验证器验证码",
+        asked: "需要输入",
+        skipped: "跳过",
       },
       skipStepUp: {
         title: "开启前请确认身份",
