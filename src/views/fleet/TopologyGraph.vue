@@ -26,7 +26,7 @@
  */
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useResizeObserver } from "@vueuse/core";
+import { useEventListener, useResizeObserver } from "@vueuse/core";
 import { ChevronDown, ChevronRight } from "lucide-vue-next";
 
 import { formatAge } from "@/lib/format";
@@ -131,6 +131,7 @@ const lastEdge = ref<string | null>(null);
 watch(() => [props.model.layer, props.model.window], () => {
   hover.value = null;
   focusedEdge.value = null;
+  lastEdge.value = null;
 });
 
 const edgeByKey = computed(() => new Map(layout.value.edges.map((e) => [e.key, e])));
@@ -568,13 +569,19 @@ watch(
 
 /**
  * Where the card goes (topologyModel.placeCard): inside the host and inside
- * the window, read when the card moves, so a drawing taller than the screen
- * never puts a card below its bottom edge.
+ * the window, read when the card moves or the page scrolls under a card the
+ * keyboard put there, so a drawing taller than the screen never puts a card
+ * below its bottom edge.
  */
+const scrolled = ref(0);
+useEventListener(window, "scroll", () => {
+  if (hover.value) scrolled.value += 1;
+}, { capture: true, passive: true });
 const cardStyle = computed(() => {
   const h = hover.value;
   if (!h) return {};
   const { w: hostW, h: hostH } = hostSize.value;
+  void scrolled.value;
   const rect = host.value?.getBoundingClientRect();
   const visibleTop = rect ? -rect.top : 0;
   const visibleBottom = rect ? window.innerHeight - rect.top : hostH;
@@ -598,6 +605,8 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
     void onEdgeClick(le, true);
     return;
   }
+  // A modified arrow is the browser's or the system's (Alt+Left goes back), never a move between edges.
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const next = rovingMove(walk.value, le.key, event.key);
   if (!next) return;
   event.preventDefault();

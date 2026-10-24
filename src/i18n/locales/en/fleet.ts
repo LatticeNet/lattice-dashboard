@@ -1524,7 +1524,7 @@ export default {
           mixed: "These figures include {span} measured by {methods} before the switch to {method} {age}. Select a range after the switch on the chart to see {method} alone.",
           triggers: "Degraded above",
           triggerLoss: "loss {trigger} over an hour (7-day {baseline})",
-          triggerLossNone: "no loss level while the 7-day loss is {baseline}",
+          triggerLossNone: "loss not judged while the 7-day loss is {baseline}",
           triggerLatency: "median {trigger} over 15 min (7-day {baseline})",
         },
         sheet: {

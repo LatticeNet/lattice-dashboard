@@ -128,8 +128,8 @@ export interface SeriesBaseline {
    * larger of the rule's floor and its factor times the 7-day loss
    * (lattice-sdk DegradedLossTrigger), unbounded: a path that lost half its
    * runs or more over the week gets a trigger of 100% or more with the
-   * default factor of 2, and no hour's loss is above that. Such a path reads
-   * down, not degraded, so the sheet says the loss is not judged rather than
+   * default factor of 2, and the arm needs an hour's loss strictly above it,
+   * which no hour has. The sheet says the loss is not judged rather than
    * print an impossible "loss 200%".
    */
   lossNotJudged?: boolean;
