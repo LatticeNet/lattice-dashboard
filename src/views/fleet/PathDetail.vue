@@ -278,6 +278,7 @@ const triggers = computed(() => {
   if (!b?.ready) return undefined;
   const parts: string[] = [];
   if (b.triggerLoss !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLoss", { trigger: formatShare(b.triggerLoss), baseline: formatShare(b.loss ?? 0) }));
+  else if (b.lossNotJudged) parts.push(t("fleet.monitoring.paths.stats.triggerLossNone", { baseline: formatShare(b.loss ?? 0) }));
   if (b.triggerP50Ms !== undefined) parts.push(t("fleet.monitoring.paths.stats.triggerLatency", { trigger: formatMs(b.triggerP50Ms), baseline: formatMs(b.p50Ms) }));
   return parts.length ? parts.join(" · ") : undefined;
 });

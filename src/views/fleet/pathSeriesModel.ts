@@ -121,7 +121,18 @@ export interface SeriesBaseline {
   p50Ms?: number;
   loss?: number;
   triggerP50Ms?: number;
+  /** The hour's loss the loss arm must exceed, a share below 1; absent when the arm cannot fire (lossNotJudged). */
   triggerLoss?: number;
+  /**
+   * The loss arm cannot fire on this path. The server's trigger is the
+   * larger of the rule's floor and its factor times the 7-day loss
+   * (lattice-sdk DegradedLossTrigger), unbounded: a path that lost half its
+   * runs or more over the week gets a trigger of 100% or more with the
+   * default factor of 2, and no hour's loss is above that. Such a path reads
+   * down, not degraded, so the sheet says the loss is not judged rather than
+   * print an impossible "loss 200%".
+   */
+  lossNotJudged?: boolean;
   /** The thresholds in force, defaults filled in (degradedRuleModel's rule, one place for the defaults). */
   rule: Record<DegradedField, number>;
 }
@@ -146,7 +157,8 @@ export function readBaseline(raw: PathBaseline | null | undefined): SeriesBaseli
     const trigger = num(raw.trigger_p50_ms);
     const triggerLoss = num(raw.trigger_loss);
     if (trigger !== undefined && p50 !== undefined) out.triggerP50Ms = trigger;
-    if (triggerLoss !== undefined) out.triggerLoss = triggerLoss;
+    if (triggerLoss !== undefined && triggerLoss >= 1) out.lossNotJudged = true;
+    else if (triggerLoss !== undefined) out.triggerLoss = triggerLoss;
   }
   return out;
 }

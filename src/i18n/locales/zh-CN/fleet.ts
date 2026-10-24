@@ -1503,6 +1503,7 @@ export default {
           mixed: "这些数字包含切换到 {method}（{age}）之前用 {methods} 测量的 {span}。在图上框选切换之后的时间段，可以只看 {method}。",
           triggers: "劣化触发线",
           triggerLoss: "一小时丢失率 {trigger}（7 天 {baseline}）",
+          triggerLossNone: "7 天丢失率为 {baseline}，不按丢失率判断",
           triggerLatency: "15 分钟中位数 {trigger}（7 天 {baseline}）",
         },
         sheet: {

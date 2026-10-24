@@ -360,6 +360,23 @@ test("baseline: not ready under 24 hours, with no trigger and a note of how far 
   assert.deepEqual(baselineGuides(early), []);
 });
 
+test("baseline: a loss trigger of 100% or more means the loss arm cannot fire, never a threshold of 200%", () => {
+  const raw = m3Series().baseline!;
+  // An always-down path: 7-day loss 100%, the server's trigger 2 x 100% = 200%.
+  const down = readBaseline({ ...raw, loss: 1, trigger_loss: 2 })!;
+  assert.equal(down.triggerLoss, undefined);
+  assert.equal(down.lossNotJudged, true);
+  assert.equal(down.loss, 1, "the 7-day loss is still read");
+  // Half the runs lost: the trigger is exactly 100%, and no hour's loss is above it either.
+  assert.equal(readBaseline({ ...raw, loss: 0.5, trigger_loss: 1 })!.lossNotJudged, true);
+  // Below 100% the trigger stands.
+  const lossy = readBaseline({ ...raw, loss: 0.49, trigger_loss: 0.98 })!;
+  assert.equal(lossy.triggerLoss, 0.98);
+  assert.equal(lossy.lossNotJudged, undefined);
+  // Not ready: nothing to judge, so nothing said either way.
+  assert.equal(readBaseline({ ...raw, hours: 10, ready: false, loss: 1, trigger_loss: 2 })!.lossNotJudged, undefined);
+});
+
 test("baseline: null for a path that is never judged, undefined from a server before M3", () => {
   assert.equal(seriesFromResponse(m3Series({ baseline: null })).baseline, null);
   const older = m3Series();
