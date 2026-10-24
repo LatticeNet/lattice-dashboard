@@ -9,15 +9,17 @@
  * edge away and dims the rest; a card says the numbers and when they were
  * heard. Edges answer the pointer through a 14 px transparent stroke.
  *
- * Every edge is also a button for the keyboard (design 32 D2): a source's
- * edges follow its box in the tab order, top to bottom by where they end, and
- * each is labelled with what its card says. Enter or a click opens the path
- * sheet in place (`openPath`); the sheet gives focus back to the edge on
- * close. The edge whose path is open is drawn with a ring.
+ * Every edge is also a button for the keyboard (design 32 D2), labelled with
+ * what its card says. The edges are one tab stop between the sources and the
+ * rows (a roving tabindex): Tab lands on the edge the keyboard was last on,
+ * and the arrow keys, Home and End walk them source by source, each source's
+ * by where they end. Enter or a click opens the path sheet in place
+ * (`openPath`); the sheet gives focus back to the edge on close. The edge
+ * whose path is open is drawn with a ring.
  *
  * The page's query fades what it does not keep: matching edges and their
- * ends keep full strength, the rest take the muted tone and leave the tab
- * order, so Tab walks only the edges the query keeps.
+ * ends keep full strength, the rest take the muted tone and leave the
+ * arrow keys' walk.
  *
  * The card lives outside the scrolling frame, in a host that does not
  * scroll, so a card near the bottom or the right edge is moved, never cut.
@@ -41,6 +43,9 @@ import {
   keyboardOrder,
   layoutTopology,
   neighbourhood,
+  placeCard,
+  rovingMove,
+  rovingStop,
   rowMarks,
   rowPath,
   rowSummary,
@@ -104,14 +109,8 @@ function toggleCountry(code: string): void {
 }
 
 const layout = computed(() => layoutTopology(props.model, { width: frameWidth.value - PAD * 2, expanded: expanded.value }));
-/** The keyboard's edges, by the box they follow. */
+/** Every line's keyboard button, in the arrow keys' order: a faded line keeps its button so a sheet it opened can hand focus back. */
 const keyed = computed(() => keyboardOrder(layout.value));
-const keyedFrom = (key: string) => keyed.value.get(key) ?? [];
-/** Lines that start from no box of their own (a chain out of a row inside a folded country). */
-const keyedRest = computed(() => {
-  const boxes = new Set([CONTROL_PLANE, ...layout.value.sources.map((s) => `source:${s.node.id}`)]);
-  return layout.value.edges.filter((le) => !boxes.has(le.fromKey)).sort((a, b) => a.end.y - b.end.y || a.key.localeCompare(b.key));
-});
 
 /* ---- Hover and focus ---- */
 
@@ -126,6 +125,8 @@ type Target =
 const hover = ref<Target | null>(null);
 /** The edge the keyboard is on: drawn with a ring until it leaves. */
 const focusedEdge = ref<string | null>(null);
+/** The edge the keyboard was last on: Tab comes back to it (the roving stop). */
+const lastEdge = ref<string | null>(null);
 // A layer or window switch rebuilds everything under the pointer.
 watch(() => [props.model.layer, props.model.window], () => {
   hover.value = null;
@@ -199,6 +200,7 @@ function onEdgeLeave(le: LayoutEdge): void {
 /** The keyboard on an edge: its card at the line's end, as the pointer would show it. */
 function onEdgeFocus(le: LayoutEdge): void {
   focusedEdge.value = le.key;
+  lastEdge.value = le.key;
   hover.value = { type: "edge", key: le.key, x: le.end.x + PAD - (frame.value?.scrollLeft ?? 0), y: le.end.y + PAD };
 }
 
@@ -565,42 +567,41 @@ watch(
 );
 
 /**
- * Where the card goes, inside the host. A box's card sits to its right, or to
- * its left past the box's own width when there is no room; it moves up to
- * stay inside the host's bottom edge. An edge's card sits below the pointer,
- * or above it near the bottom. A card taller than the whole drawing starts at
- * the top and runs past it: the host does not clip, so nothing is cut.
+ * Where the card goes (topologyModel.placeCard): inside the host and inside
+ * the window, read when the card moves, so a drawing taller than the screen
+ * never puts a card below its bottom edge.
  */
 const cardStyle = computed(() => {
   const h = hover.value;
   if (!h) return {};
   const { w: hostW, h: hostH } = hostSize.value;
-  const height = cardH.value;
-  let x: number;
-  let y: number;
-  if ("anchored" in h) {
-    x = h.x + 8;
-    y = h.y;
-    if (x + CARD_W > hostW - MARGIN) x = h.x - h.w - CARD_W - 8;
-    if (x < MARGIN) {
-      // No room on either side: under the box instead.
-      x = Math.min(Math.max(MARGIN, h.x - h.w), hostW - CARD_W - MARGIN);
-      y = h.y + h.h + 4;
-    }
-    if (y + height > hostH - MARGIN) y = hostH - MARGIN - height;
-  } else {
-    x = h.x + 14;
-    y = h.y + 14;
-    if (x + CARD_W > hostW - MARGIN) x = h.x - CARD_W - 14;
-    if (y + height > hostH - MARGIN) y = h.y - 14 - height;
-  }
-  return { left: `${Math.max(MARGIN, x)}px`, top: `${Math.max(MARGIN, y)}px`, width: `${CARD_W}px` };
+  const rect = host.value?.getBoundingClientRect();
+  const visibleTop = rect ? -rect.top : 0;
+  const visibleBottom = rect ? window.innerHeight - rect.top : hostH;
+  const { x, y } = placeCard(h, { hostW, hostH, visibleTop, visibleBottom, cardW: CARD_W, cardH: cardH.value, margin: MARGIN });
+  return { left: `${x}px`, top: `${y}px`, width: `${CARD_W}px` };
 });
 
+/*
+ * The lines are one tab stop (design 32 D2): Tab reaches the line the
+ * keyboard was last on (else the open path's, else the first), and the arrow
+ * keys, Home and End walk the lines the query keeps, source then target.
+ * Faded lines are out of the walk.
+ */
+const walk = computed(() => keyed.value.filter(edgeMatched).map((le) => le.key));
+const openEdge = computed(() => (props.openPath ? layout.value.edges.find((le) => le.bundle.length === 1 && le.edge.paths?.some((p) => p.key === props.openPath))?.key : undefined));
+const tabStop = computed(() => rovingStop(walk.value, [lastEdge.value, openEdge.value]));
+
 function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
-  if (event.key !== "Enter" && event.key !== " ") return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    void onEdgeClick(le, true);
+    return;
+  }
+  const next = rovingMove(walk.value, le.key, event.key);
+  if (!next) return;
   event.preventDefault();
-  void onEdgeClick(le, true);
+  host.value?.querySelector<SVGGElement>(`[data-edge-nav="${CSS.escape(next)}"]`)?.focus();
 }
 </script>
 
@@ -702,27 +703,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             <span v-for="part in cpLine.slice(1)" :key="part.key" :class="part.tone">{{ part.text }}</span>
           </span>
         </div>
-        <!-- The control plane's own paths (certificate checks), right after its box for the keyboard. -->
-        <svg v-if="keyedFrom(CONTROL_PLANE).length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
-          <g
-            v-for="le in keyedFrom(CONTROL_PLANE)"
-            :key="le.key"
-            role="button"
-            :tabindex="edgeMatched(le) ? 0 : -1"
-            class="outline-none"
-            :aria-label="edgeLabels.get(le.key)"
-            :data-edge-key="le.edge.id"
-            :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
-            @focus="onEdgeFocus(le)"
-            @blur="onEdgeBlur(le)"
-            @keydown="(e) => onEdgeKey(le, e)"
-            @click="onEdgeClick(le, true)"
-          >
-            <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
-          </g>
-        </svg>
-
-        <!-- Sources, each followed by its paths for the keyboard. -->
+        <!-- Sources: the lines from them follow as one tab stop. -->
         <template v-for="s in layout.sources" :key="s.node.id">
           <button
             type="button"
@@ -754,25 +735,36 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
               · <span class="font-mono tabular">{{ $t('fleet.monitoring.topology.source.paths', { n: sourcePaths(s.node) }, sourcePaths(s.node)) }}</span>
             </span>
           </button>
-          <svg v-if="keyedFrom(`source:${s.node.id}`).length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
-            <g
-              v-for="le in keyedFrom(`source:${s.node.id}`)"
-              :key="le.key"
-              role="button"
-              :tabindex="edgeMatched(le) ? 0 : -1"
-              class="outline-none"
-              :aria-label="edgeLabels.get(le.key)"
-              :data-edge-key="le.edge.id"
-              :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
-              @focus="onEdgeFocus(le)"
-              @blur="onEdgeBlur(le)"
-              @keydown="(e) => onEdgeKey(le, e)"
-              @click="onEdgeClick(le, true)"
-            >
-              <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
-            </g>
-          </svg>
         </template>
+
+        <!-- Every line, one tab stop between the sources and the rows; the arrow keys walk the lines the query keeps. -->
+        <svg
+          v-if="keyed.length"
+          role="group"
+          :aria-label="$t('fleet.monitoring.network.graph.lines')"
+          class="pointer-events-none absolute start-0 top-0 overflow-visible"
+          :width="layout.width"
+          :height="layout.height"
+          data-testid="topology-edge-keys"
+        >
+          <g
+            v-for="le in keyed"
+            :key="le.key"
+            role="button"
+            :tabindex="le.key === tabStop ? 0 : -1"
+            class="outline-none"
+            :aria-label="edgeLabels.get(le.key)"
+            :data-edge-key="le.edge.id"
+            :data-edge-nav="le.key"
+            :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
+            @focus="onEdgeFocus(le)"
+            @blur="onEdgeBlur(le)"
+            @keydown="(e) => onEdgeKey(le, e)"
+            @click="onEdgeClick(le, true)"
+          >
+            <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
+          </g>
+        </svg>
 
         <!-- Every other node, by region. -->
         <template v-for="row in layout.rows" :key="row.key">
@@ -879,24 +871,6 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
           </span>
         </button>
 
-        <!-- Lines that start from a row (chains): last for the keyboard, top to bottom. -->
-        <svg v-if="keyedRest.length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
-          <g
-            v-for="le in keyedRest"
-            :key="le.key"
-            role="button"
-            :tabindex="edgeMatched(le) ? 0 : -1"
-            class="outline-none"
-            :aria-label="edgeLabels.get(le.key)"
-            :data-edge-key="le.edge.id"
-            @focus="onEdgeFocus(le)"
-            @blur="onEdgeBlur(le)"
-            @keydown="(e) => onEdgeKey(le, e)"
-            @click="onEdgeClick(le, true)"
-          >
-            <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
-          </g>
-        </svg>
       </div>
     </div>
   </div>

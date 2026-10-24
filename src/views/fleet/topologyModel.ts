@@ -680,6 +680,61 @@ export function rowMarks(model: Pick<TopologyModel, "edges" | "drawnSourceIds">,
 }
 
 /* ------------------------------------------------------------------ */
+/* The card                                                             */
+/* ------------------------------------------------------------------ */
+
+/** What a card is placed against, in the host's coordinates: a point (the pointer, an edge's end) or a box (its top right corner and size). */
+export type CardTarget = { x: number; y: number } | { x: number; y: number; w: number; h: number; anchored: true };
+
+export interface CardRoom {
+  hostW: number;
+  hostH: number;
+  /** The part of the host on screen, in its own coordinates: a drawing taller than the window runs past it. */
+  visibleTop: number;
+  visibleBottom: number;
+  cardW: number;
+  cardH: number;
+  margin: number;
+}
+
+/**
+ * Where a card goes, inside the host and inside the window. A box's card sits
+ * to its right, or to its left past the box's own width when there is no
+ * room, or under it when neither side has room (above it when under would
+ * leave the screen); it moves up to stay on screen. A point's card sits below
+ * the point, or above it when below would leave the host or the screen, and
+ * moves up further when the point itself is below the screen's edge. A
+ * card taller than the visible part starts at its top and runs past it: the
+ * host does not clip, so nothing is cut.
+ */
+export function placeCard(target: CardTarget, room: CardRoom): { x: number; y: number } {
+  const { hostW, cardW, cardH, margin } = room;
+  const top = Math.max(0, room.visibleTop) + margin;
+  const bottom = Math.min(room.hostH, room.visibleBottom) - margin;
+  let x: number;
+  let y: number;
+  if ("anchored" in target) {
+    x = target.x + 8;
+    y = target.y;
+    if (x + cardW > hostW - margin) x = target.x - target.w - cardW - 8;
+    if (x < margin) {
+      x = Math.min(Math.max(margin, target.x - target.w), hostW - cardW - margin);
+      y = target.y + target.h + 4;
+      if (y + cardH > bottom) y = target.y - 4 - cardH;
+    }
+    if (y + cardH > bottom) y = bottom - cardH;
+  } else {
+    x = target.x + 14;
+    y = target.y + 14;
+    if (x + cardW > hostW - margin) x = target.x - cardW - 14;
+    if (y + cardH > bottom) y = target.y - 14 - cardH;
+    // A long line's end can itself be below the screen (the keyboard focused it from its source): above it is not enough.
+    if (y + cardH > bottom) y = bottom - cardH;
+  }
+  return { x: Math.max(margin, x), y: Math.max(top, y) };
+}
+
+/* ------------------------------------------------------------------ */
 /* Edge style                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1022,27 +1077,54 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
 }
 
 /**
- * The drawn lines in the order the keyboard reaches them (design 32 D2):
- * grouped by the box they start from, in the order the boxes are drawn
- * (the control plane, then each source top to bottom, then the tall
- * column's rows), and inside a group by where they end, the tall column top
- * to bottom before the addresses. A page puts each group right after its box,
- * so Tab walks a source and then its paths.
+ * The drawn lines in the order the arrow keys walk them (design 32 D2): by
+ * the box they start from, in the order the boxes are drawn (the control
+ * plane, then each source top to bottom, then the tall column's rows), and
+ * inside a box's lines by where they end, the tall column top to bottom
+ * before the addresses. Lines from no box of their own come last.
  */
-export function keyboardOrder(layout: Pick<TopologyLayout, "edges" | "sources" | "rows">): Map<string, LayoutEdge[]> {
+export function keyboardOrder(layout: Pick<TopologyLayout, "edges" | "sources" | "rows">): LayoutEdge[] {
   const boxes = [CONTROL_PLANE, ...layout.sources.map((s) => `source:${s.node.id}`), ...layout.rows.map((r) => r.key)];
   const rank = new Map(boxes.map((key, i) => [key, i]));
   const column = { left: 0, row: 0, address: 1 } as const;
-  const out = new Map<string, LayoutEdge[]>();
-  const sorted = [...layout.edges].sort(
+  return [...layout.edges].sort(
     (a, b) => (rank.get(a.fromKey) ?? boxes.length) - (rank.get(b.fromKey) ?? boxes.length) || column[a.toColumn] - column[b.toColumn] || a.end.y - b.end.y || a.key.localeCompare(b.key),
   );
-  for (const le of sorted) {
-    const list = out.get(le.fromKey) ?? [];
-    list.push(le);
-    out.set(le.fromKey, list);
+}
+
+/**
+ * The drawing's lines are one tab stop (a roving tabindex): the line that
+ * takes Tab is the first of `preferred` the walk holds (the line the keyboard
+ * was last on, then the open path's line), else the walk's first line.
+ * Undefined when the walk is empty, so no line takes Tab.
+ */
+export function rovingStop(walk: readonly string[], preferred: readonly (string | null | undefined)[]): string | undefined {
+  return preferred.find((key): key is string => !!key && walk.includes(key)) ?? walk[0];
+}
+
+/**
+ * Where a key moves the keyboard along the walk: the next line on Down or
+ * Right, the previous on Up or Left, the ends on Home and End, stopping at
+ * either end. From a line outside the walk (a faded line the pointer opened)
+ * any of them goes to the walk's first line. Undefined for any other key.
+ */
+export function rovingMove(walk: readonly string[], current: string, key: string): string | undefined {
+  if (walk.length === 0) return undefined;
+  const i = walk.indexOf(current);
+  switch (key) {
+    case "ArrowDown":
+    case "ArrowRight":
+      return i < 0 ? walk[0] : walk[Math.min(walk.length - 1, i + 1)];
+    case "ArrowUp":
+    case "ArrowLeft":
+      return i < 0 ? walk[0] : walk[Math.max(0, i - 1)];
+    case "Home":
+      return walk[0];
+    case "End":
+      return walk[walk.length - 1];
+    default:
+      return undefined;
   }
-  return out;
 }
 
 /** The endpoints a hovered endpoint lights: itself and everything one edge away. */

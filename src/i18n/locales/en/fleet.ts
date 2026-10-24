@@ -2610,6 +2610,7 @@ export default {
           undrawn: "{n} path runs from a source not drawn. | {n} paths run from sources not drawn.",
           drawAll: "Draw all {n} sources",
           sortList: "The sort orders the list; the graph keeps its layout.",
+          lines: "Paths in the drawing. Arrow keys move between them, Enter opens one.",
           forced: "drawn while the search matches its paths",
           nodeHint: "Enter opens its paths",
         },
