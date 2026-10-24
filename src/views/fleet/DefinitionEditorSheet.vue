@@ -222,30 +222,39 @@ const segments = computed(() => {
   return out;
 });
 
-/** The detail behind the line: each target that cannot be dialled, then each pair that would read unknown. */
-const detailRows = computed(() => {
+/**
+ * The detail behind the line, by reason: each reason's sentence once, then
+ * the targets it covers, then the source-to-target pairs that would read
+ * unknown for it. A pair to a target that cannot be dialled is that
+ * target's line, not a pair of its own.
+ */
+const detailGroups = computed(() => {
   const p = preview.value;
   if (!p) return [];
   const label = (t: { target_node?: string; target: string; monitor_id: string }) => (t.target_node ? nodeName(t.target_node) : t.target || t.monitor_id);
   const byMonitor = new Map(p.targets.map((x) => [x.monitor_id, x]));
-  const rows: { key: string; text: string }[] = [];
+  const groups = new Map<string, { key: string; why: string; items: { key: string; text: string }[] }>();
+  const add = (key: string, why: string, item: { key: string; text: string }) => {
+    const group = groups.get(key) ?? { key, why, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  };
   for (const target of p.targets.filter((x) => x.reason)) {
-    const why = target.note ? reasonText(target.note) : reasonText(target.reason);
-    rows.push({ key: `t:${target.monitor_id || target.target_node}`, text: t("fleet.monitoring.checkDefs.preview.detailTarget", { target: label(target), why }) });
+    const code = target.note || target.reason!;
+    add(`t:${code}`, reasonText(code), { key: `t:${target.monitor_id || target.target_node}`, text: label(target) });
   }
   const dead = new Set(p.targets.filter((x) => x.reason).map((x) => x.monitor_id));
   for (const pair of p.pairs.filter((x) => x.reason && !dead.has(x.monitor_id))) {
     const target = byMonitor.get(pair.monitor_id);
-    rows.push({
+    add(`p:${pair.reason}`, reasonText(pair.reason), {
       key: `p:${pair.source}:${pair.monitor_id}`,
       text: t("fleet.monitoring.checkDefs.preview.detailPair", {
         source: pair.source ? nodeName(pair.source) : t("fleet.monitoring.result.controlPlane"),
         target: target ? label(target) : pair.monitor_id,
-        why: reasonText(pair.reason),
       }),
     });
   }
-  return rows;
+  return [...groups.values()];
 });
 
 const DETAIL_MAX = 40;
@@ -444,7 +453,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 <span :class="segment.tone === 'warning' ? 'text-warning-text' : 'text-muted-foreground'">{{ segment.text }}</span>
               </template>
               <button
-                v-if="detailRows.length"
+                v-if="detailGroups.length"
                 type="button"
                 class="ms-1 text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground pointer-coarse:min-h-11"
                 :aria-expanded="showDetail"
@@ -453,10 +462,15 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
               >{{ showDetail ? $t('fleet.monitoring.checkDefs.preview.hide') : $t('fleet.monitoring.checkDefs.preview.show') }}</button>
             </p>
             <p v-if="writesNote.length" class="mt-1 text-xs text-muted-foreground">{{ writesNote.join(' · ') }}</p>
-            <ul v-if="showDetail && detailRows.length" id="definition-preview-detail" class="mt-2 grid gap-1 border-t border-border pt-2 text-xs" data-testid="definition-preview-detail">
-              <li v-for="row in detailRows.slice(0, DETAIL_MAX)" :key="row.key" class="break-words">{{ row.text }}</li>
-              <li v-if="detailRows.length > DETAIL_MAX" class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.preview.more', { n: detailRows.length - DETAIL_MAX }) }}</li>
-            </ul>
+            <div v-if="showDetail && detailGroups.length" id="definition-preview-detail" class="mt-2 grid gap-2.5 border-t border-border pt-2 text-xs" data-testid="definition-preview-detail">
+              <section v-for="group in detailGroups" :key="group.key" class="grid gap-1">
+                <p class="text-muted-foreground">{{ group.why }}</p>
+                <ul class="grid gap-0.5 ps-3">
+                  <li v-for="item in group.items.slice(0, DETAIL_MAX)" :key="item.key" class="break-words">{{ item.text }}</li>
+                  <li v-if="group.items.length > DETAIL_MAX" class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.preview.more', { n: group.items.length - DETAIL_MAX }) }}</li>
+                </ul>
+              </section>
+            </div>
           </template>
           <p v-else class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <RefreshCw class="size-3 animate-spin" aria-hidden="true" />
