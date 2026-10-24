@@ -698,6 +698,9 @@ export default {
       listenPort: "Listen port",
       protocols: "Protocols",
       exposure: "Exposure",
+      openResolverBadge: "open resolver",
+      openResolverRefused:
+        "Public exposure with a forward zone would answer recursive queries from anyone, an open resolver, and the server refuses it. Use mesh exposure, or expose only static and block zones publicly.",
       zones: "Zones",
       addZone: "Add zone",
       zoneLabel: "Zone {index}",
@@ -791,6 +794,8 @@ export default {
         open: "Open",
         failedClaim: "{name} on {node} failed to apply",
         publishClaim: "{name}: publishing {hostname} failed",
+        openResolverClaim: "{name} on {node} is an open resolver",
+        openResolverProof: "public exposure with a forward zone answers recursion for anyone; it can no longer be planned as it is, so switch it to mesh or disable it",
         certExpiredClaim: "{name}: the certificate has expired",
         certSoonClaim: "{name}: the certificate expires soon",
         unwatchedClaim: "Nothing watches the certificate of {hostname}",

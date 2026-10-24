@@ -264,6 +264,17 @@ const attention = computed<AttentionItem[]>(() => {
         action: open,
       });
     }
+    // Stored before the server refused the shape (design 32 D7): it still
+    // answers recursion for anyone and can no longer be planned as it is.
+    if (dep.open_resolver && !dep.disabled) {
+      items.push({
+        key: `open:${dep.id}`,
+        tone: "danger",
+        claim: t("networking.dnsPage.attention.openResolverClaim", { name: dep.name, node: nodeLabel(dep) }),
+        proof: t("networking.dnsPage.attention.openResolverProof"),
+        action: open,
+      });
+    }
     const tone = certTone(dep);
     if (tone === "expired" || tone === "warn") {
       const watch = certWatch(dep);
@@ -697,6 +708,15 @@ function zoneError(zone: ZoneDraft): string | undefined {
 }
 
 const zoneErrors = computed(() => form.zones.map(zoneError));
+
+/**
+ * A public listener with a forward zone recurses for anyone who reaches it,
+ * an open resolver; the server refuses it on save and plan (design 32 D7),
+ * so the form says so before submit.
+ */
+const openResolver = computed(
+  () => !isExternalForm.value && form.exposure === "public" && form.zones.some((zone) => zone.mode === "forward"),
+);
 const hasZoneErrors = computed(() => zoneErrors.value.some((e) => e !== undefined));
 
 const canSubmit = computed(() => {
@@ -704,7 +724,7 @@ const canSubmit = computed(() => {
   if (isExternalForm.value) {
     return externalHostnameValid.value && form.listeners.length > 0 && !hasListenerErrors.value;
   }
-  return form.zones.length > 0 && !hasZoneErrors.value && !hostnameNeedsCredential.value;
+  return form.zones.length > 0 && !hasZoneErrors.value && !hostnameNeedsCredential.value && !openResolver.value;
 });
 
 function buildBody(): DNSDeploymentBody {
@@ -997,6 +1017,7 @@ function closePlan(open: boolean) {
       </template>
       <template #cell-status="{ row: dep }">
         <span :class="cn('whitespace-nowrap text-xs', STATUS_TONE[dep.status] ?? 'text-muted-foreground')">{{ statusText(dep) }}</span>
+        <span v-if="dep.open_resolver" class="ml-2 whitespace-nowrap text-xs text-destructive">{{ $t('networking.dns.openResolverBadge') }}</span>
       </template>
       <template #cell-reality="{ row: dep }">
         <div v-if="isObservedEngine(dep.engine)" class="space-y-0.5 text-xs">
@@ -1048,7 +1069,10 @@ function closePlan(open: boolean) {
           </div>
           <div>
             <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colExposure') }}</dt>
-            <dd>{{ openDep.exposure || $t('common.misc.none') }}</dd>
+            <dd>
+              {{ openDep.exposure || $t('common.misc.none') }}
+              <span v-if="openDep.open_resolver" class="text-destructive">· {{ $t('networking.dns.openResolverBadge') }}</span>
+            </dd>
           </div>
           <div class="min-w-0">
             <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colHostname') }}</dt>
@@ -1290,6 +1314,8 @@ function closePlan(open: boolean) {
               </Select>
             </div>
           </div>
+
+          <p v-if="openResolver" class="text-xs text-destructive" role="alert">{{ $t('networking.dns.openResolverRefused') }}</p>
 
           <!-- Zones editor -->
           <div v-if="!isExternalForm" class="space-y-3">

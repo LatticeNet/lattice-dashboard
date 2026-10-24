@@ -2266,6 +2266,8 @@ export interface DNSDeploymentView {
   enable_tcp: boolean;
   exposure: DNSExposure | string;
   zones: DNSZone[];
+  /** Public exposure with a forward zone, stored before the server refused it. */
+  open_resolver?: boolean;
   hostname?: string;
   /** `external` only: the daemon's sockets, each stamped with the process reality reported. */
   listeners?: DNSListener[];
