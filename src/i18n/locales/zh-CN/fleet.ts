@@ -32,7 +32,7 @@ export default {
           security_group_binding: "安全组绑定",
           mesh_rule: "WireGuard 网状网络规则",
         },
-        role: { target: "以该分组为目标", remote: "把它作为远端" },
+        role: { target: "以该分组为目标", remote: "把它作为远端", source: "从该分组发起", source_and_target: "从该分组发起并以它为目标" },
         none: {
           check: "没有检查指定这个分组。",
           outbound_policy: "没有出站策略指定这个分组。",

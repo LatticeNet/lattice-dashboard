@@ -33,7 +33,7 @@ export default {
           security_group_binding: "Security-group bindings",
           mesh_rule: "WireGuard mesh rules",
         },
-        role: { target: "targets this group", remote: "names it as a remote" },
+        role: { target: "targets this group", remote: "names it as a remote", source: "runs from this group", source_and_target: "runs from this group and checks it" },
         none: {
           check: "No check names this group.",
           outbound_policy: "No outbound policy names this group.",

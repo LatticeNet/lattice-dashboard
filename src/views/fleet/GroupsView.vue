@@ -169,13 +169,13 @@ function pluginPage(pluginId: string): RouteLocationRaw | null {
   return plugin ? pluginPagePath(plugin) : null;
 }
 
-/** Where one use opens: the policy in its sheet; the other kinds' pages until they hold group references. */
+/** Where one use opens: a policy or a check definition in its sheet; the other kinds' pages until they hold group references. */
 function useLink(use: GroupUse): RouteLocationRaw | null {
   switch (use.kind) {
     case "outbound_policy":
       return { name: "network-outbound-policy", query: { policy: use.id } };
     case "check":
-      return { name: "monitoring" };
+      return { name: "monitoring", query: { view: "checks", open: use.id } };
     case "security_group_binding":
       return pluginPage(NETGUARD_PLUGIN_ID);
     case "mesh_rule":

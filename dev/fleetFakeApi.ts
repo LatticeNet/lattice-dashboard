@@ -584,6 +584,19 @@ export const api = {
   groups: {
     list: () => answer("groups", () => ({ groups: GROUPS.map((g) => ({ ...g })), ungrouped: ungrouped() })),
     preview: (selector: { members?: string[] }) => delay({ node_ids: selector.members ?? [], count: selector.members?.length ?? 0 }),
+    // Design 32 D3: the check definitions that name the group, as a source set or a target set.
+    usedBy: (id: string) =>
+      answer("usedBy", () => ({
+        group_id: id,
+        // One entry per definition: source, target, or source_and_target when both sets name it (a group mesh).
+        used_by: definitions.flatMap((d) => {
+          const source = !!d.sources.groups?.includes(id);
+          const target = !!d.targets.groups?.includes(id);
+          if (!source && !target) return [];
+          return [{ kind: "check" as const, id: d.id, label: d.name, role: source && target ? "source_and_target" : source ? "source" : "target" }];
+        }),
+        hidden: 0,
+      })),
     // A new group gets an id the way the server gives one; an edit keeps its own.
     upsert: (input: { id?: string; name: string }) => {
       const held = GROUPS.find((g) => g.id === input.id);
