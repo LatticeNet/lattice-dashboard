@@ -30,7 +30,7 @@ import { RouterLink } from "vue-router";
 import { toast } from "@/lib/toast";
 import { RotateCw, Waypoints } from "lucide-vue-next";
 
-import { api, unwrap, type IncidentListResponse, type LatencyProbePlan, type LatencyRollups, type Node, type NodeGeoResolveResult } from "@/lib/api";
+import { api, unwrap, type IncidentListResponse, type MonitorWindow, type Node, type NodeGeoResolveResult } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
@@ -43,7 +43,9 @@ import { compareByAttention, describeNodeStatus, isReporting, nodeStatus } from 
 import { useMediaQuery } from "@/composables/useMediaQuery";
 import { clusterPlace, latencyLayerState } from "./fleetMapModel";
 import { isActive as incidentIsOpen } from "./incidentsModel";
-import { BAND_STYLE, LOSS_ATTENTION, buildLatencyMatrix } from "./latencyModel";
+import { BAND_STYLE, LOSS_ATTENTION } from "./latencyModel";
+import { mapLatency } from "./mapLatencyModel";
+import { usePathsData } from "./usePathsData";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 
@@ -94,20 +96,27 @@ const incidentsQuery = useAsyncData<IncidentListResponse | undefined>(
   (signal) => (canReadMonitors.value ? api.incidents.list(undefined, { signal }) : Promise.resolve(undefined)),
   { pollInterval: 30_000, immediate: canReadMonitors.value },
 );
-const planQuery = useAsyncData<LatencyProbePlan | undefined>(
-  (signal) => (canReadMonitors.value ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
-  { pollInterval: 60_000, immediate: canReadMonitors.value },
-);
-const rollupsQuery = useAsyncData<LatencyRollups | undefined>(
-  (signal) => (canReadMonitors.value ? api.monitors.latency.rollups({ signal }) : Promise.resolve(undefined)),
-  { pollInterval: 60_000, immediate: canReadMonitors.value },
-);
+/**
+ * The last hour of every path, the page's latency layer (design 32 R1: the
+ * path set is a check like any other, so the matrix is where its pairs are).
+ * The matrix read only: the retention settings and the path set plan are
+ * Monitoring's.
+ */
+const latencyWindow = ref<MonitorWindow>("1h");
+const pathsData = usePathsData({
+  requested: latencyWindow,
+  canRead: canReadMonitors,
+  checkName: () => undefined,
+  nodeName: (id) => nodes.value.find((n) => n.id === id)?.name,
+  controlPlane: () => t("fleet.monitoring.result.controlPlane"),
+  extras: false,
+});
+const pathsQuery = pathsData.pathsQuery;
 // Access granted after the page opened (the session's scopes read later): read now rather than at the next poll.
 watch(canReadMonitors, (can) => {
   if (!can) return;
   void incidentsQuery.refresh();
-  void planQuery.refresh();
-  void rollupsQuery.refresh();
+  void pathsQuery.refresh();
 });
 
 function stateOf(query: { data: { value: unknown }; error: { value: unknown } }): FactState {
@@ -125,40 +134,19 @@ const openIncidents = computed(() => {
   return counts;
 });
 
-/** The probe matrix for the last hour, p50; its first source is the one the map draws from. */
-const matrix = computed(() => (planQuery.data.value ? buildLatencyMatrix(planQuery.data.value, rollupsQuery.data.value, "1h", "p50") : undefined));
-
-/**
- * The last hour from the first configured source, one reading per target.
- * Its readings count only once latencyState is ready; before that the
- * source's name still labels the toggle and the card's row.
- */
+/** The source that measures the most nodes over the last hour, one reading per target (mapLatencyModel). */
 const latency = computed(() => {
-  const source = matrix.value?.sources[0];
-  if (!matrix.value || !source) return undefined;
-  const readings = new Map<string, LatencyFact>();
-  for (const row of matrix.value.rows) {
-    const cell = row.cells[0];
-    if (!cell) continue;
-    readings.set(row.node.node_id, {
-      kind: cell.kind,
-      band: cell.band,
-      p50Ms: cell.p50Ms,
-      loss: cell.loss,
-      samples: cell.samples,
-      expected: cell.expected,
-    });
-  }
-  return { sourceId: source.nodeId, sourceName: source.name, readings, lossAttention: LOSS_ATTENTION, otherSources: matrix.value.sources.length - 1 };
+  const matrix = pathsData.matrix.value;
+  const layer = matrix ? mapLatency(matrix) : undefined;
+  return layer ? { ...layer, readings: layer.readings as ReadonlyMap<string, LatencyFact>, lossAttention: LOSS_ATTENTION } : undefined;
 });
 
-// Reading until both the plan and the rollups have answered (fleetMapModel.latencyLayerState).
+// Reading until the paths matrix has answered (fleetMapModel.latencyLayerState).
 const latencyState = computed<FleetMapFacts["latencyState"]>(() =>
   latencyLayerState({
     canRead: canReadMonitors.value,
-    plan: { hasData: planQuery.data.value !== undefined, failed: !!planQuery.error.value },
-    rollups: { hasData: rollupsQuery.data.value !== undefined, failed: !!rollupsQuery.error.value },
-    hasSource: !!matrix.value?.sources.length,
+    paths: { hasData: pathsQuery.data.value !== undefined, failed: !!pathsQuery.error.value },
+    hasSource: !!latency.value,
   }),
 );
 
@@ -170,7 +158,7 @@ const facts = computed<FleetMapFacts>(() => ({
 }));
 
 const sourceNode = computed(() => (latency.value ? nodes.value.find((node) => node.id === latency.value!.sourceId) : undefined));
-const latencyError = computed(() => planQuery.error.value ?? rollupsQuery.error.value);
+const latencyError = computed(() => pathsQuery.error.value);
 
 /** The legend's one line of state while the arcs are asked for, or undefined when the arcs are drawn. */
 const layerNotice = computed(() => {
@@ -187,11 +175,11 @@ const layerNotice = computed(() => {
   }
 });
 
-/** How old the rollups are, ticking with the proof line's second. */
+/** How old the matrix is, ticking with the proof line's second. */
 const now = useNow({ interval: 1000 });
 const rollupsAge = computed(() => {
-  const at = Date.parse(rollupsQuery.data.value?.generated_at ?? "");
-  return Number.isFinite(at) ? formatAge(Math.max(0, now.value.getTime() - at), locale.value) : "";
+  const at = pathsData.matrix.value?.observedAt;
+  return at !== undefined && Number.isFinite(at) ? formatAge(Math.max(0, now.value.getTime() - at), locale.value) : "";
 });
 
 const legendBands = computed(() => [
@@ -202,8 +190,7 @@ const legendBands = computed(() => [
 ]);
 
 function retryLatency(): void {
-  void planQuery.refresh();
-  void rollupsQuery.refresh();
+  void pathsQuery.refresh();
 }
 
 /* ------------------------------ locate missing ------------------------------ */
