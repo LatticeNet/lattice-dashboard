@@ -8,7 +8,7 @@
  * budget" is exactly what the save produces; the list behind it is one click
  * away. The same sheet edits a definition.
  */
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
 
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import SaveRefusal from "@/components/common/SaveRefusal.vue";
+import { useSaveRefusal } from "@/composables/useSaveRefusal";
 import SelectorPicker from "@/components/selector/SelectorPicker.vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -73,7 +75,15 @@ const { t } = useI18n();
 const { reasonShort, reasonText, methodName, refusalText } = usePathsCopy();
 
 const draft = ref<DefinitionDraft>(emptyDefinitionDraft());
-const saveError = ref<string>();
+/**
+ * The stored version the draft edits: the definition opened, or the newer
+ * one the operator took or saved over after a conflict (design 32 R6).
+ */
+const base = shallowRef<CheckDefinitionView>();
+const formEl = ref<HTMLFormElement>();
+/** The request fields a conflict compares, in the order it names them. */
+const COMPARED = ["name", "type", "sources", "targets", "addresses", "excluded_pairs", "packets", "threshold_days", "expect_status", "headers", "interval_sec", "timeout_sec", "alert", "alert_after", "degraded", "enabled"] as const;
+const refusals = useSaveRefusal<CheckDefinitionView>({ root: formEl, compared: COMPARED, draft });
 // The dry run's state, declared before the watcher that resets it on open (it runs immediately).
 const preview = ref<CheckDefinitionPreview>();
 const previewError = ref<string>();
@@ -89,7 +99,7 @@ function copyDraft(d: DefinitionDraft): DefinitionDraft {
 watch(
   () => props.open,
   (open) => {
-    saveError.value = undefined;
+    refusals.clear();
     preview.value = undefined;
     previewError.value = undefined;
     showDetail.value = false;
@@ -98,12 +108,13 @@ watch(
       draft.value = { ...draft.value, headers: draft.value.headers.map((h) => (h.secret ? { ...h, value: "" } : h)) };
       return;
     }
+    base.value = props.definition;
     draft.value = copyDraft(props.definition ? draftFromDefinition(props.definition) : emptyDefinitionDraft(props.initialType ?? "tcp"));
   },
   { immediate: true },
 );
 
-const editing = computed(() => !!props.definition);
+const editing = computed(() => !!base.value);
 /** A tls check runs on the control plane, which a session with a node allowlist cannot target. */
 const kinds = computed(() => (props.allowBroad || props.definition?.type === "tls" ? DEFINITION_KINDS : DEFINITION_KINDS.filter((k) => k !== "tls")));
 const isTls = computed(() => draft.value.type === "tls");
@@ -132,7 +143,7 @@ function groupName(id: string): string {
 const suggested = computed(() => suggestDefinitionName(draft.value, nodeName, groupName, t("selector.wholeFleetInline")));
 const problems = computed<DefinitionProblem[]>(() => definitionProblems(draft.value, { newDefinition: !editing.value, m3: props.m3 }));
 const missing = computed(() => missingParts(problems.value));
-const dirty = computed(() => (props.definition ? definitionDirty(props.definition, draft.value, suggested.value) : true));
+const dirty = computed(() => (base.value ? definitionDirty(base.value, draft.value, suggested.value) : true));
 
 /** The sources that cannot run the method, flagged on the From list (their pairs read unknown with that reason). */
 const sourceNotes = computed<Record<string, string>>(() => {
@@ -159,7 +170,7 @@ const headerProblemsNow = computed(() => headerProblems(draft.value.headers, { h
 const previewable = computed(() => props.open && missing.value.length === 0 && problems.value.every((p) => p === "name"));
 
 function body() {
-  return buildDefinitionSave(draft.value, props.definition, suggested.value);
+  return buildDefinitionSave(draft.value, base.value, suggested.value);
 }
 
 watch(
@@ -327,32 +338,73 @@ const UNFIELDED = new Set<DefinitionProblem>(["name", "alertTls", "degraded"]);
 const pending = ref(false);
 const discardOpen = ref(false);
 
-function statusOf(error: unknown): number | undefined {
-  return (error as { status?: number } | null)?.status;
-}
-
 async function save(): Promise<void> {
   if (problems.value.length || pending.value) return;
   if (editing.value && !dirty.value) return;
   pending.value = true;
-  saveError.value = undefined;
+  const opened = base.value;
   try {
-    const saved = props.definition ? await api.monitors.definitions.update(body()) : await api.monitors.definitions.create(body());
-    toast.success(props.definition ? t("fleet.monitoring.checkDefs.toast.saved", { name: saved.name }) : t("fleet.monitoring.checkDefs.toast.created", { name: saved.name, n: saved.summary.paths }, saved.summary.paths));
+    const saved = opened ? await api.monitors.definitions.update(body()) : await api.monitors.definitions.create(body());
+    refusals.clear();
+    toast.success(opened ? t("fleet.monitoring.checkDefs.toast.saved", { name: saved.name }) : t("fleet.monitoring.checkDefs.toast.created", { name: saved.name, n: saved.summary.paths }, saved.summary.paths));
     emit("saved", saved);
     emit("close");
   } catch (error) {
-    if (statusOf(error) === 409) {
-      toast.error(t("fleet.monitoring.checkDefs.toast.conflict"));
-      emit("reload");
-      emit("close");
-    } else {
-      saveError.value = error instanceof Error ? error.message : t("fleet.monitoring.checkDefs.toast.failed");
-    }
+    // The sheet stays open with the draft: a refusal marks its field, and a
+    // conflict names what changed and lets the operator choose (R6).
+    const outcome = await refusals.handle(error, {
+      fallback: t("fleet.monitoring.checkDefs.toast.failed"),
+      base: opened,
+      reread: () => (opened ? api.monitors.definitions.get(opened.id) : Promise.reject(error)),
+    });
+    if (outcome === "conflict") emit("reload");
   } finally {
     pending.value = false;
   }
 }
+
+/** Conflict: start again from the server's version, dropping the draft. */
+function reloadTheirs(): void {
+  const latest = refusals.conflict.value?.latest;
+  if (!latest) return;
+  refusals.clear();
+  base.value = latest;
+  draft.value = copyDraft(draftFromDefinition(latest));
+}
+
+/** Conflict: save the draft over the server's version, naming its version. */
+async function saveOverTheirs(): Promise<void> {
+  const latest = refusals.conflict.value?.latest;
+  if (!latest) return;
+  base.value = latest;
+  refusals.clear();
+  if (!dirty.value) {
+    // The draft already reads as theirs: nothing is left to write.
+    emit("close");
+    return;
+  }
+  await save();
+}
+
+/** Field labels the footer names a refusal's field and a conflict's changes by. */
+const fieldLabels = computed<Record<string, string>>(() => ({
+  name: t("fleet.monitoring.create.name"),
+  type: t("fleet.monitoring.checks.editor.step.what"),
+  sources: t("fleet.monitoring.checkDefs.editor.from"),
+  targets: t("fleet.monitoring.checkDefs.editor.to"),
+  addresses: t("fleet.monitoring.checkDefs.editor.addresses"),
+  excluded_pairs: t("fleet.monitoring.checkDefs.editor.excludedPairs"),
+  packets: t("fleet.monitoring.checks.editor.packets"),
+  threshold_days: t("fleet.monitoring.create.thresholdDays"),
+  expect_status: t("fleet.monitoring.checks.editor.expectStatus.label"),
+  headers: t("fleet.monitoring.checkDefs.editor.headers"),
+  interval_sec: t("fleet.monitoring.checks.editor.interval"),
+  timeout_sec: t("fleet.monitoring.checks.editor.timeout"),
+  alert: t("fleet.monitoring.checks.editor.step.fail"),
+  alert_after: t("fleet.monitoring.checks.editor.alertAfter"),
+  degraded: t("fleet.monitoring.checkDefs.editor.degraded"),
+  enabled: t("fleet.monitoring.checkDefs.editor.enabled"),
+}));
 
 function requestClose(): void {
   if (pending.value) return;
@@ -379,12 +431,12 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
 
 <template>
   <ObjectSheet :open="open" :title="title" :subtitle="definition?.id" @close="requestClose">
-    <form id="definition-editor" class="space-y-6 text-sm" data-testid="definition-editor" @submit.prevent="save">
+    <form id="definition-editor" ref="formEl" class="space-y-6 text-sm" data-testid="definition-editor" @submit.prevent="save">
       <!-- 1. What to measure -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
         <!-- The single-check editor's method cards, so both editors read alike. -->
-        <div class="grid gap-1.5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')">
+        <div class="grid gap-1.5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')" data-field="type">
           <label
             v-for="kind in kinds"
             :key="kind"
@@ -407,7 +459,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checkDefs.editor.from') }}</legend>
         <p v-if="isTls" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.controlPlane') }}</p>
-        <div v-else data-testid="definition-sources">
+        <div v-else data-testid="definition-sources" data-field="sources">
           <SelectorPicker
             v-model="draft.sources"
             :nodes="nodes"
@@ -426,7 +478,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 3. To -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checkDefs.editor.to') }}</legend>
-        <div v-if="nodeTargets" data-testid="definition-targets">
+        <div v-if="nodeTargets" data-testid="definition-targets" data-field="targets">
           <SelectorPicker
             v-model="draft.targets"
             :nodes="nodes"
@@ -444,7 +496,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           class="justify-self-start text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground pointer-coarse:min-h-11"
           @click="showAddresses = true"
         >{{ $t('fleet.monitoring.checkDefs.editor.addAddresses', { method: methodName(draft.type) }) }}</button>
-        <div v-if="addressTargets && (!addressesOptional || showAddresses)" class="grid gap-1.5">
+        <div v-if="addressTargets && (!addressesOptional || showAddresses)" class="grid gap-1.5" data-field="addresses">
           <Label for="definition-addresses">{{ addressesOptional ? $t('fleet.monitoring.checkDefs.editor.addressesExtra') : $t('fleet.monitoring.checkDefs.editor.addresses') }}</Label>
           <Textarea
             id="definition-addresses"
@@ -504,7 +556,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.expect') }}</legend>
         <template v-if="isTls">
-          <div class="grid max-w-48 gap-1.5">
+          <div class="grid max-w-48 gap-1.5" data-field="threshold_days">
             <Label for="definition-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
             <Input id="definition-threshold" v-model.number="draft.thresholdDays" type="number" min="1" :max="TLS_MAX_THRESHOLD_DAYS" :aria-invalid="problems.includes('threshold') || undefined" />
           </div>
@@ -512,7 +564,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <p v-if="problems.includes('threshold')" role="alert" class="text-xs text-destructive">{{ problemOf('threshold') }}</p>
         </template>
         <template v-else-if="multiPacket(draft.type)">
-          <div class="grid max-w-48 gap-1.5">
+          <div class="grid max-w-48 gap-1.5" data-field="packets">
             <Label for="definition-packets">{{ draft.type === 'beacon' ? $t('fleet.monitoring.checks.editor.packetsBeacon') : $t('fleet.monitoring.checks.editor.packets') }}</Label>
             <Input id="definition-packets" v-model.number="draft.packets" type="number" min="1" :max="PACKETS_MAX" :aria-invalid="problems.includes('packets') || undefined" />
           </div>
@@ -520,13 +572,13 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <p v-if="problems.includes('packets')" role="alert" class="text-xs text-destructive">{{ problemOf('packets') }}</p>
         </template>
         <template v-else-if="draft.type === 'http'">
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="expect_status">
             <Label for="definition-status">{{ $t('fleet.monitoring.checks.editor.expectStatus.label') }}</Label>
             <Input id="definition-status" v-model="draft.expectStatus" class="max-w-72 font-mono" :placeholder="EXPECT_STATUS_DEFAULT" spellcheck="false" :aria-invalid="problems.includes('expectStatus') || undefined" />
           </div>
           <p v-if="problems.includes('expectStatus')" role="alert" class="text-xs text-destructive">{{ problemOf('expectStatus') }}</p>
           <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.expectStatus.default', { set: EXPECT_STATUS_DEFAULT }) }} {{ $t('fleet.monitoring.checks.editor.expectStatus.redirects') }}</p>
-          <HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="!editing" />
+          <div data-field="headers"><HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="!editing" /></div>
           <p v-if="draft.headers.some((h) => h.secret)" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.secretsNodes') }}</p>
         </template>
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
@@ -536,11 +588,11 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.often') }}</legend>
         <div class="grid grid-cols-2 gap-3">
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="interval_sec">
             <Label for="definition-interval">{{ $t('fleet.monitoring.checks.editor.interval') }}</Label>
             <Input id="definition-interval" v-model.number="draft.intervalSec" type="number" :min="CHECK_MIN_INTERVAL_SEC" :max="CHECK_MAX_INTERVAL_SEC" :aria-invalid="problems.includes('interval') || undefined" />
           </div>
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="timeout_sec">
             <Label for="definition-timeout">{{ $t('fleet.monitoring.checks.editor.timeout') }}</Label>
             <Input id="definition-timeout" v-model.number="draft.timeoutSec" type="number" min="1" :max="CHECK_MAX_TIMEOUT_SEC" :aria-invalid="problems.includes('timeout') || problems.includes('timeoutVsInterval') || problems.includes('runLength') || undefined" />
           </div>
@@ -550,7 +602,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       </fieldset>
 
       <!-- 6. On failure -->
-      <fieldset :class="SECTION" data-testid="definition-alert">
+      <fieldset :class="SECTION" data-testid="definition-alert" data-field="alert">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.fail') }}</legend>
         <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
           <input type="radio" name="definition-alert" class="accent-[var(--primary)]" value="off" :checked="draft.alert === 'off'" @change="draft = { ...draft, alert: 'off' }" />
@@ -564,20 +616,20 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <input type="radio" name="definition-alert" class="accent-[var(--primary)]" value="down_and_degraded" :checked="draft.alert === 'down_and_degraded'" @change="draft = { ...draft, alert: 'down_and_degraded' }" />
           <span>{{ $t('fleet.monitoring.checks.editor.alertDownDegraded') }}</span>
         </label>
-        <div class="flex flex-wrap items-center gap-2.5 ps-6.5">
+        <div class="flex flex-wrap items-center gap-2.5 ps-6.5" data-field="alert_after">
           <Input v-model.number="draft.alertAfter" type="number" min="1" :max="ALERT_MAX_AFTER" class="h-8 w-20" :disabled="draft.alert === 'off'" :aria-label="$t('fleet.monitoring.checks.editor.alertAfter')" :aria-invalid="problems.includes('alertAfter') || undefined" />
           <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRunsBefore') }}</span>
         </div>
         <p v-if="problems.includes('alertAfter')" role="alert" class="text-xs text-destructive">{{ problemOf('alertAfter') }}</p>
         <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.alertEach') }}</p>
-        <DegradedRuleFields v-if="m3 && !isTls" v-model="draft.degraded" id-prefix="definition-degraded" />
+        <div v-if="m3 && !isTls" data-field="degraded"><DegradedRuleFields v-model="draft.degraded" id-prefix="definition-degraded" /></div>
       </fieldset>
 
       <!-- 7. Name -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.name') }}</legend>
         <Label for="definition-name" class="sr-only">{{ $t('fleet.monitoring.create.name') }}</Label>
-        <Input id="definition-name" v-model="draft.name" :placeholder="suggested || $t('fleet.monitoring.create.namePlaceholder')" :aria-invalid="problems.includes('name') || undefined" />
+        <Input id="definition-name" v-model="draft.name" data-field="name" :placeholder="suggested || $t('fleet.monitoring.create.namePlaceholder')" :aria-invalid="problems.includes('name') || undefined" />
         <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
           <Checkbox :model-value="draft.enabled" data-testid="definition-enabled" @update:model-value="(v) => (draft = { ...draft, enabled: v === true })" />
           <span>{{ $t('fleet.monitoring.checkDefs.editor.enabled') }}</span>
@@ -589,7 +641,18 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <p v-for="p in problems.filter((x) => UNFIELDED.has(x))" :key="p" role="alert" class="text-xs text-destructive">{{ problemOf(p) }}</p>
     </form>
     <template #actions>
-      <p v-if="saveError" role="alert" class="basis-full text-xs text-destructive" data-testid="definition-save-error">{{ $t('fleet.monitoring.checks.editor.refused', { reason: saveError }) }}</p>
+      <SaveRefusal
+        :refusal="refusals.refusal.value"
+        :changed="refusals.conflict.value?.changed"
+        :by="refusals.conflict.value?.latest.updated_by"
+        :at="refusals.conflict.value?.latest.updated_at"
+        :labels="fieldLabels"
+        :message-id="refusals.messageId"
+        :pending="pending"
+        :noun="$t('fleet.monitoring.checkDefs.editor.noun')"
+        @reload="reloadTheirs"
+        @overwrite="saveOverTheirs"
+      />
       <p v-if="missing.length" class="me-auto basis-full text-xs text-muted-foreground sm:basis-auto" data-testid="definition-missing">
         {{ $t('fleet.monitoring.create.missing', { fields: missing.map((m) => $t(`fleet.monitoring.checkDefs.editor.missing.${m}`)).join($t('fleet.monitoring.create.missingJoin')) }) }}
       </p>
@@ -599,7 +662,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         {{ previewPending || !summary ? $t('fleet.monitoring.checkDefs.preview.checking') : headline }}
       </p>
       <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
-      <Button type="submit" form="definition-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty) || (previewable && previewPending)" data-testid="definition-save">
+      <Button type="submit" form="definition-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty) || (previewable && previewPending) || !!refusals.conflict.value" data-testid="definition-save">
         <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
         <Save v-else-if="editing" class="size-4" aria-hidden="true" />
         <Plus v-else class="size-4" aria-hidden="true" />

@@ -220,6 +220,22 @@ export default {
       passkey: "使用通行密钥",
       rejected: "验证码不对或已过期，请输入身份验证器上当前显示的验证码。",
     },
+    // 保存没有成功（设计 32 R6）。两种情况下编辑器都保留草稿。
+    saveRefusal: {
+      refused: "没有保存：{reason}",
+      fieldRefused: "没有保存。{field}：{reason}",
+      conflictTitle: "你编辑期间，有人保存了这个{noun}。",
+      nounDefault: "对象",
+      savedBy: "保存人 {who}。",
+      savedAt: "保存于{when}。",
+      savedByAt: "{who} 于{when}保存。",
+      changed: "对方改动了：{fields}。",
+      changedNone: "对方没有改动这个编辑器里的字段。",
+      join: "、",
+      keptDraft: "你的改动还在。可以载入对方的版本重新开始，也可以用你的版本覆盖它。",
+      reload: "载入对方的版本",
+      overwrite: "用我的覆盖",
+    },
     actions: {
       refresh: "刷新",
       save: "保存",

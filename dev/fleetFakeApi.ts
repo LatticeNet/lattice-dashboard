@@ -56,7 +56,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, BeaconPlanRequest, CheckDefinition, CheckDefinitionSave, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, PathsResponse, Principal } from "@/lib/api/index";
+import type { AuditEvent, BeaconPlanRequest, CheckDefinition, CheckDefinitionSave, CheckDefinitionView, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, PathsResponse, Principal } from "@/lib/api/index";
 import { canonicalHeaderName, monitorOrigin } from "@/views/fleet/checkRulesModel";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
@@ -238,10 +238,26 @@ function missingRoute<T>(path: string): Promise<T> {
 }
 const pathsOld = () => PATHS_SHAPE === "old";
 
-function refuse<T>(status: number, code: string, message: string): Promise<T> {
+function refuse<T>(status: number, code: string, message: string, field?: string): Promise<T> {
   return delay(undefined).then(() => {
-    throw new ApiError(status, code, message);
+    throw new ApiError(status, code, message, undefined, field ? { error: { code, message, field } } : undefined);
   });
+}
+
+/**
+ * Design 32 R6 in the harness. `?refuse=<path>` refuses every check and
+ * definition save with 400 naming that request field ("targets",
+ * "interval_sec", "addresses[0]"), as the server does for a rule the console
+ * cannot foresee. `?conflict=1` makes the first edit of each check or
+ * definition lose a race: another operator renames it and changes its
+ * interval, the version moves on, and the edit answers 409 version_conflict.
+ */
+const REFUSE_FIELD = PARAMS.get("refuse") ?? "";
+const CONFLICT_ONCE = PARAMS.get("conflict") === "1";
+const raced = new Set<string>();
+function refusedSave<T>(): Promise<T> | undefined {
+  if (!REFUSE_FIELD) return undefined;
+  return refuse(400, "bad_request", `${REFUSE_FIELD} is refused by the harness (?refuse=)`, REFUSE_FIELD);
 }
 
 /**
@@ -777,11 +793,16 @@ export const api = {
       if (pathsOld()) return missingRoute("/api/monitors/update");
       const held = monitors.find((m) => m.id === input.id);
       if (!held) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "monitor not found"); });
-      if (held.managed_by || input.version !== (held.version ?? 0)) {
-        return delay(undefined).then(() => {
-          throw new ApiError(409, "conflict", held.managed_by ? "generated checks are changed through the path set" : "monitor changed since it was read");
-        });
+      if (held.managed_by) return refuse(409, "conflict", "generated checks are changed through the path set");
+      if (CONFLICT_ONCE && !raced.has(held.id)) {
+        raced.add(held.id);
+        const theirs = { ...held, name: `${held.name || held.id} (theirs)`, interval_sec: (held.interval_sec ?? 30) + 30, version: (held.version ?? 0) + 1, updated_at: new Date().toISOString() } as MonitorView;
+        monitors = monitors.map((m) => (m.id === held.id ? theirs : m));
+        return refuse(409, "version_conflict", "monitor changed since it was read");
       }
+      if (input.version !== (held.version ?? 0)) return refuse(409, "version_conflict", "monitor changed since it was read");
+      const refused = refusedSave<MonitorView>();
+      if (refused) return refused;
       const { id: _id, version: _version, headers: ops, ...fields } = input;
       let headers: MonitorHeader[] | undefined;
       try {
@@ -797,6 +818,8 @@ export const api = {
     },
     create: (input: MonitorCreateInput) => {
       // `?fail=create` refuses the save the way the server refuses a node it cannot resolve, a refusal the console cannot foresee.
+      const refused = refusedSave<MonitorView>();
+      if (refused) return refused;
       if (FAIL.has("create")) {
         const message = input.target_node
           ? `node ${input.target_node} has no public tcp line to connect to: it serves no public TCP line the probe may dial (never SSH or a knock-gated port)`
@@ -831,6 +854,8 @@ export const api = {
         return delay(planOf(definitionFrom(input, held)).preview, Number(PARAMS.get("previewMs")) || LATENCY_MS);
       },
       create: (input: CheckDefinitionSave) => {
+        const refused = refusedSave<CheckDefinitionView>();
+        if (refused) return refused;
         if (FAIL.has("defsave")) return refuse(403, "forbidden", "a group or whole-fleet selector requires an unrestricted principal; name the nodes instead");
         const def = definitionFrom(input, undefined);
         definitions = [...definitions, def];
@@ -840,7 +865,16 @@ export const api = {
       update: (input: CheckDefinitionSave) => {
         const held = definitions.find((d) => d.id === input.id);
         if (!held) return refuse(404, "not_found", "check definition not found");
-        if (input.version !== held.version) return refuse(409, "conflict", "check definition changed since it was read");
+        if (CONFLICT_ONCE && !raced.has(held.id)) {
+          raced.add(held.id);
+          const theirs = { ...held, name: `${held.name} (theirs)`, interval_sec: held.interval_sec + 30, version: held.version + 1, updated_by: "operator-b", updated_at: new Date().toISOString() };
+          definitions = definitions.map((d) => (d.id === held.id ? theirs : d));
+          writeDefinition(theirs);
+          return refuse(409, "version_conflict", "check definition changed since it was read");
+        }
+        if (input.version !== held.version) return refuse(409, "version_conflict", "check definition changed since it was read");
+        const refused = refusedSave<CheckDefinitionView>();
+        if (refused) return refused;
         if (FAIL.has("defsave")) return refuse(403, "forbidden", "a group or whole-fleet selector requires an unrestricted principal; name the nodes instead");
         const def = definitionFrom(input, held);
         definitions = definitions.map((d) => (d.id === def.id ? def : d));
@@ -852,7 +886,7 @@ export const api = {
         if (!held) return refuse(404, "not_found", "check definition not found");
         const ids = heldBy(input.id).map((m) => m.id).sort();
         if (input.version !== held.version || ids.join() !== [...input.monitor_ids].sort().join()) {
-          return refuse(409, "conflict", "the definition or its monitors changed since they were read");
+          return refuse(409, input.version !== held.version ? "version_conflict" : "conflict", "the definition or its monitors changed since they were read");
         }
         monitors = monitors.filter((m) => m.check_definition_id !== input.id);
         definitions = definitions.filter((d) => d.id !== input.id);

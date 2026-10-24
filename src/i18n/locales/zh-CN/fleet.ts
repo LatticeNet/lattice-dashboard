@@ -1692,6 +1692,10 @@ export default {
           budgetNote: "一个源节点对同一地址的所有检查合计每秒最多 2 个包；会超出的路径先暂停，有余量时恢复。",
           alertEach: "每条路径以本检查的名称单独告警。",
           enabled: "运行此检查",
+          noun: "检查",
+          excludedPairs: "排除的节点对",
+          headers: "请求头",
+          degraded: "降级阈值",
           pausedHint: "保存为暂停：不运行，已有路径的历史保留。",
           create: "创建检查",
           missing: {
@@ -1850,6 +1854,8 @@ export default {
           offline: "离线",
           pauseSource: "在这个检查上暂停 {name}",
           pauseHint: "暂停的源节点保留历史，在恢复之前不再运行这个检查。",
+          pausedSources: "已暂停的源节点",
+          enabled: "启用",
           unsupportedChosen: "已选的 {n} 个源节点不能运行 {method}：{names}。在能运行之前，它的路径显示为未知并附上原因。 | 已选的 {n} 个源节点不能运行 {method}：{names}。在能运行之前，这些路径显示为未知并附上原因。",
           unsupportedAll: "{total} 个节点中有 {n} 个现在不能运行 {method}：{names}。在能运行之前，它们的路径显示为未知并附上原因。",
           removeUnsupported: "移除它 | 移除它们",
@@ -2022,6 +2028,7 @@ export default {
           carryFailed: "新检查已开始运行，但你暂停过的源节点仍在运行它：{reason}",
           conflict: "读取之后有人改过这个检查。已重新加载，请再试一次。",
           failed: "检查没有保存",
+          gone: "这个检查已经不存在。",
         },
       },
       degradedRule: {

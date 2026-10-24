@@ -1715,6 +1715,10 @@ export default {
           budgetNote: "One source sends one address at most 2 packets a second across its checks; a path that would go over it is paused until there is room.",
           alertEach: "Each path pages on its own, under this check's name.",
           enabled: "Run this check",
+          noun: "check",
+          excludedPairs: "Excluded pairs",
+          headers: "Request headers",
+          degraded: "Degraded thresholds",
           pausedHint: "Saved paused: nothing runs, and the paths it already has keep their history.",
           create: "Create check",
           missing: {
@@ -1874,6 +1878,8 @@ export default {
           offline: "offline",
           pauseSource: "Pause {name} on this check",
           pauseHint: "A paused source keeps its history and stops running this check until you resume it.",
+          pausedSources: "Paused sources",
+          enabled: "Enabled",
           unsupportedChosen: "{n} chosen source cannot run {method}: {names}. Its path reads unknown with the reason until it can. | {n} chosen sources cannot run {method}: {names}. Their paths read unknown with the reason until they can.",
           unsupportedAll: "{n} of {total} nodes cannot run {method} now: {names}. Their paths read unknown with the reason until they can.",
           removeUnsupported: "Remove it | Remove them",
@@ -2046,6 +2052,7 @@ export default {
           carryFailed: "The new check started, but the sources you had paused run on it: {reason}",
           conflict: "Someone changed this check since it was read. Reloaded; try again.",
           failed: "The check was not saved",
+          gone: "This check no longer exists.",
         },
       },
       // Design 29 D13: the degraded rule's thresholds, in the check editor and the path set.
