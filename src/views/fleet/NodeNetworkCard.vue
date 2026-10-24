@@ -16,6 +16,11 @@
  *   Groups     web, asia
  *   inet lattice_guard needs a re-plan       [Open in firewall] [Open policy] [Show rules]
  *
+ * When lattice_guard on the node is not what its writer compiles now (the
+ * legacy firewall route rebuilt a table NetGuard manages), the Inbound row
+ * says so under its head, since its head alone would claim rules that are
+ * not in force.
+ *
  * Security groups bound to a node group the node belongs to (S4) are listed
  * with their node group once the server sends them. A section this session
  * may not read names the scope it needs. The section reads when the page
@@ -25,7 +30,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { Network } from "lucide-vue-next";
+import { AlertTriangle, Network } from "lucide-vue-next";
 
 import type { Node, NodeNetworkPolicy, NodeNetworkSecurityGroup } from "@/lib/api";
 import { usePluginContributions } from "@/composables/usePluginContributions";
@@ -96,8 +101,22 @@ function reachText(policy: NodeNetworkPolicy): string {
   return t(`fleet.nodeNetwork.outbound.reach.${policy.reach}`);
 }
 
-const replanTables = computed(() => (view.value ? attentionTables(view.value).filter((table) => tableAttention(table) === "replan") : []));
-const driftTables = computed(() => (view.value ? attentionTables(view.value).filter((table) => tableAttention(table) === "drift") : []));
+const guardNote = computed(() => (view.value ? text.guardNote(view.value) : ""));
+
+/** The footer's one line: re-plans first, then tables nothing produces, then drift. */
+const attention = computed(() => {
+  if (!view.value) return "";
+  const tables = attentionTables(view.value);
+  for (const [kind, message] of [
+    ["replan", "fleet.nodeNetwork.attention"],
+    ["orphan", "fleet.nodeNetwork.orphanTables"],
+    ["drift", "fleet.nodeNetwork.drift"],
+  ] as const) {
+    const matching = tables.filter((table) => tableAttention(table) === kind);
+    if (matching.length) return text.tablesLine(message, matching);
+  }
+  return "";
+});
 </script>
 
 <template>
@@ -116,6 +135,10 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
         <dt class="text-xs font-medium text-muted-foreground sm:pt-0.5">{{ $t('fleet.nodeNetwork.rows.inbound') }}</dt>
         <dd class="min-w-0 space-y-1" data-testid="node-network-inbound">
           <p :class="inbound?.state !== 'ok' ? 'text-xs text-muted-foreground' : undefined">{{ inboundHead() }}</p>
+          <p v-if="guardNote" class="flex items-start gap-1.5 text-sm text-warning-text" data-testid="node-network-guard-note">
+            <AlertTriangle class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ guardNote }}</span>
+          </p>
           <template v-if="inbound?.state === 'ok'">
             <p class="break-words">
               <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }}</span>
@@ -143,25 +166,25 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
             <li
               v-for="policy in outbound.policies"
               :key="policy.id"
-              class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,11rem)_11rem]"
+              class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 px-3 py-2 lg:grid-cols-[2.5rem_minmax(8rem,1fr)_minmax(0,11rem)_11rem]"
               :class="policy.state === 'applies' ? undefined : 'text-muted-foreground'"
             >
               <span class="font-mono text-xs tabular-nums text-muted-foreground" :title="$t('fleet.nodeNetwork.outbound.priority', { n: policy.priority })">{{ policy.priority }}</span>
               <RouterLink
                 :to="{ name: 'network-outbound-policy', query: { policy: policy.id } }"
                 class="min-w-0 truncate underline decoration-dotted underline-offset-2 hover:text-foreground"
+                :title="policy.label"
                 :class="policy.state === 'applies' ? 'text-foreground' : undefined"
               >
                 {{ policy.label }}<span v-if="policy.hidden_target_nodes" class="ms-1.5 text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.outbound.hidden', { n: policy.hidden_target_nodes }) }}</span>
               </RouterLink>
-              <span class="col-start-2 min-w-0 truncate text-xs sm:col-start-auto">{{ reachText(policy) }}</span>
-              <span class="col-start-2 text-xs sm:col-start-auto sm:text-end">
+              <span class="col-start-2 min-w-0 truncate text-xs lg:col-start-auto" :title="reachText(policy)">{{ reachText(policy) }}</span>
+              <span class="col-start-2 text-xs lg:col-start-auto lg:text-end">
                 <span :class="policy.state === 'blocked' ? 'text-warning-text' : undefined">{{ $t(`fleet.nodeNetwork.outbound.state.${policy.state}`) }}</span>
                 <template v-if="policy.state === 'applies'"> · <span class="tabular-nums">{{ $t('fleet.nodeNetwork.outbound.rules', { allow: policy.allow, deny: policy.deny }) }}</span></template>
               </span>
             </li>
           </ol>
-          <p v-if="outbound?.state === 'ok' && outbound.source !== 'policies' && outbound.source !== 'none'" class="text-xs text-muted-foreground">{{ text.outbound(outbound) }}</p>
         </dd>
 
         <dt class="text-xs font-medium text-muted-foreground sm:pt-0.5">{{ $t('fleet.nodeNetwork.rows.access') }}</dt>
@@ -187,12 +210,7 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
       </dl>
 
       <div class="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-        <p v-if="replanTables.length" class="me-auto text-xs text-warning-text" data-testid="node-network-attention">
-          {{ $t('fleet.nodeNetwork.attention', { n: replanTables.length }, replanTables.length) }}: <span class="font-mono">{{ replanTables.map((t) => t.table).join(', ') }}</span>
-        </p>
-        <p v-else-if="driftTables.length" class="me-auto text-xs text-warning-text">
-          {{ $t('fleet.nodeNetwork.drift', { n: driftTables.length }, driftTables.length) }}: <span class="font-mono">{{ driftTables.map((t) => t.table).join(', ') }}</span>
-        </p>
+        <p v-if="attention" class="me-auto text-xs text-warning-text" data-testid="node-network-attention">{{ attention }}</p>
         <span v-else class="me-auto" />
         <Button v-if="firewallTo" as-child variant="outline" size="sm" class="pointer-coarse:min-h-11">
           <RouterLink :to="firewallTo">{{ $t('fleet.nodeNetwork.actions.openFirewall') }}</RouterLink>

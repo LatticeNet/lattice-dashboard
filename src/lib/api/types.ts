@@ -2471,6 +2471,8 @@ export interface NodeNetworkMesh extends NodeNetworkSection {
   ready?: boolean;
   missing?: string[];
   peers?: number;
+  /** The scope the peer count needs on every mesh member, when it was refused. */
+  peers_refused?: string;
   last_applied?: { approval_id?: string; applied_at: string };
   not_reported?: string[];
 }

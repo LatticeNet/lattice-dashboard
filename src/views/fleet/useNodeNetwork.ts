@@ -1,12 +1,12 @@
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { api, ApiError, type NodeNetworkAccess, type NodeNetworkGroups, type NodeNetworkInbound, type NodeNetworkMesh, type NodeNetworkOutbound, type NodeNetworkView } from "@/lib/api";
+import { api, ApiError, type NodeNetworkAccess, type NodeNetworkGroups, type NodeNetworkInbound, type NodeNetworkMesh, type NodeNetworkOutbound, type NodeNetworkTable, type NodeNetworkView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useRefreshOnReturn } from "@/composables/useRefreshOnReturn";
 import { formatRelativeTime } from "@/lib/format";
 
-import { applyingPolicies, portLabel } from "./nodeNetworkModel";
+import { applyingPolicies, guardAttention, portLabel } from "./nodeNetworkModel";
 
 /**
  * The node's effective network (design 32 D4) for one open node: read when
@@ -68,7 +68,7 @@ export function useNodeNetworkText() {
         parts.push(t("fleet.nodeNetwork.inbound.none"));
     }
     const groups = [...(section.security_groups ?? []), ...(section.derived_security_groups ?? [])];
-    if (groups.length) parts.push(list(groups.map((g) => g.name || g.id)));
+    if (groups.length) parts.push(t("fleet.nodeNetwork.inbound.groupsInline", { groups: list(groups.map((g) => g.name || g.id)) }));
     const ports = section.extra_ports ?? [];
     if (ports.length) parts.push(list(ports.map(extraPort)));
     return parts.join(" · ");
@@ -117,7 +117,10 @@ export function useNodeNetworkText() {
   function mesh(section: NodeNetworkMesh): string {
     if (section.state === "refused") return refused(section);
     if (!section.ready) return list((section.missing ?? []).map((m) => t(`fleet.nodeNetwork.mesh.missing.${m}`, m)));
-    const parts = [t("fleet.nodeNetwork.mesh.address", { address: section.address ?? "" }), t("fleet.nodeNetwork.mesh.peers", { n: section.peers ?? 0 }, section.peers ?? 0)];
+    const peers = section.peers_refused
+      ? t("fleet.nodeNetwork.mesh.peersRefused", { scope: section.peers_refused })
+      : t("fleet.nodeNetwork.mesh.peers", { n: section.peers ?? 0 }, section.peers ?? 0);
+    const parts = [t("fleet.nodeNetwork.mesh.address", { address: section.address ?? "" }), peers];
     if (section.last_applied) parts.push(t("fleet.nodeNetwork.mesh.lastApplied", { when: formatRelativeTime(section.last_applied.applied_at) }));
     return parts.join(" · ");
   }
@@ -128,5 +131,26 @@ export function useNodeNetworkText() {
     return items.length ? list(items.map((g) => g.name)) : t("fleet.nodeNetwork.groups.none");
   }
 
-  return { inbound, extraPort, outbound, access, mesh, groups, refused, list };
+  function owner(kind: string): string {
+    return t(`fleet.nodeNetwork.rules.owner.${kind}`, kind);
+  }
+
+  /** What qualifies the Inbound head: lattice_guard on the node is not what its writer compiles now. */
+  function guardNote(view: NodeNetworkView): string {
+    const note = guardAttention(view);
+    if (!note) return "";
+    const composer = owner(note.table.compile_now?.composer ?? "netguard");
+    const writer = note.table.last_writer;
+    if (note.kind === "overridden" && writer) {
+      return t("fleet.nodeNetwork.inbound.overridden", { composer, writer: owner(writer.kind), when: formatRelativeTime(writer.applied_at) });
+    }
+    return note.kind === "drift" ? t("fleet.nodeNetwork.inbound.drift") : t("fleet.nodeNetwork.inbound.replan", { composer });
+  }
+
+  /** "1 table needs a re-plan: inet lattice_guard", naming the tables. */
+  function tablesLine(message: string, tables: readonly NodeNetworkTable[]): string {
+    return `${t(message, { n: tables.length }, tables.length)}${t("fleet.nodeNetwork.colon")}${list(tables.map((table) => table.table))}`;
+  }
+
+  return { inbound, extraPort, outbound, access, mesh, groups, refused, list, owner, guardNote, tablesLine };
 }

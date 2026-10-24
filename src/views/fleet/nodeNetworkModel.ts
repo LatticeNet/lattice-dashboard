@@ -21,15 +21,43 @@ export function applyingPolicies(outbound: NodeNetworkOutbound): NodeNetworkPoli
 
 /**
  * What a table asks of the operator: replan when its writer would compile
- * something else now than what was last applied, drift when the node's own
- * table differs from what was applied, nothing otherwise. Replan comes first:
- * a re-plan is what clears drift too.
+ * something else now than what was last applied; orphan when nothing
+ * composes it any more yet the rules last applied are still in force; drift
+ * when the node's own table differs from what was applied; nothing
+ * otherwise. Replan comes first: a re-plan is what clears drift too.
  */
-export function tableAttention(table: NodeNetworkTable): "replan" | "drift" | undefined {
+export function tableAttention(table: NodeNetworkTable): "replan" | "orphan" | "drift" | undefined {
   if (table.state !== "ok") return undefined;
   if (table.replan_pending) return "replan";
+  if (table.compile_now?.state === "none" && table.last_applied?.state === "ok") return "orphan";
   if (table.drift_state === "drift") return "drift";
   return undefined;
+}
+
+/** Both columns read and hold the same ruleset. */
+export function tableInSync(table: NodeNetworkTable): boolean {
+  const now = table.compile_now;
+  const applied = table.last_applied;
+  return table.state === "ok" && now?.state === "ok" && applied?.state === "ok" && !!now.sha256 && now.sha256 === applied.sha256;
+}
+
+/**
+ * Why the Inbound row's head is not the whole truth: lattice_guard on the
+ * node is not what its writer would compile now. "overridden" when another
+ * composer wrote it last (the legacy firewall route rebuilt a table NetGuard
+ * manages), "replan" when its own writer would compile something else, and
+ * "drift" when the node changed it.
+ */
+export function guardAttention(view: NodeNetworkView): { kind: "overridden" | "replan" | "drift"; table: NodeNetworkTable } | undefined {
+  if (view.inbound.state !== "ok") return undefined;
+  const table = view.tables.find((entry) => entry.table === "inet lattice_guard");
+  if (!table) return undefined;
+  const attention = tableAttention(table);
+  if (attention === "drift") return { kind: "drift", table };
+  if (attention !== "replan") return undefined;
+  const writer = table.last_writer?.kind;
+  const composer = table.compile_now?.composer;
+  return { kind: writer && composer && writer !== composer ? "overridden" : "replan", table };
 }
 
 /** Tables that need a re-plan or show drift, for a one-line summary. */
@@ -64,49 +92,88 @@ export function portLabel(port: NodeNetworkPort): string {
 
 export interface RulesLine {
   text: string;
-  /** The other column has no such line, so this one differs. */
+  /** Outside the longest run of lines both columns share, in order. */
   changed: boolean;
 }
 
 export interface RulesCompare {
   now: RulesLine[];
   applied: RulesLine[];
-  /** Lines marked in either column. */
+  /** Lines only what would compile now has: a re-plan adds them. */
+  added: number;
+  /** Lines only what was last applied has: a re-plan removes them. */
+  removed: number;
+  /** added + removed. */
   changed: number;
+  /** Both columns hold the same lines, in a different order. */
+  reordered: boolean;
 }
 
+// Beyond this many line pairs the ordered compare costs more than a reading
+// aid is worth, and lines are matched by count alone.
+// yagni: a ruleset of a few hundred lines is the norm; a Myers diff replaces this cap if tables grow past ~2000 lines.
+const ORDERED_LIMIT = 4_000_000;
+
 /**
- * The two Show rules columns, line by line, each line marked when the other
- * column lacks it. Lines compare by their trimmed text and count, so a
- * reordered or re-indented ruleset marks only what moved in meaning. This is
- * a reading aid, not a diff the operator approves: the plan's own diff in
- * Approvals stays the reviewed artefact.
+ * The two Show rules columns, line by line, each line marked when it is not
+ * part of the longest sequence of lines the columns share in order. Lines
+ * compare by their trimmed text, so re-indenting marks nothing, while a rule
+ * that moved is marked: nftables evaluates rules in order, so a move changes
+ * what the table does. This is a reading aid, not a diff the operator
+ * approves: the plan's own diff in Approvals stays the reviewed artefact.
  */
 export function compareRulesets(now: string | undefined, applied: string | undefined): RulesCompare {
   const split = (text: string | undefined) => (text ? text.replace(/\n+$/, "").split("\n") : []);
   const nowLines = split(now);
   const appliedLines = split(applied);
-  const counts = (lines: string[]) => {
-    const out = new Map<string, number>();
-    for (const line of lines) out.set(line.trim(), (out.get(line.trim()) ?? 0) + 1);
-    return out;
-  };
-  const mark = (lines: string[], other: Map<string, number>): RulesLine[] => {
-    const left = new Map(other);
-    return lines.map((text) => {
-      const key = text.trim();
-      const n = left.get(key) ?? 0;
-      if (n > 0) {
-        left.set(key, n - 1);
-        return { text, changed: false };
+  const a = nowLines.map((line) => line.trim());
+  const b = appliedLines.map((line) => line.trim());
+  const keptA = new Array<boolean>(a.length).fill(false);
+  const keptB = new Array<boolean>(b.length).fill(false);
+  if (a.length * b.length <= ORDERED_LIMIT) {
+    // lcs[i][j]: the longest common run of a[i:] and b[j:].
+    const lcs = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) {
+        lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
       }
-      return { text, changed: key !== "" };
+    }
+    let i = 0;
+    let j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) {
+        keptA[i++] = true;
+        keptB[j++] = true;
+      } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) i++;
+      else j++;
+    }
+  } else {
+    const left = new Map<string, number>();
+    for (const line of b) left.set(line, (left.get(line) ?? 0) + 1);
+    a.forEach((line, i) => {
+      const n = left.get(line) ?? 0;
+      if (n > 0) {
+        left.set(line, n - 1);
+        keptA[i] = true;
+      }
     });
-  };
-  const nowMarked = mark(nowLines, counts(appliedLines));
-  const appliedMarked = mark(appliedLines, counts(nowLines));
-  const changed = [...nowMarked, ...appliedMarked].filter((line) => line.changed).length;
-  return { now: nowMarked, applied: appliedMarked, changed };
+    const right = new Map<string, number>();
+    for (const line of a) right.set(line, (right.get(line) ?? 0) + 1);
+    b.forEach((line, j) => {
+      const n = right.get(line) ?? 0;
+      if (n > 0) {
+        right.set(line, n - 1);
+        keptB[j] = true;
+      }
+    });
+  }
+  const marked = (lines: string[], keys: string[], kept: boolean[]): RulesLine[] => lines.map((text, i) => ({ text, changed: !kept[i] && keys[i] !== "" }));
+  const nowMarked = marked(nowLines, a, keptA);
+  const appliedMarked = marked(appliedLines, b, keptB);
+  const added = nowMarked.filter((line) => line.changed).length;
+  const removed = appliedMarked.filter((line) => line.changed).length;
+  const sorted = (keys: string[]) => keys.filter((key) => key !== "").sort().join("\n");
+  return { now: nowMarked, applied: appliedMarked, added, removed, changed: added + removed, reordered: added + removed > 0 && sorted(a) === sorted(b) };
 }
 
 /** The sections this session was refused, with the scope each names. */

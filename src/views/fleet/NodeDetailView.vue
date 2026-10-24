@@ -370,15 +370,16 @@ const layerTabs = computed<LayerTab<NodeLayer>[]>(() => [
   { value: "settings", label: t("fleet.nodes.detail.layers.settings") },
 ]);
 
-// A link to one settings section (the Map's "Set location" lands on
-// ?view=settings#node-geo) scrolls to it once the section has rendered; the
-// router's own scroll only goes to the top. Once per hash, so a later save
-// does not pull the page back.
+// A link to one section (the Map's "Set location" lands on
+// ?view=settings#node-geo, the node sheet's "Open the node's network" on
+// #node-network) scrolls to it once the section has rendered; the router's
+// own scroll only goes to the top, and the main pane is the scroller. Once
+// per hash, so a later save does not pull the page back.
 const scrolledToHash = ref("");
 watch(
   () => [layer.value, route.hash, !!node.value] as const,
   async ([current, hash, ready]) => {
-    if (current !== "settings" || !hash || !ready || scrolledToHash.value === hash) return;
+    if (!current || !hash || !ready || scrolledToHash.value === hash) return;
     await nextTick();
     const target = document.getElementById(decodeURIComponent(hash.slice(1)));
     if (!target) return;
