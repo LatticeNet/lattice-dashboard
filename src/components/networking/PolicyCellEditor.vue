@@ -188,6 +188,8 @@ function submit() {
     rules: [...otherRules.value, ...destRules, ...inboundRules.value],
     enabled: meta.enabled,
     priority: meta.priority,
+    // A save from a copy someone else replaced is refused, not written over theirs.
+    version: props.existing?.version,
   });
 }
 </script>

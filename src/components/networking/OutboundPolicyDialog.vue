@@ -10,13 +10,21 @@
  * outbound policies are planned and each node's plan is approved. Inbound
  * rules a policy still holds are kept and listed as not applied, with a
  * remove action, the way the node form and the matrix editor list them.
+ *
+ * Editors keep the operator's work (design 32 R6). The page's save runs
+ * through `save`; a refusal that names a field focuses and marks the control
+ * that edits it, and a save that lost a race to another keeps the dialog open
+ * with the draft, names what changed on the server, and offers to reload
+ * theirs or to save the draft over the newer version (useSaveRefusal).
  */
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 import { RefreshCw } from "lucide-vue-next";
 
-import type { GroupNetRule, GroupPolicyUpsertRequest, GroupPolicyView, GroupView, Node, TargetSelector } from "@/lib/api";
+import { api, unwrap, type GroupNetRule, type GroupPolicyUpsertRequest, type GroupPolicyView, type GroupView, type Node, type TargetSelector } from "@/lib/api";
+import { useSaveRefusal } from "@/composables/useSaveRefusal";
+import SaveRefusal from "@/components/common/SaveRefusal.vue";
 import SelectorPicker from "@/components/selector/SelectorPicker.vue";
 import { isEmptySelector, normalizeSelector, selectorParts } from "@/components/selector/selectorModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -51,13 +59,14 @@ const props = withDefaults(
     restricted?: boolean;
     /** Where inbound traffic is managed; no link when the firewall page is absent. */
     firewallTo?: RouteLocationRaw | null;
+    /** The page's save. It closes the dialog on success and throws the refusal otherwise. */
+    save: (payload: GroupPolicyUpsertRequest) => Promise<void>;
   }>(),
   { existing: undefined, saving: false, canAdmin: false, restricted: false, firewallTo: null },
 );
 
 const emit = defineEmits<{
   (e: "update:open", value: boolean): void;
-  (e: "save", payload: GroupPolicyUpsertRequest): void;
 }>();
 
 const { t } = useI18n();
@@ -79,23 +88,95 @@ const opened = ref("");
 const dirty = computed(() => props.open && snapshot() !== opened.value);
 const discardOpen = ref(false);
 
+/**
+ * The version the draft started from: the policy as the dialog opened it,
+ * or the server's newer one after Reload theirs or Save mine over it. Its
+ * version is what a save names.
+ */
+const base = shallowRef<GroupPolicyView | undefined>();
+
+function load(p: GroupPolicyView | undefined): void {
+  base.value = p;
+  form.name = p?.name ?? "";
+  form.target = normalizeSelector(p?.target ?? {});
+  form.enabled = p?.enabled ?? true;
+  form.priority = p?.priority ?? 0;
+  const rules = p?.rules ?? [];
+  inbound.value = rules.filter((r) => r.direction === "ingress");
+  const outbound = rules.filter((r) => r.direction !== "ingress").map(ruleToOutboundDraft);
+  form.rules = outbound.length || inbound.value.length ? outbound : [emptyOutboundRule()];
+  opened.value = snapshot();
+}
+
+const formEl = ref<HTMLElement | null>(null);
+/** What a conflict compares, in the request's own paths and order. */
+const COMPARED = ["name", "scope", "priority", "enabled", "rules"] as const;
+const saveState = useSaveRefusal<GroupPolicyView>({
+  root: formEl,
+  compared: COMPARED,
+  draft: () => [form.name, form.target, form.enabled, form.priority, form.rules, inbound.value],
+});
+
 watch(
   () => [props.open, props.existing?.id] as const,
   ([open]) => {
     if (!open) return;
-    const p = props.existing;
-    form.name = p?.name ?? "";
-    form.target = normalizeSelector(p?.target ?? {});
-    form.enabled = p?.enabled ?? true;
-    form.priority = p?.priority ?? 0;
-    const rules = p?.rules ?? [];
-    inbound.value = rules.filter((r) => r.direction === "ingress");
-    const outbound = rules.filter((r) => r.direction !== "ingress").map(ruleToOutboundDraft);
-    form.rules = outbound.length || inbound.value.length ? outbound : [emptyOutboundRule()];
-    opened.value = snapshot();
+    saveState.clear();
+    load(props.existing);
   },
   { immediate: true },
 );
+
+/** A policy in the shape the request sends, for comparing versions. */
+function requestShape(p: GroupPolicyView | undefined): Record<string, unknown> | undefined {
+  if (!p) return undefined;
+  return { name: p.name ?? "", scope: normalizeSelector(p.target ?? {}), priority: p.priority, enabled: p.enabled, rules: p.rules };
+}
+
+const fieldLabels = computed<Record<string, string>>(() => {
+  const labels: Record<string, string> = {
+    name: t("networking.outbound.name"),
+    priority: t("networking.matrix.priority"),
+    enabled: t("networking.policy.policyState"),
+    scope: t("networking.outbound.target"),
+    rules: t("networking.policy.rules"),
+  };
+  const count = form.rules.length + inbound.value.length;
+  for (let i = 0; i < count; i++) {
+    const rule = t("networking.policy.ruleLabel", { index: i + 1 });
+    labels[`rules[${i}]`] = rule;
+    labels[`rules[${i}].action`] = `${rule}, ${t("networking.policy.action")}`;
+    labels[`rules[${i}].protocol`] = `${rule}, ${t("networking.policy.protocol")}`;
+    labels[`rules[${i}].ports`] = `${rule}, ${t("networking.policy.ports")}`;
+    labels[`rules[${i}].remote`] = `${rule}, ${t("networking.policy.remoteKind")}`;
+    labels[`rules[${i}].comment`] = `${rule}, ${t("networking.policy.comment")}`;
+  }
+  return labels;
+});
+
+async function reread(): Promise<GroupPolicyView> {
+  const id = base.value?.id ?? props.existing?.id;
+  const latest = unwrap(await api.groupPolicy.list(), "policies").find((p) => p.id === id);
+  if (!latest) throw new Error(t("networking.outbound.goneOnServer"));
+  return latest;
+}
+
+/** Reload theirs: the server's version becomes the draft and its base. */
+function reloadTheirs(): void {
+  const latest = saveState.conflict.value?.latest;
+  if (!latest) return;
+  saveState.clear();
+  load(latest);
+}
+
+/** Save mine over it: the draft, naming the server's newer version. */
+function saveOver(): void {
+  const latest = saveState.conflict.value?.latest;
+  if (!latest) return;
+  base.value = latest;
+  saveState.clear();
+  void submit();
+}
 
 function requestClose(): void {
   if (dirty.value) {
@@ -141,7 +222,8 @@ function ruleError(draft: OutboundRuleDraft): PolicyRuleError | undefined {
 
 const errors = computed(() => form.rules.map(ruleError));
 const noTarget = computed(() => isEmptySelector(form.target));
-const canSubmit = computed(() => props.canAdmin && !noTarget.value && errors.value.every((e) => e === undefined));
+// Held while a conflict waits for the operator's choice.
+const canSubmit = computed(() => props.canAdmin && !noTarget.value && errors.value.every((e) => e === undefined) && !saveState.conflict.value);
 
 /** What the title names after the verb: the name, or the target in a few words. */
 const titleObject = computed(() => {
@@ -164,17 +246,28 @@ function removeInbound(key: string): void {
   inbound.value = inbound.value.filter((r) => r.id !== key);
 }
 
-function submit(): void {
+async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   const ids = assignRuleIds(form.rules, inbound.value.map((r) => r.id), "rule");
-  emit("save", {
+  const payload: GroupPolicyUpsertRequest = {
     id: props.existing?.id,
     name: form.name.trim() || undefined,
     scope: normalizeSelector(form.target),
     rules: [...form.rules.map((draft, i) => outboundDraftToRule(draft, ids[i]!)), ...inbound.value],
     enabled: form.enabled,
     priority: Number.isFinite(form.priority) ? Math.trunc(form.priority) : 0,
-  });
+    version: base.value?.version,
+  };
+  try {
+    await props.save(payload);
+  } catch (error) {
+    await saveState.handle(error, {
+      fallback: t("networking.outbound.toastSaveFailed"),
+      base: requestShape(base.value),
+      reread,
+      shape: requestShape,
+    });
+  }
 }
 </script>
 
@@ -191,17 +284,17 @@ function submit(): void {
         <DialogDescription>{{ $t("networking.outbound.formDescription") }}</DialogDescription>
       </DialogHeader>
 
-      <form class="space-y-5" @submit.prevent="submit">
+      <form ref="formEl" class="space-y-5" @submit.prevent="submit">
         <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_10rem]">
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="name">
             <Label for="outbound-name">{{ $t("networking.outbound.name") }}</Label>
             <Input id="outbound-name" v-model="form.name" :placeholder="$t('networking.outbound.namePlaceholder')" maxlength="120" />
           </div>
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="priority">
             <Label for="outbound-priority">{{ $t("networking.matrix.priority") }}</Label>
             <Input id="outbound-priority" v-model.number="form.priority" type="number" inputmode="numeric" aria-describedby="outbound-priority-hint" />
           </div>
-          <div class="grid gap-1.5">
+          <div class="grid gap-1.5" data-field="enabled">
             <span class="text-sm font-medium leading-none">{{ $t("networking.policy.policyState") }}</span>
             <label class="flex h-9 cursor-pointer items-center gap-2 rounded-md border border-input px-3 text-sm">
               <Checkbox v-model="form.enabled" />
@@ -211,7 +304,7 @@ function submit(): void {
           <p id="outbound-priority-hint" class="text-xs text-muted-foreground sm:col-span-3">{{ $t("networking.outbound.priorityHint") }}</p>
         </div>
 
-        <fieldset class="grid gap-2">
+        <fieldset class="grid gap-2" data-field="scope">
           <legend class="mb-1 text-sm font-medium">{{ $t("networking.outbound.target") }}</legend>
           <SelectorPicker
             v-model="form.target"
@@ -233,13 +326,14 @@ function submit(): void {
           :empty-text="$t('networking.policy.noRules')"
           :can-edit="canAdmin"
           id-prefix="outbound"
+          field-path="rules"
           @add="addRule"
           @remove="removeRule"
           @remove-inbound="removeInbound"
         >
           <template #remote="{ index }">
             <!-- Top-aligned: the group hint makes its cell taller than the kind's. -->
-            <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2" :data-field="`rules[${index}].remote`">
               <div class="grid gap-1.5">
                 <Label class="text-xs" :for="`outbound-rule-${index}-remote`">{{ $t("networking.policy.remoteKind") }}</Label>
                 <Select v-model="form.rules[index]!.remoteKind">
@@ -290,13 +384,27 @@ function submit(): void {
         <!-- The footer stacks in reverse below sm, so the note comes last in the
              markup to sit above the disabled Create on a phone and first
              (order-first) beside the buttons on wider screens. -->
-        <DialogFooter class="sm:items-center">
+        <DialogFooter class="flex-wrap sm:items-center">
           <Button type="button" variant="outline" @click="requestClose">{{ $t("common.actions.cancel") }}</Button>
           <Button type="submit" :disabled="!canSubmit || saving">
             <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
             {{ existing ? $t("common.actions.saveChanges") : $t("networking.outbound.create") }}
           </Button>
           <p v-if="noTarget" class="text-xs text-muted-foreground sm:order-first sm:me-auto" data-testid="outbound-missing">{{ $t("networking.outbound.stillNeedsTarget") }}</p>
+          <!-- Last in the markup for the same reason, and a whole row of its own
+               above the buttons from sm up. -->
+          <SaveRefusal
+            :refusal="saveState.refusal.value"
+            :changed="saveState.conflict.value?.changed"
+            :at="saveState.conflict.value?.latest.updated_at"
+            :labels="fieldLabels"
+            :message-id="saveState.messageId"
+            :pending="saving"
+            :noun="$t('networking.outbound.noun')"
+            class="sm:order-first"
+            @reload="reloadTheirs"
+            @overwrite="saveOver"
+          />
         </DialogFooter>
       </form>
     </DialogScrollContent>
