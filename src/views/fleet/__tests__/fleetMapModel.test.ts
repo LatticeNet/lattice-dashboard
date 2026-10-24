@@ -523,22 +523,17 @@ test("a click opens one node, zooms while a zoom splits, spreads a pile, and lis
   assert.deepEqual(asked, [12]);
 });
 
-test("the latency layer reads as loading until both the plan and the rollups have answered", () => {
+test("the latency layer reads as loading until the paths matrix has answered", () => {
   const read = (hasData: boolean, failed = false) => ({ hasData, failed });
-  const state = (plan: ReturnType<typeof read>, rollups: ReturnType<typeof read>, hasSource = true, canRead = true) =>
-    latencyLayerState({ canRead, plan, rollups, hasSource });
-  // The plan is in and the rollups are on their way: reading, not "nothing heard" from every target.
-  assert.equal(state(read(true), read(false)), "loading");
-  assert.equal(state(read(true), read(true)), "ready");
-  assert.equal(state(read(false), read(false)), "loading");
-  assert.equal(state(read(false), read(true)), "loading");
-  assert.equal(state(read(false, true), read(false)), "failed");
-  assert.equal(state(read(true), read(false, true)), "failed");
+  const state = (paths: ReturnType<typeof read>, hasSource = true, canRead = true) => latencyLayerState({ canRead, paths, hasSource });
+  assert.equal(state(read(false)), "loading");
+  assert.equal(state(read(true)), "ready");
+  assert.equal(state(read(false, true)), "failed");
   // A failed refresh over an answer still shows the answer.
-  assert.equal(state(read(true, true), read(true, true)), "ready");
-  // No source configured: nothing to wait for.
-  assert.equal(state(read(true), read(false), false), "nosource");
-  assert.equal(state(read(true), read(true), true, false), "denied");
+  assert.equal(state(read(true, true)), "ready");
+  // No check measures between nodes: nothing to wait for.
+  assert.equal(state(read(true), false), "nosource");
+  assert.equal(state(read(true), true, false), "denied");
 });
 
 test("a leg's card sits clear of the spread and of the page's list", () => {

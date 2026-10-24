@@ -49,6 +49,8 @@ export interface PathsDataOptions {
   requested: Ref<MonitorWindow>;
   canRead: Ref<boolean>;
   checkName: (monitorId: string) => string | undefined;
+  /** A check definition's name: a definition's paths are named by it (design 32 R1). */
+  definitionName?: (definitionId: string) => string | undefined;
   nodeName: (nodeId: string) => string | undefined;
   controlPlane: () => string;
   /**
@@ -114,7 +116,7 @@ export function usePathsData(options: PathsDataOptions): PathsData {
 
   const matrix = computed(() => {
     const data = pathsQuery.data.value;
-    return data ? buildPathsMatrix(data, { checkName: options.checkName, nodeName: options.nodeName, controlPlane: options.controlPlane() }) : undefined;
+    return data ? buildPathsMatrix(data, { checkName: options.checkName, definitionName: options.definitionName, nodeName: options.nodeName, controlPlane: options.controlPlane() }) : undefined;
   });
 
   const triangulation = computed(() => (matrix.value ? triangulate(matrix.value) : undefined));

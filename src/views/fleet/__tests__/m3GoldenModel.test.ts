@@ -42,6 +42,7 @@ import {
   attentionQuery,
   availability,
   buildPathsMatrix,
+  everyPath,
   cellKey,
   displayState,
   lossTone,
@@ -61,9 +62,16 @@ const NOW = at(GOLDEN_NOW);
 const checkNames = new Map(GOLDEN_MONITORS.map((m) => [m.id, m.name]));
 /** The matrix as Monitoring builds it: checks named from the monitors list, the control plane by the console's label. */
 const matrixOf = (response = GOLDEN_PATHS_1H): PathsMatrix => buildPathsMatrix(response, { checkName: (id) => checkNames.get(id), controlPlane: "control plane" });
-const pathOf = (m: PathsMatrix, key: string) => {
-  const path = m.paths.find((p) => p.key === key);
-  assert.ok(path, `path ${key}`);
+/** A measured path by its key and, where several checks measure the pair (design 32 R1), the check. */
+const pathOf = (m: PathsMatrix, key: string, check?: string) => {
+  const path = m.paths.find((p) => p.key === key && (check === undefined || p.checkId === check));
+  assert.ok(path, `path ${key}${check ? ` by ${check}` : ""}`);
+  return path;
+};
+/** A pair that is not measured (design 32 R2), by its check. */
+const unmeasuredOf = (m: PathsMatrix, check: string) => {
+  const path = m.unmeasured.find((p) => p.checkId === check);
+  assert.ok(path, `unmeasured ${check}`);
   return path;
 };
 
@@ -88,12 +96,16 @@ test("golden matrix: the 1h answer reads into the sources, rows, cells and state
       ["node-fra", "node", "fra-2", "europe"],
       ["node-hk", "node", "hk-edge", "eastAsia"],
       ["node-jp", "node", "tyo-3", "eastAsia"],
+      // The ping and web checks to tyo-3 are paths between nodes: they sit in its row (design 32 R1).
       ["@mon-cert", "check", "lattice.example.net certificate", "checks"],
-      ["@mon-ping-jp", "check", "Ping tyo-3", "checks"],
-      ["@mon-web", "check", "tyo-3 web", "checks"],
     ],
   );
-  assert.deepEqual(m.counts, { paths: 12, up: 6, degraded: 4, down: 1, unknown: 1, paused: 0 });
+  // The ping from fra-2, which its agent may not send, is skipped: not a path, so no count holds it (design 32 R2).
+  assert.deepEqual(m.counts, { paths: 11, up: 6, degraded: 4, down: 1, unknown: 0, paused: 0, skipped: 0 });
+  assert.deepEqual(
+    m.unmeasured.map((p) => [p.key, p.checkId, p.measure, p.reason]),
+    [["node-fra~node-jp", "mon-ping-jp", "skipped", "icmp_not_permitted"]],
+  );
   // Every cell, as the server judged it: [row, source, state, reason].
   const cells = [
     ["node-fra", "node-hk", "up", undefined],
@@ -101,13 +113,10 @@ test("golden matrix: the 1h answer reads into the sources, rows, cells and state
     ["node-hk", "node-fra", "up", undefined],
     ["node-hk", "node-sh", "down", undefined],
     ["node-jp", "node-fra", "degraded", "degraded_latency"],
+    // Three checks measure hk-edge to tyo-3 and two cd-hs-sh to tyo-3: the cell shows the worst, the first on a tie.
     ["node-jp", "node-hk", "degraded", "degraded_latency"],
     ["node-jp", "node-sh", "degraded", "degraded_loss"],
     ["@mon-cert", "", "up", undefined],
-    ["@mon-ping-jp", "node-fra", "unknown", "icmp_not_permitted"],
-    ["@mon-ping-jp", "node-hk", "up", undefined],
-    ["@mon-web", "node-hk", "up", undefined],
-    ["@mon-web", "node-sh", "degraded", "degraded_loss_latency"],
   ] as const;
   assert.equal(m.cells.size, cells.length);
   for (const [row, source, state, reason] of cells) {
@@ -145,13 +154,14 @@ test("golden matrix: degraded evidence, the clearing time and unmeasured figures
     loss: { value: 0.082, baseline: 0.0003, trigger: 0.03, sent: 61, lost: 5 },
   });
   // The operator check's own thresholds: 5 percent, and 50 ms over the 7-day median (40 + 50 beats 2 x 40).
-  const web = pathOf(m, "node-sh~@mon-web");
+  const web = pathOf(m, "node-sh~node-jp", "mon-web");
   assert.equal(web.checkName, "tyo-3 web");
   assert.deepEqual(web.degraded?.loss, { value: 0.082, baseline: 0.0003, trigger: 0.05, sent: 61, lost: 5 });
   assert.deepEqual(web.degraded?.latency, { p50Ms: 140, runs: 16, baselineMs: 40, triggerMs: 90 });
 
   // A path that measured nothing: the server's nulls read as absent, never as zero.
-  const icmp = pathOf(m, "node-fra~@mon-ping-jp");
+  const icmp = unmeasuredOf(m, "mon-ping-jp");
+  assert.equal(icmp.key, "node-fra~node-jp");
   assert.equal(icmp.method, "icmp");
   assert.equal(icmp.targetNode, "node-jp");
   assert.equal(icmp.targetNodeName, "tyo-3");
@@ -192,7 +202,7 @@ test("golden matrix: degraded evidence, the clearing time and unmeasured figures
   // Loss takes the path's state tone: red on the down path, amber on the lossy degraded ones, never red on an up path.
   assert.equal(lossTone(displayState(down)), "destructive");
   assert.equal(lossTone(displayState(pathOf(m, "node-sh~node-jp"))), "warning");
-  assert.equal(lossTone(displayState(pathOf(m, "node-sh~@mon-web"))), "warning");
+  assert.equal(lossTone(displayState(pathOf(m, "node-sh~node-jp", "mon-web"))), "warning");
   for (const p of m.paths.filter((x) => x.state === "up")) assert.equal(lossTone(displayState(p)), "ink", `${p.key} is up`);
 });
 
@@ -207,7 +217,7 @@ test("golden matrix: the 7d window judges the same states with the same evidence
     hour.paths.map((p) => p.key),
   );
   for (const path of week.paths) {
-    const same = pathOf(hour, path.key);
+    const same = pathOf(hour, path.key, path.checkId);
     assert.equal(path.state, same.state, `${path.key}: degraded is a state for now, not for the window`);
     assert.equal(path.reason, same.reason);
     assert.deepEqual(path.degraded, same.degraded);
@@ -219,7 +229,7 @@ test("golden matrix: the 7d window judges the same states with the same evidence
   assert.equal(pathOf(week, "node-sh~node-hk").loss, 0);
   assert.equal(pathOf(week, "node-sh~node-hk").samples, 10080);
   assert.equal(pathOf(week, "node-sh~node-hk").expected, 10080);
-  assert.equal(pathOf(week, "node-fra~@mon-ping-jp").expected, 10080, "a path that measured nothing still expected the week's runs");
+  assert.equal(unmeasuredOf(week, "mon-ping-jp").expected, 10080, "a pair that measured nothing still expected the week's runs");
   // The hourly certificate check's history starts inside the oldest hour, and its newest run sits in the hour in progress.
   assert.deepEqual([pathOf(week, "_~@mon-cert").samples, pathOf(week, "_~@mon-cert").expected], [167, 168]);
   assert.equal(pathOf(week, "_~@mon-cert").prev, undefined, "the week before held no certificate run");
@@ -227,68 +237,63 @@ test("golden matrix: the 7d window judges the same states with the same evidence
 
 /* ---- Triangulation and the Overview ---- */
 
-test("golden triangulation: tyo-3 is placed on the target, cd-hs-sh's network on its check, hk-edge's outage on the path", () => {
+test("golden triangulation: tyo-3 is placed on the target, hk-edge's outage on the path", () => {
   const m = matrixOf();
   const tri = triangulate(m);
   assert.deepEqual([...tri.reach.keys()], ["node-sh~node-hk"], "reach judges the one down path");
   assert.deepEqual(tri.reach.get("node-sh~node-hk"), { kind: "path", family: "reach", evidence: { kind: "path", target: "hk-edge", others: 1 } });
   const target = { kind: "target", family: "quality", evidence: { kind: "target", target: "tyo-3", sources: ["cd-hs-sh", "fra-2", "hk-edge"] } };
-  const network = { kind: "source", family: "quality", evidence: { kind: "source", source: "cd-hs-sh", bad: 3, fresh: 4, elsewhere: 2 } };
+  // The web check to tyo-3 is a path into tyo-3's row (design 32 R1), so cd-hs-sh reads two bad targets of three,
+  // under the three a network verdict needs: its degraded paths are judged with the rest of their rows.
   assert.deepEqual(Object.fromEntries(tri.quality), {
-    "node-sh~node-hk": network,
+    "node-sh~node-hk": { kind: "path", family: "quality", evidence: { kind: "path", target: "hk-edge", others: 1 } },
     "node-fra~node-jp": target,
     "node-hk~node-jp": target,
     "node-sh~node-jp": target,
-    "node-sh~@mon-web": network,
   });
   // The family follows the state: a down path's verdict is reach's, a degraded path's quality's.
   assert.equal(verdictFor(tri, pathOf(m, "node-sh~node-hk"))?.kind, "path");
-  assert.equal(verdictFor(tri, pathOf(m, "node-sh~@mon-web"))?.kind, "source");
-  assert.equal(verdictFor(tri, pathOf(m, "node-fra~@mon-ping-jp")), undefined, "an unknown path is never judged");
+  assert.equal(verdictFor(tri, pathOf(m, "node-sh~node-jp", "mon-web"))?.kind, "target");
+  assert.equal(verdictFor(tri, unmeasuredOf(m, "mon-ping-jp")), undefined, "a skipped pair is never judged");
   assert.equal(verdictFor(tri, pathOf(m, "_~@mon-cert")), undefined);
   // Three sources report: no verdict rests on a single one.
   assert.equal(soleReporter(m.paths.map((p) => verdictFor(tri, p))), undefined);
 });
 
-test("golden attention: down, degraded by target, degraded by source, then the unknown reason; each Show finds exactly its paths", () => {
+test("golden attention: down, then degraded by target; each Show finds exactly its paths", () => {
   const m = matrixOf();
   const items = pathAttention(m);
   assert.deepEqual(
     items.map((i) => [i.kind, i.paths.map((p) => p.key)]),
     [
       ["down", ["node-sh~node-hk"]],
-      // The path furthest over its trigger leads: loss 8.2% of 3% before 140 ms of 100 ms and of 130 ms.
-      ["degraded", ["node-sh~node-jp", "node-fra~node-jp", "node-hk~node-jp"]],
-      ["degradedSource", ["node-sh~@mon-web"]],
-      ["unknown", ["node-fra~@mon-ping-jp"]],
+      // The path furthest over its trigger leads: loss 8.2% of 3%, then the web check's 8.2% of 5%, then 140 ms of 100 ms and of 130 ms.
+      ["degraded", ["node-sh~node-jp", "node-sh~node-jp", "node-fra~node-jp", "node-hk~node-jp"]],
+      // The skipped ping is configuration, not a line here (design 32 R2).
     ],
   );
-  const [down, degraded, bySource, unknown] = items;
-  assert.ok(down?.kind === "down" && degraded?.kind === "degraded" && bySource?.kind === "degradedSource" && unknown?.kind === "unknown");
+  const [down, degraded] = items;
+  assert.ok(down?.kind === "down" && degraded?.kind === "degraded");
   assert.equal(down.measuredBy, 2);
   assert.equal(down.worstLoss, 0.0333);
   assert.equal(down.verdict?.kind, "path");
-  assert.equal(degraded.measuredBy, 3);
+  assert.deepEqual(degraded.paths.map((p) => p.checkId), ["mon_lat_node-jp", "mon-web", "mon_lat_node-jp", "mon_lat_node-jp"]);
+  assert.equal(degraded.measuredBy, 3, "three sources measure tyo-3, whichever checks they run");
   assert.equal(degraded.verdict?.kind, "target");
-  assert.equal(bySource.sourceName, "cd-hs-sh");
-  assert.equal(bySource.verdict.kind, "source");
-  assert.equal(unknown.reason, "icmp_not_permitted");
   const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
   // Down and degraded items name their paths by key (design 32 D1): a name would also find the check "tyo-3 web",
   // whose path from cd-hs-sh is degraded too, and every check that reaches the node.
   const keys = (item: (typeof items)[number]) => item.paths.map((p) => p.key).join(",");
   const expected = [
     (item: (typeof items)[number]) => `state:down path:=${keys(item)}`,
-    (item: (typeof items)[number]) => `state:degraded path:=${keys(item)}`,
-    (item: (typeof items)[number]) => `state:degraded path:=${keys(item)}`,
-    () => "state:unknown reason:=icmp_not_permitted",
+    (item: (typeof items)[number]) => `state:degraded path:=${[...new Set(item.paths.map((p) => p.key))].join(",")}`,
   ];
   items.forEach((item, i) => {
     const query = attentionQuery(item);
     assert.equal(query, expected[i]!(item));
     const compiled = compileQuery(query, schema);
     assert.ok(compiled.ok, `${query} compiles`);
-    assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.key).sort(), item.paths.map((p) => p.key).sort(), `${query} lists exactly the item's paths`);
+    assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.id).sort(), item.paths.map((p) => p.id).sort(), `${query} lists exactly the item's paths`);
   });
   // Every path counts once, the certificate check's from the control plane included (design 32 D1): the lines add up to the page's count.
   const reach = reachBySource(m).filter((r) => r.total > 0);
@@ -297,7 +302,7 @@ test("golden attention: down, degraded by target, degraded by source, then the u
     [
       ["control plane", 1, 0, 0, 0, 1],
       ["cd-hs-sh", 1, 2, 1, 0, 4],
-      ["fra-2", 1, 1, 0, 1, 3],
+      ["fra-2", 1, 1, 0, 0, 2],
       ["hk-edge", 3, 1, 0, 0, 4],
     ],
   );
@@ -406,9 +411,10 @@ test("golden monitors: each check's state in the list, with its paths' verdict f
   assert.deepEqual(health("mon-ping-jp"), { kind: "up", total: 1, latencyMs: 50, lastAt: NOW });
   // An hourly certificate check heard 32 minutes ago is current.
   assert.deepEqual(health("mon-cert"), { kind: "up", total: 1, latencyMs: 85, lastAt: at("2026-09-14T09:15:00Z") });
-  // fra-2's kernel refuses ICMP: its source is listed and counted as measuring nothing.
+  // fra-2's kernel refuses ICMP: its source is listed and counted as measuring nothing. The check's sheet reads
+  // its skipped pair too, though the Topology view leaves it out (design 32 R2).
   const ping = GOLDEN_MONITORS.find((x) => x.id === "mon-ping-jp")!;
-  assert.deepEqual(checkSourceSummary(ping, m.paths.filter((p) => p.monitorId === ping.id)), { ids: ["node-fra", "node-hk"], unmeasured: 1 });
+  assert.deepEqual(checkSourceSummary(ping, everyPath(m).filter((p) => p.monitorId === ping.id)), { ids: ["node-fra", "node-hk"], unmeasured: 1 });
 });
 
 test("golden monitors: the editor reads a check's policy and thresholds, and an untouched save sends neither", () => {
@@ -471,7 +477,7 @@ test("golden topology: every path drawn once between real nodes; three checks on
   assert.deepEqual(
     topo.sourceChoices.map((c) => [c.node.id, c.reach.up, c.reach.degraded, c.reach.down, c.reach.unknown, c.reach.total]),
     [
-      ["node-fra", 1, 1, 0, 1, 3],
+      ["node-fra", 1, 1, 0, 0, 2],
       ["node-hk", 3, 1, 0, 0, 4],
       ["node-sh", 1, 2, 1, 0, 4],
     ],
@@ -485,8 +491,8 @@ test("golden topology: every path drawn once between real nodes; three checks on
     ["path:node-sh>node-fra", "up", "--success", 1],
     ["path:node-fra>node-hk", "up", "--success", 1],
     ["path:node-sh>node-hk", "down", "--destructive", 1],
-    // The ICMP check that cannot run from fra-2 (unknown) does not grey the pair the path set measures.
-    ["path:node-fra>node-jp", "degraded", "--warning", 2],
+    // The ICMP check that cannot run from fra-2 is skipped (design 32 R2): not on the edge the path set measures.
+    ["path:node-fra>node-jp", "degraded", "--warning", 1],
     ["path:node-hk>node-jp", "degraded", "--warning", 3],
     ["path:node-sh>node-jp", "degraded", "--warning", 2],
     ["path:@cp>@addr:lattice.example.net:443", "up", "--success", 1],

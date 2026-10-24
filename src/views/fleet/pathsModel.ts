@@ -31,6 +31,7 @@ import type {
 } from "@/lib/api/types";
 import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
 import type { QueryField, QuerySchema } from "@/lib/query/engine";
+import { parseQuery, type QueryNode } from "@/lib/query/syntax";
 import { regionOf, type RegionKey } from "@/lib/regions";
 
 import { isReachabilityCheck, readBeaconReplans, type BeaconReplanItem } from "@/views/fleet/beaconModel";
@@ -97,18 +98,18 @@ export function legacyWindow(window: MonitorWindow): LatencyWindow {
 /* Layers and old links                                                 */
 /* ------------------------------------------------------------------ */
 
-export type MonitoringLayer = "overview" | "network" | "checks" | "incidents";
-export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "network", "checks", "incidents"];
+export type MonitoringLayer = "overview" | "topology" | "checks" | "incidents";
+export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "topology", "checks", "incidents"];
 
 /**
- * Layer names links used before, and where they land now (design 32 D2):
- * Paths and the old Latency layer open the Network view in list mode, the
- * old Topology the Network view as it opens by default.
+ * Layer names links used before, and where they land now (design 32 D2,
+ * R4): Paths and the old Latency layer open Topology in list mode, and
+ * Network, the view's name for one release, opens Topology as it was asked.
  */
 export const LEGACY_LAYERS: Readonly<Record<string, { view: MonitoringLayer; as?: "list" }>> = {
-  latency: { view: "network", as: "list" },
-  paths: { view: "network", as: "list" },
-  topology: { view: "network" },
+  latency: { view: "topology", as: "list" },
+  paths: { view: "topology", as: "list" },
+  network: { view: "topology" },
   monitors: { view: "checks" },
   keepalive: { view: "incidents" },
 };
@@ -121,7 +122,7 @@ function first(raw: QueryValue | undefined): string | undefined {
 /**
  * The current spelling of an old Monitoring link, or null when the query is
  * already current. `?view=paths` and `?view=latency` become
- * `?view=network&as=list`, `?view=topology` becomes `?view=network`,
+ * `?view=topology&as=list`, `?view=topology` becomes `?view=topology`,
  * `?view=monitors` becomes `?view=checks`, and the keepalive spelling of
  * Incidents becomes `?view=incidents`; the old `?tab=` key is read the same
  * way, and an old `?pair=` becomes `?path=`. Every other parameter is kept
@@ -144,7 +145,7 @@ export function legacyMonitoringRedirect(query: QueryRecord): Record<string, Que
     if (!first(query.path)) next.path = pair;
     delete next.pair;
     if (!first(next.view)) {
-      next.view = "network";
+      next.view = "topology";
       if (!first(query.as)) next.as = "list";
     }
   }
@@ -158,18 +159,23 @@ export function legacyMonitoringRedirect(query: QueryRecord): Record<string, Que
 /** The control plane, which runs tls checks, has no node id; its column is keyed by this. */
 export const CONTROL_PLANE = "_";
 
+/** The name the path set's checks go by (lattice-sdk CheckFleetMeshName): a name, so it reads the same in every language. */
+export const FLEET_MESH_NAME = "Fleet mesh";
+
 export interface PathAddress {
   source: string;
-  /** The target node of a path the path set generated. */
+  /** The target node of a path to a node, whichever check measures it. */
   targetNode?: string;
-  /** The check of an operator path; such a path has a row of its own. */
+  /** The check of a path to an address; such a path has a row of its own. */
   monitorId?: string;
 }
 
 /**
- * `?path=` names a path: `<source>~<target node>` for a path the path set
- * generated (the old `?pair=` spelling, so those links still open), and
- * `<source>~@<monitor id>` for a path of an operator check.
+ * `?path=` names a path: `<source>~<target node>` for a pair of nodes,
+ * whichever checks measure it (design 32 R1; the old `?pair=` spelling, so
+ * those links still open), and `<source>~@<monitor id>` for a check to an
+ * address. A link that named a check to a node by its monitor still opens
+ * the pair (currentPathKey).
  */
 export function encodePathKey(address: PathAddress): string {
   const source = address.source || CONTROL_PLANE;
@@ -305,14 +311,54 @@ export function isChosenUnknown(reason: string | undefined): boolean {
 }
 
 /**
- * The state as the console words it: a path that is unknown because the
- * operator paused it reads "paused", everywhere (cells, lists, counts,
- * the query), so a pause is never counted as a problem.
+ * Reasons a check skips a pair (design 32 R2, lattice-sdk PathMeasurement):
+ * the method has nothing to dial on the target, the source cannot run it or
+ * its host refuses it, a beacon or firewall approval is pending, or the pair
+ * is over the packet budget. The latency plan's endpoint notes say the same
+ * as not_probeable. Facts about configuration, not the health of a path.
  */
-export type PathDisplay = PathState | "paused";
+const SKIPPED: ReadonlySet<PathReason> = new Set([
+  "not_probeable",
+  "no_tcp_line",
+  "udp_only",
+  "no_public_address",
+  "no_inventory",
+  "agent_too_old",
+  "icmp_not_permitted",
+  "packet_budget",
+  "beacon_not_enabled",
+  "firewall_pending",
+  "beacon_source_pending",
+  "refused_by_node",
+]);
+
+/** Whether a pair is measured, skipped by its check, or paused (design 32 R2). */
+export type PathMeasure = "measured" | "skipped" | "paused";
+
+/**
+ * A pair is skipped or paused only while it reads unknown for one of those
+ * reasons; every other state, unknown with no fresh result included, is a
+ * measured path.
+ */
+export function pathMeasure(path: { state: PathState | string; reason?: string }): PathMeasure {
+  if (path.state !== "unknown") return "measured";
+  const code = reasonCode(path.reason);
+  if (code && SKIPPED.has(code)) return "skipped";
+  if (code && CHOSEN.has(code)) return "paused";
+  return "measured";
+}
+
+/**
+ * The state as the console words it: a pair the operator paused reads
+ * "paused" and one its check skips reads "skipped", everywhere (cells,
+ * lists, the query), so neither is ever a problem; neither is a path the
+ * default views show or count (design 32 R2).
+ */
+export type PathDisplay = PathState | "paused" | "skipped";
 
 export function displayState(path: { state: PathState; reason?: string }): PathDisplay {
-  return path.state === "unknown" && isChosenUnknown(path.reason) ? "paused" : path.state;
+  const measure = pathMeasure(path);
+  return measure === "measured" ? path.state : measure;
 }
 
 /** The ink a path's loss is drawn in: see lossTone. */
@@ -334,6 +380,7 @@ export function lossTone(state: PathDisplay | undefined): LossTone {
       return "warning";
     case "unknown":
     case "paused":
+    case "skipped":
       return "muted";
     default:
       return "ink";
@@ -405,9 +452,16 @@ export function methodsBySource(paths: readonly { source: string; method: string
   return new Map([...sets].map(([source, set]) => [source, [...set].sort()]));
 }
 
-/** One path, normalized, with the names it is shown by. */
+/** One check's measurement of one path, normalized, with the names it is shown by. */
 export interface PathItem {
+  /** The path, as `?path=` names it: the pair for a node target, whichever check measures it (design 32 R1). */
   key: string;
+  /** This check's measurement of the path, unique in the matrix: the key and the monitor. */
+  id: string;
+  /** The check: its definition's id, else the single check's monitor id. */
+  checkId: string;
+  /** The check definition the path's monitor was expanded from; absent for a single check. */
+  definitionId?: string;
   /** The row the path sits in: a target node id, or `@<monitor id>` for an operator check. */
   rowKey: string;
   source: string;
@@ -420,11 +474,15 @@ export interface PathItem {
   region: RegionKey;
   target: string;
   monitorId: string;
+  /** The check's name: its definition's, else the single check's. */
   checkName?: string;
+  /** Deprecated with PathCell.managed: the path of a definition migrated from the path set. Nothing keys by it. */
   managed: boolean;
   method: string;
   state: PathState;
   reason?: string;
+  /** Whether the pair is measured, or skipped or paused and left out of the default views (design 32 R2). */
+  measure: PathMeasure;
   p50Ms?: number;
   p95Ms?: number;
   jitterMs?: number;
@@ -490,20 +548,27 @@ export interface PathCounts {
   /** Degraded paths; zero from a server that does not judge degraded. */
   degraded: number;
   down: number;
-  /** Unknown and not a pause. */
+  /** Unknown and measured: no fresh result. */
   unknown: number;
-  /** Unknown because the operator paused it. */
+  /** Paused: the operator's choice. Zero over the matrix's paths, which hold measured paths only. */
   paused: number;
+  /** Skipped by the check. Zero over the matrix's paths, like paused. */
+  skipped: number;
 }
 
 /**
  * The one count rule (design 32 D1): every count the page shows is this,
  * over the matrix's paths or over the paths a query keeps, so the proof line,
- * Overview and both Network modes say the same number for the same set.
+ * Overview and both Topology modes say the same number for the same set.
+ * `paths` counts measured paths only (design 32 R2).
  */
 export function countPaths(paths: readonly Pick<PathItem, "state" | "reason">[]): PathCounts {
-  const counts: PathCounts = { paths: paths.length, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
-  for (const path of paths) counts[displayState(path)] += 1;
+  const counts: PathCounts = { paths: 0, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, skipped: 0 };
+  for (const path of paths) {
+    const shown = displayState(path);
+    counts[shown] += 1;
+    if (shown !== "paused" && shown !== "skipped") counts.paths += 1;
+  }
   return counts;
 }
 
@@ -512,7 +577,10 @@ export interface PathsMatrix {
   observedAt?: number;
   sources: PathColumn[];
   rows: PathRow[];
+  /** The measured paths: what every view shows and counts by default (design 32 R2). */
   paths: PathItem[];
+  /** The pairs a check skips or the operator paused: shown only on request, never counted. */
+  unmeasured: PathItem[];
   /** `rowKey|source` to the path in that cell. */
   cells: Map<string, PathItem>;
   counts: PathCounts;
@@ -531,8 +599,10 @@ export interface PathsMatrix {
 }
 
 export interface MatrixNames {
-  /** A check's name, for operator check rows. */
+  /** A single check's name, by its monitor id. */
   checkName?: (monitorId: string) => string | undefined;
+  /** A check definition's name, by its id: what a definition's paths are named by. */
+  definitionName?: (definitionId: string) => string | undefined;
   /** The control plane's column label. */
   controlPlane?: string;
   /** A node's name, for a source the server did not name. */
@@ -575,6 +645,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     });
   }
   const paths: PathItem[] = [];
+  const unmeasured: PathItem[] = [];
   const cells = new Map<string, PathItem>();
   const judges = judgesDegraded(response);
   for (const raw of response.paths ?? []) {
@@ -585,9 +656,12 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       seenSources.add(source);
       sources.push({ nodeId: source, name: source ? sourceById.get(source)?.name || names.nodeName?.(source) || source : controlPlane(undefined) });
     }
-    const operatorRow = !raw.managed || !raw.target_node;
+    // A path to a node sits in the node's row and is keyed by the pair, whichever check measures it (design 32 R1).
+    const operatorRow = !raw.target_node;
     const rowKey = operatorRow ? `@${raw.monitor_id}` : raw.target_node!;
-    const checkName = names.checkName?.(raw.monitor_id);
+    const definitionId = raw.check_definition_id || undefined;
+    // A path of the unmigrated path set has no definition to be named by: it is Fleet mesh's.
+    const checkName = (definitionId && names.definitionName?.(definitionId)) || names.checkName?.(raw.monitor_id) || (raw.managed && !definitionId ? FLEET_MESH_NAME : undefined);
     if (!rows.has(rowKey)) {
       if (operatorRow) {
         rows.set(rowKey, { key: rowKey, kind: "check", monitorId: raw.monitor_id, name: checkName || raw.target || raw.monitor_id, group: "checks", target: raw.target });
@@ -598,8 +672,14 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     }
     const row = rows.get(rowKey)!;
     const targetNodeView = raw.target_node ? targetById.get(raw.target_node) : undefined;
+    const key = encodePathKey(operatorRow ? { source, monitorId: raw.monitor_id } : { source, targetNode: raw.target_node });
+    const checkId = definitionId ?? raw.monitor_id;
+    const state = normalizeState(raw.state, judges);
     const item: PathItem = {
-      key: encodePathKey(operatorRow ? { source, monitorId: raw.monitor_id } : { source, targetNode: raw.target_node }),
+      key,
+      id: `${key}#${raw.monitor_id}`,
+      checkId,
+      definitionId,
       rowKey,
       source,
       sourceName: sources.find((s) => s.nodeId === source)?.name ?? source,
@@ -613,8 +693,9 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       checkName,
       managed: !!raw.managed,
       method: raw.method || "tcp",
-      state: normalizeState(raw.state, judges),
+      state,
       reason: raw.reason || undefined,
+      measure: pathMeasure({ state, reason: raw.reason }),
       p50Ms: finite(raw.p50_ms),
       p95Ms: finite(raw.p95_ms),
       jitterMs: finite(raw.jitter_ms),
@@ -625,11 +706,15 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
       lastAt: epoch(raw.last_at),
     };
     if (item.state === "degraded") item.degraded = readDegradation(raw.degraded);
-    // Two checks in one cell (a method switch the server has not joined yet):
-    // the worse state is the one the cell shows.
-    const key = cellKey(rowKey, source);
-    const held = cells.get(key);
-    if (!held || stateRank(item.state) < stateRank(held.state)) cells.set(key, item);
+    if (item.measure !== "measured") {
+      unmeasured.push(item);
+      continue;
+    }
+    // Two checks in one cell (two checks on the pair, or a method switch the
+    // server has not joined yet): the worse state is the one the cell shows.
+    const cell = cellKey(rowKey, source);
+    const held = cells.get(cell);
+    if (!held || stateRank(item.state) < stateRank(held.state)) cells.set(cell, item);
     paths.push(item);
   }
   const counts = countPaths(paths);
@@ -639,6 +724,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     sources,
     rows: [...rows.values()],
     paths,
+    unmeasured,
     cells,
     counts,
     judgesDegraded: judges,
@@ -646,6 +732,51 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     replans: readBeaconReplans(response.beacon_replans),
     replansKnown: response.beacon_replans !== undefined,
   };
+}
+
+/** Every path the matrix holds, the unmeasured pairs after the measured ones: what a reveal or a state:skipped query reads. */
+export function everyPath(matrix: Pick<PathsMatrix, "paths" | "unmeasured">): PathItem[] {
+  return [...matrix.paths, ...matrix.unmeasured];
+}
+
+/**
+ * The path a `?path=` key names now. A link made when a check to a node was
+ * keyed by its monitor (`<source>~@<monitor id>`) opens the pair; any other
+ * key, and one nothing in the matrix holds, is returned as it is.
+ */
+export function currentPathKey(matrix: Pick<PathsMatrix, "paths" | "unmeasured">, raw: string): string {
+  const address = decodePathKey(raw);
+  if (!address?.monitorId) return raw;
+  const held = everyPath(matrix).find((p) => p.monitorId === address.monitorId && p.source === address.source && p.targetNode);
+  return held ? held.key : raw;
+}
+
+const STATE_KEYS = new Set(["state", "status"]);
+const UNMEASURED_WORDS = new Set(["skipped", "paused", "stopped", "unmeasured"]);
+
+/**
+ * Whether a query names the skipped or paused state (`state:skipped`,
+ * `status:stopped`, `state:down,paused`), anywhere in it: the Topology view
+ * then reads the unmeasured pairs too, without the reveal (design 32 R2). An
+ * invalid query names nothing.
+ */
+export function queryNamesUnmeasured(text: string): boolean {
+  const parsed = parseQuery(text);
+  if (!parsed.ok || !parsed.tree) return false;
+  const visit = (node: QueryNode): boolean => {
+    switch (node.kind) {
+      case "and":
+      case "or":
+        return node.items.some(visit);
+      case "not":
+        return visit(node.item);
+      case "term":
+        return STATE_KEYS.has(node.field) && node.values.some((v) => UNMEASURED_WORDS.has(v.text.toLowerCase()));
+      default:
+        return false;
+    }
+  };
+  return visit(parsed.tree);
 }
 
 /**
@@ -668,7 +799,7 @@ export function stateRank(state: PathState): number {
 /* ------------------------------------------------------------------ */
 
 export type PathAttention =
-  /** A target down from some of the sources that measure it (`measuredBy`), with its verdict. */
+  /** A target down from some of the sources that measure it (`measuredBy`, distinct sources), with its verdict. */
   | { kind: "down"; rowKey: string; targetName: string; paths: PathItem[]; worstLoss: number; measuredBy: number; verdict?: Verdict }
   /** The down paths triangulation places on one source's network (design 29 D13 rule 2). */
   | { kind: "downSource"; source: string; sourceName: string; paths: PathItem[]; verdict: Verdict }
@@ -709,10 +840,17 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   const waiting = new Map<string, PathItem[]>();
   const unknown = new Map<string, PathItem[]>();
   const paused: PathItem[] = [];
-  const measuredBy = new Map<string, number>();
+  // The sources that measure each target, once each: two checks on one pair are one source (design 32 R1).
+  const measuredBy = new Map<string, Set<string>>();
   const push = (map: Map<string, PathItem[]>, key: string, path: PathItem) => map.set(key, [...(map.get(key) ?? []), path]);
+  // A pair waiting on its target's change plan is skipped (design 32 R2), so it is read from the unmeasured pairs:
+  // the plan's entry offers it. Every other skipped or paused pair is configuration and has no line here.
+  for (const path of matrix.unmeasured) {
+    const reason = reasonCode(path.reason);
+    if ((reason === "firewall_pending" || reason === "beacon_source_pending") && path.targetNode && matrix.replans.has(path.targetNode)) push(waiting, path.targetNode, path);
+  }
   for (const path of matrix.paths) {
-    measuredBy.set(path.rowKey, (measuredBy.get(path.rowKey) ?? 0) + 1);
+    measuredBy.set(path.rowKey, (measuredBy.get(path.rowKey) ?? new Set<string>()).add(path.source));
     const shown = displayState(path);
     const verdict = verdictFor(triangulation, path);
     if (shown === "down") push(verdict?.kind === "source" ? downBySource : down, verdict?.kind === "source" ? path.source : path.rowKey, path);
@@ -730,7 +868,7 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   const lead = (paths: PathItem[]) => verdictFor(triangulation, paths[0]!);
   const downItems = [...down.entries()].map(([rowKey, paths]) => {
     const sorted = [...paths].sort((a, b) => (b.loss ?? 1) - (a.loss ?? 1) || a.sourceName.localeCompare(b.sourceName));
-    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)), measuredBy: measuredBy.get(rowKey) ?? sorted.length, verdict: lead(sorted) };
+    return { kind: "down" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, worstLoss: Math.max(...sorted.map((p) => p.loss ?? 1)), measuredBy: measuredBy.get(rowKey)?.size ?? sorted.length, verdict: lead(sorted) };
   });
   downItems.sort((a, b) => b.paths.length - a.paths.length || b.worstLoss - a.worstLoss || a.targetName.localeCompare(b.targetName));
   const sourceItems = <K extends "downSource" | "degradedSource">(kind: K, map: Map<string, PathItem[]>) =>
@@ -750,7 +888,7 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   };
   const degradedItems = [...degraded.entries()].map(([rowKey, paths]) => {
     const sorted = [...paths].sort((a, b) => overTrigger(b) - overTrigger(a) || a.sourceName.localeCompare(b.sourceName));
-    return { kind: "degraded" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, measuredBy: measuredBy.get(rowKey) ?? sorted.length, verdict: lead(sorted) };
+    return { kind: "degraded" as const, rowKey, targetName: sorted[0]!.targetName, paths: sorted, measuredBy: measuredBy.get(rowKey)?.size ?? sorted.length, verdict: lead(sorted) };
   });
   degradedItems.sort((a, b) => b.paths.length - a.paths.length || overTrigger(b.paths[0]!) - overTrigger(a.paths[0]!) || a.targetName.localeCompare(b.targetName));
   const offlineItems = [...offline.entries()]
@@ -780,6 +918,9 @@ export function pathAttention(matrix: PathsMatrix, triangulation: Triangulation 
   ];
 }
 
+/** The states a source's reach counts: a skipped pair is never one of its paths (design 32 R2). */
+export type ReachState = Exclude<PathDisplay, "skipped">;
+
 export interface SourceReach {
   source: string;
   name: string;
@@ -794,7 +935,7 @@ export interface SourceReach {
 /**
  * For each source, how many of its paths are up, degraded, down, unknown and
  * paused: every path it runs, a check to an address included, so the lines
- * add up to the page's one count (design 32 D1) and the Network view's
+ * add up to the page's one count (design 32 D1) and the Topology view's
  * source picker says what Overview says.
  */
 export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): SourceReach[] {
@@ -802,7 +943,10 @@ export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): S
     const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
     for (const path of matrix.paths) {
       if (path.source !== column.nodeId) continue;
-      reach[displayState(path)] += 1;
+      const shown = displayState(path);
+      // The matrix's paths are measured; a set handed in whole still never counts a skipped pair.
+      if (shown === "skipped") continue;
+      reach[shown] += 1;
       reach.total += 1;
     }
     return reach;
@@ -841,9 +985,10 @@ export function attentionQuery(item: PathAttention): string {
     case "offline":
       return `state:unknown source:=${quoteQueryValue(item.sourceName)}`;
     case "replan":
+      // The pairs waiting on the plan are skipped (design 32 R2): the query names that state, so it reads them too.
       return item.paths.length
-        ? `state:unknown path:=${pathKeyList(item.paths)}`
-        : `state:unknown target:=${quoteQueryValue(item.targetName)} reason:=${item.replan.reason}`;
+        ? `state:skipped path:=${pathKeyList(item.paths)}`
+        : `state:skipped target:=${quoteQueryValue(item.targetName)} reason:=${item.replan.reason}`;
     case "unknown":
       return `state:unknown reason:=${quoteQueryValue(item.reason)}`;
     case "paused":
@@ -852,7 +997,7 @@ export function attentionQuery(item: PathAttention): string {
 }
 
 /** A reach line's query: the source's paths, matched by its whole name, in one state or all. */
-export function reachQuery(reach: SourceReach, state?: PathDisplay): string {
+export function reachQuery(reach: SourceReach, state?: ReachState): string {
   const parts = [`source:=${quoteQueryValue(reach.name)}`];
   if (state) parts.push(`state:${state}`);
   return parts.join(" ");
@@ -928,7 +1073,7 @@ export function availability(path: Pick<PathItem, "state" | "samples" | "expecte
 /* ------------------------------------------------------------------ */
 
 /** The states the query knows, as the console words them: a pause is its own state. */
-export const PATH_STATES: readonly PathDisplay[] = ["down", "degraded", "unknown", "paused", "up"];
+export const PATH_STATES: readonly PathDisplay[] = ["down", "degraded", "unknown", "paused", "skipped", "up"];
 export const PATH_METHODS = ["tcp", "http", "tls", "icmp", "beacon"] as const;
 
 /** Queries the help offers on Paths; each key names the sentence that says what it finds. */
@@ -974,21 +1119,20 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
       type: "enum",
       hint: hint("state"),
       values: PATH_STATES,
-      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up", stopped: "paused", slow: "degraded" },
+      valueAliases: { failing: "down", failed: "down", ok: "up", healthy: "up", stopped: "paused", slow: "degraded", unmeasured: "skipped" },
       get: (p) => displayState(p),
     },
     { key: "reason", aliases: ["why"], type: "list", hint: hint("reason"), get: reasonWords, suggest: (rows) => rows.map((p) => reasonCode(p.reason) ?? p.reason ?? "").filter(Boolean), sort: false },
     { key: "region", type: "string", hint: hint("region"), get: (p) => p.region, suggest: (rows) => rows.map((p) => p.region) },
     { key: "country", type: "string", hint: hint("country"), get: (p) => p.country },
     { key: "method", type: "enum", hint: hint("method"), values: PATH_METHODS, get: (p) => p.method },
-    { key: "check", type: "string", hint: hint("check"), get: (p) => p.checkName ?? p.monitorId },
+    { key: "check", type: "string", hint: hint("check"), get: (p) => p.checkName ?? p.checkId, suggest: (rows) => rows.map((p) => p.checkName ?? p.checkId) },
     // The figures as the list shows them: none while the path does not measure now, so a sort never ranks a blank cell.
     { key: "p50", type: "number", hint: hint("p50"), get: (p) => (measuresNow(p) ? p.p50Ms : undefined) },
     { key: "p95", type: "number", hint: hint("p95"), get: (p) => (measuresNow(p) ? p.p95Ms : undefined) },
     { key: "jitter", type: "number", hint: hint("jitter"), get: (p) => (measuresNow(p) ? p.jitterMs : undefined) },
     { key: "loss", type: "number", unit: "percent", hint: hint("loss"), get: (p) => (measuresNow(p) && p.samples > 0 ? percent(p.loss) : undefined) },
     { key: "availability", aliases: ["avail"], type: "number", unit: "percent", hint: hint("availability"), get: (p) => percent(availability(p)) },
-    { key: "managed", aliases: ["generated"], type: "bool", flag: true, hint: hint("managed"), get: (p) => p.managed, sort: false },
   ];
   return {
     fields,

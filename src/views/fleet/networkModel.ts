@@ -1,5 +1,5 @@
 /**
- * Monitoring's Network view (design 32 D2): what the graph and list modes
+ * Monitoring's Topology view (design 32 D2): what the graph and list modes
  * share beyond the drawing itself. One query over the matrix's paths serves
  * both modes; the list shows the paths it keeps, grouped by the target's
  * region, worst first unless a column or a `sort:` term orders them.

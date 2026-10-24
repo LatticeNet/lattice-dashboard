@@ -57,7 +57,7 @@ const involved = computed(() => lists.value.reachedBy.length > 0 || lists.value.
 const displayName = computed(() => props.node.name || props.node.id);
 
 function pathLink(path: PathItem) {
-  return { name: "monitoring", query: { view: "network", as: "list", path: path.key, window: data.window.value } };
+  return { name: "monitoring", query: { view: "topology", as: "list", path: path.key, window: data.window.value } };
 }
 
 const STEP = "text-xs font-medium text-muted-foreground";
@@ -93,7 +93,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
             <p v-if="lists.reachedBy.length > NODE_PATHS_SHOWN" class="text-xs text-muted-foreground">
               {{ $t('fleet.monitoring.nodePaths.more', { n: lists.reachedBy.length - NODE_PATHS_SHOWN }) }}
               <RouterLink
-                :to="{ name: 'monitoring', query: { view: 'network', as: 'list', 'paths.q': monitoringQuery('reachedBy', displayName), window: data.window.value } }"
+                :to="{ name: 'monitoring', query: { view: 'topology', as: 'list', 'paths.q': monitoringQuery('reachedBy', displayName), window: data.window.value } }"
                 class="font-medium text-foreground underline underline-offset-2"
               >{{ $t('fleet.monitoring.nodePaths.open') }}</RouterLink>
             </p>
@@ -105,7 +105,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
             <p v-if="lists.reaches.length > NODE_PATHS_SHOWN" class="text-xs text-muted-foreground">
               {{ $t('fleet.monitoring.nodePaths.more', { n: lists.reaches.length - NODE_PATHS_SHOWN }) }}
               <RouterLink
-                :to="{ name: 'monitoring', query: { view: 'network', as: 'list', 'paths.q': monitoringQuery('reaches', displayName), window: data.window.value } }"
+                :to="{ name: 'monitoring', query: { view: 'topology', as: 'list', 'paths.q': monitoringQuery('reaches', displayName), window: data.window.value } }"
                 class="font-medium text-foreground underline underline-offset-2"
               >{{ $t('fleet.monitoring.nodePaths.open') }}</RouterLink>
             </p>
@@ -113,7 +113,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
         </template>
         <p v-if="data.source.value === 'legacy'" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.nodePaths.legacy') }}</p>
         <RouterLink
-          :to="{ name: 'monitoring', query: { view: 'network', window: data.window.value } }"
+          :to="{ name: 'monitoring', query: { view: 'topology', window: data.window.value } }"
           class="inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
         >{{ $t('fleet.monitoring.nodePaths.openMonitoring') }}</RouterLink>
         </div>

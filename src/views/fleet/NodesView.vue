@@ -16,7 +16,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
-import { ArrowDown, ArrowUp, Ban, KeyRound, LayoutGrid, List, Plus, Power, RotateCw, Search, Server, SquareTerminal, X } from "lucide-vue-next";
+import { Ban, KeyRound, LayoutGrid, List, Plus, Power, RotateCw, Search, Server, SquareTerminal, X } from "lucide-vue-next";
 
 import { api, unwrap, type GroupView, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -310,7 +310,7 @@ const optionalColumns = computed(() => NODE_COLUMNS.filter((column) => column.op
 const uniform = computed(() => uniformColumns(nodes.value, ["owner", "agent", "archOs", "agentConfig", "role"]));
 const uniformIds = computed(() => new Set(uniform.value.map((entry) => entry.id)));
 
-const ALIGN_RIGHT = new Set(["cpu", "network", "memory", "disk"]);
+const ALIGN_RIGHT = new Set(["cpu", "upload", "download", "memory", "disk"]);
 const SORT_VALUE: Record<string, (node: Node) => unknown> = {
   name: (node) => (node.name || node.id).toLowerCase(),
   owner: (node) => nodeOwner(node).toLowerCase(),
@@ -318,7 +318,8 @@ const SORT_VALUE: Record<string, (node: Node) => unknown> = {
   agent: (node) => node.agent_version ?? "",
   lastSeen: (node) => lastSeenMillis(node),
   cpu: (node) => metricSortValue(node, shownPercent(node.metrics?.cpu_percent)),
-  network: (node) => networkSortValue(node),
+  upload: (node) => networkSortValue(node, "tx"),
+  download: (node) => networkSortValue(node, "rx"),
   memory: (node) => metricSortValue(node, ratioPercent(node.metrics?.memory_used, node.metrics?.memory_total)),
   disk: (node) => metricSortValue(node, ratioPercent(node.metrics?.disk_used, node.metrics?.disk_total)),
   tags: (node) => (node.tags ?? []).join(" "),
@@ -517,23 +518,21 @@ function staleCell(node: Node, text: string): MetricCell {
   };
 }
 
-interface NetworkCell extends MetricCell {
-  rx?: string;
-  tx?: string;
-}
-
-/** Receive and send rates; the cumulative counters since boot ride in the title. */
-function networkCell(node: Node): NetworkCell {
+/**
+ * One direction's rate: upload is what the node sent, download what it
+ * received. The counter since boot rides in the title (design 32 R5).
+ */
+function rateCell(node: Node, direction: "rx" | "tx"): MetricCell {
   const reading = networkReading(node);
   if (!reading) return { text: NO_VALUE, stale: false };
-  const rx = formatBytesPerSec(reading.rx);
-  const tx = formatBytesPerSec(reading.tx);
-  const totals = t("fleet.nodes.metric.networkTotals", { rx: formatBytes(reading.rxTotal), tx: formatBytes(reading.txTotal) });
+  const text = formatBytesPerSec(reading[direction]);
+  const total = direction === "rx" ? reading.rxTotal : reading.txTotal;
+  const totals = t(direction === "rx" ? "fleet.nodes.metric.downloadTotal" : "fleet.nodes.metric.uploadTotal", { bytes: formatBytes(total) });
   if (metricCellKind(node, 0) === "stale") {
-    const stale = staleCell(node, `${rx} / ${tx}`);
-    return { ...stale, rx, tx, title: `${stale.title}. ${totals}` };
+    const stale = staleCell(node, text);
+    return { ...stale, title: `${stale.title}. ${totals}` };
   }
-  return { text: `${rx} / ${tx}`, rx, tx, title: totals, stale: false };
+  return { text, title: totals, stale: false };
 }
 
 function openTerminal(node: Node): void {
@@ -1063,20 +1062,22 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             :title="metricCell(row, shownPercent(row.metrics?.cpu_percent)).title"
           >{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).text }}<span v-if="metricCell(row, shownPercent(row.metrics?.cpu_percent)).age" class="ml-1 text-[10px]">{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).age }}</span></span>
         </template>
-        <template #cell-network="{ row }">
-          <!-- One evaluation per row: the cell reads it in six places. -->
-          <template v-for="cell in [networkCell(row)]" :key="row.id">
+        <template #cell-upload="{ row }">
+          <!-- One evaluation per row: the cell reads it in four places. -->
+          <template v-for="cell in [rateCell(row, 'tx')]" :key="row.id">
             <span
-              :class="cn('inline-flex flex-col items-end gap-x-2 whitespace-nowrap font-mono text-xs tabular sm:flex-row sm:items-center', cell.stale && 'text-muted-foreground')"
+              :class="cn('whitespace-nowrap font-mono text-xs tabular', cell.stale && 'text-muted-foreground')"
               :title="cell.title"
-            >
-              <template v-if="cell.rx">
-                <span class="inline-flex items-center gap-0.5"><ArrowDown class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.received') }}</span>{{ cell.rx }}</span>
-                <span class="inline-flex items-center gap-0.5"><ArrowUp class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.sent') }}</span>{{ cell.tx }}</span>
-                <span v-if="cell.age" class="text-[10px]">{{ cell.age }}</span>
-              </template>
-              <template v-else>{{ cell.text }}</template>
-            </span>
+            >{{ cell.text }}<span v-if="cell.age" class="ml-1 text-[10px]">{{ cell.age }}</span></span>
+          </template>
+        </template>
+        <template #cell-download="{ row }">
+          <!-- One evaluation per row: the cell reads it in four places. -->
+          <template v-for="cell in [rateCell(row, 'rx')]" :key="row.id">
+            <span
+              :class="cn('whitespace-nowrap font-mono text-xs tabular', cell.stale && 'text-muted-foreground')"
+              :title="cell.title"
+            >{{ cell.text }}<span v-if="cell.age" class="ml-1 text-[10px]">{{ cell.age }}</span></span>
           </template>
         </template>
         <template #cell-memory="{ row }">
@@ -1152,6 +1153,8 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
                 selectable
                 :node="node"
                 :cpu-label="t('fleet.nodes.metric.cpu')"
+                :upload-label="t('fleet.nodes.metric.upload')"
+                :download-label="t('fleet.nodes.metric.download')"
                 :memory-label="t('fleet.nodes.metric.memory')"
                 :disk-label="t('fleet.nodes.metric.disk')"
                 :online-label="t('common.nodeStatus.online')"

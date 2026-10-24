@@ -135,7 +135,13 @@ const seriesQuery = useAsyncData<PathSeries | null>(
       if (!a.targetNode) return null;
       return seriesFromLatency(await api.monitors.latency.series(a.source, a.targetNode, legacyWindow(props.window), { signal }));
     }
-    const base = a.targetNode && !a.monitorId ? { source: a.source, target_node: a.targetNode, window: props.window } : { source: a.source, monitor: a.monitorId, window: props.window };
+    // A pair is asked for by its nodes and the check whose series it shows (design 32 R1); the unmigrated
+    // path set has no id to name, and its pair answers without one.
+    const check = props.path?.definitionId ?? (props.path && !props.path.managed ? props.path.monitorId : undefined);
+    const base =
+      a.targetNode && !a.monitorId
+        ? { source: a.source, target_node: a.targetNode, window: props.window, ...(check ? { check } : {}) }
+        : { source: a.source, monitor: a.monitorId, window: props.window };
     const query = comparing.value ? { ...base, compare: "previous" as const } : base;
     return seriesFromResponse(await api.monitors.series(query, { signal }));
   },
@@ -152,7 +158,7 @@ watch(comparing, () => {
   if (props.source !== "unknown") void seriesQuery.refresh();
 });
 watch(
-  () => [props.address.source, props.address.targetNode, props.address.monitorId, props.window, props.source] as const,
+  () => [props.address.source, props.address.targetNode, props.address.monitorId, props.path?.checkId, props.window, props.source] as const,
   () => {
     seriesQuery.data.value = undefined;
     seriesQuery.error.value = undefined;

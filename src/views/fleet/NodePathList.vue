@@ -5,7 +5,7 @@
  * and, when the path is not up, the words in the value column; the whole
  * line is labelled for a screen reader. Shared by the node page's Paths card,
  * whose lines link to the path on Monitoring, and by the node sheet's lens on
- * the Network view (design 32 D2), whose lines open the path sheet in place.
+ * the Topology view (design 32 D2), whose lines open the path sheet in place.
  */
 import { useI18n } from "vue-i18n";
 import { RouterLink, type RouteLocationRaw } from "vue-router";

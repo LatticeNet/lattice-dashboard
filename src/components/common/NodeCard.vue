@@ -106,6 +106,8 @@ const props = withDefaults(
     checkLabel?: string;
     /** Labels (English defaults; pass translated strings from a caller). */
     cpuLabel?: string;
+    uploadLabel?: string;
+    downloadLabel?: string;
     memoryLabel?: string;
     diskLabel?: string;
     /** Footer status words / aria text. */
@@ -130,6 +132,8 @@ const props = withDefaults(
     checked: false,
     checkLabel: "Select node",
     cpuLabel: "CPU",
+    uploadLabel: "Up",
+    downloadLabel: "Down",
     memoryLabel: "Memory",
     diskLabel: "Disk",
     onlineLabel: "Online",
@@ -514,15 +518,19 @@ function onGroup(id: string) {
     >
       <!-- A node that never reported carries all-zero metrics; they print as
            the no-value mark, not as "0 B/s (0 B)" and "0s" beside "never". -->
-      <span class="inline-flex items-center gap-1">
-        <ArrowDown class="size-3" aria-hidden="true" />
-        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_rx_speed) }}
-        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
-      </span>
+      <!-- Upload first, as the list's columns read; each value carries its
+           word, not only an arrow (design 32 R5). -->
       <span class="inline-flex items-center gap-1">
         <ArrowUp class="size-3" aria-hidden="true" />
+        <span>{{ uploadLabel }}</span>
         {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_tx_speed) }}
         <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
+      </span>
+      <span class="inline-flex items-center gap-1">
+        <ArrowDown class="size-3" aria-hidden="true" />
+        <span>{{ downloadLabel }}</span>
+        {{ noSample ? NO_VALUE : formatBytesPerSec(node.metrics?.net_rx_speed) }}
+        <span v-if="!noSample" class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <Activity class="size-3" aria-hidden="true" />
