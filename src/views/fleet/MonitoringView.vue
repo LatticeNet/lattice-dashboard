@@ -29,7 +29,7 @@ import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
 import { Plus, RadioTower, RefreshCw, Settings2 } from "lucide-vue-next";
 
-import { api, unwrap, type BeaconView, type IncidentListResponse, type MonitorType, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
+import { api, unwrap, type BeaconView, type CheckDefinitionList, type CheckDefinitionView, type GroupView, type IncidentListResponse, type MonitorType, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -50,6 +50,7 @@ import { Button } from "@/components/ui/button";
 
 import BeaconPlanSheet from "./BeaconPlanSheet.vue";
 import CheckEditorSheet from "./CheckEditorSheet.vue";
+import DefinitionEditorSheet from "./DefinitionEditorSheet.vue";
 import ChecksLayer from "./ChecksLayer.vue";
 import OverviewLayer from "./OverviewLayer.vue";
 import PathSetSheet from "./PathSetSheet.vue";
@@ -92,6 +93,26 @@ const nodesQuery = useAsyncData(
   (signal) => (canReadNodes.value ? api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")) : Promise.resolve([] as Node[])),
   { pollInterval: 15000, immediate: canReadNodes.value },
 );
+// Check definitions and Fleet mesh (design 32 D1): the Checks list's rows beside the single checks.
+const definitionsQuery = useAsyncData<CheckDefinitionList>(
+  (signal) => (canReadMonitors.value ? api.monitors.definitions.list({ signal }) : Promise.resolve<CheckDefinitionList>({ definitions: [] })),
+  { pollInterval: canReadMonitors.value ? 15000 : 0, immediate: canReadMonitors.value },
+);
+const definitions = computed<CheckDefinitionView[]>(() => definitionsQuery.data.value?.definitions ?? []);
+/** The definitions read failed before it ever answered: the list and the proof line must not read as if there were none. */
+const definitionsUnread = computed(() => !!definitionsQuery.error.value && definitionsQuery.data.value === undefined);
+// Node groups, for the target selector's group choices and names (design 32 D5).
+const canReadGroups = computed(() => auth.can("group:read"));
+const groupsQuery = useAsyncData<GroupView[]>((signal) => (canReadGroups.value ? api.groups.list({ signal }).then((r) => r.groups ?? []) : Promise.resolve([])), {
+  pollInterval: 0,
+  immediate: canReadGroups.value,
+});
+const groups = computed(() => groupsQuery.data.value ?? []);
+/** A session with a node allowlist names nodes only: the server refuses a group or the whole fleet from it. */
+const allowBroad = computed(() => {
+  const list = auth.serverAllowlist ?? [];
+  return list.length === 0 || list.includes("*");
+});
 // A session without monitor:read never sends it, first read or poll.
 const incidentsQuery = useAsyncData<IncidentListResponse>((signal) => api.incidents.list(undefined, { signal }), {
   pollInterval: canReadMonitors.value ? 10000 : 0,
@@ -289,6 +310,13 @@ const operatorChecks = computed(() => operatorMonitors(monitorsQuery.data.value 
 const healthOf = (m: MonitorView) =>
   withPathVerdict(monitorHealth(m, m.latest, monitorsQuery.lastUpdated.value ?? Date.now()), (matrix.value?.paths ?? []).filter((p) => p.monitorId === m.id), m.latest);
 const failingChecks = computed(() => failingMonitors(operatorChecks.value, healthOf));
+/** Definitions with a down path, by the monitors they expanded into. */
+const failingDefinitions = computed(() => {
+  const down = new Set((matrix.value?.paths ?? []).filter((p) => p.state === "down").map((p) => p.monitorId));
+  const failing = new Set<string>();
+  for (const m of monitorsQuery.data.value ?? []) if (m.check_definition_id && down.has(m.id)) failing.add(m.check_definition_id);
+  return failing.size;
+});
 
 const pathsProof = useProof(data.pathsQuery);
 const monitorsProof = useProof(monitorsQuery);
@@ -311,11 +339,13 @@ const proofSegments = computed<ProofSegment[]>(() => {
     return out;
   }
   if (layer.value === "checks") {
-    const all = monitorsQuery.data.value ?? [];
-    const out: ProofSegment[] = [{ key: "checks", text: t("fleet.monitoring.checks.proof.checks", { n: all.length }, all.length) }];
-    const generated = all.length - operatorChecks.value.length;
-    if (generated) out.push({ key: "generated", text: t("fleet.monitoring.checks.proof.generated", { n: generated }) });
-    if (failingChecks.value.length) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failingChecks.value.length }) });
+    // Rows as the list draws them: definitions and single checks; Fleet mesh is the built-in one beside them.
+    const checks = definitions.value.length + operatorChecks.value.length;
+    const out: ProofSegment[] = [{ key: "checks", text: t("fleet.monitoring.checks.proof.checks", { n: checks }, checks) }];
+    if (definitionsUnread.value) out.push({ key: "definitions", tone: "warning", text: t("fleet.monitoring.checkDefs.proof.unread") });
+    else if (definitions.value.length) out.push({ key: "definitions", text: t("fleet.monitoring.checkDefs.proof.definitions", { n: definitions.value.length }, definitions.value.length) });
+    const failing = failingChecks.value.length + failingDefinitions.value;
+    if (failing) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing }) });
     return out;
   }
   const m = matrix.value;
@@ -384,6 +414,10 @@ const legacyCheckAttention = computed<AttentionItem[]>(() => {
 const editorOpen = ref(false);
 const editorMonitor = ref<MonitorView | undefined>();
 const editorType = ref<MonitorType | undefined>();
+/** The one "New check" flow (design 32 D1), which also edits a definition. */
+const definitionEditorOpen = ref(false);
+const definitionEditing = ref<CheckDefinitionView | undefined>();
+const definitionType = ref<MonitorType | undefined>();
 const pathSetOpen = ref(false);
 const retentionOpen = ref(false);
 
@@ -418,12 +452,29 @@ function backToSheet(): void {
   if (back) window.setTimeout(() => owned.replace({ ...owned.query(), open: back.open, path: back.path, peek: back.peek }), SHEET_EXIT_MS);
 }
 
+/** New check: one check with a source set and a target set (design 32 D1). Single checks are only edited now. */
 function openCreate(type?: MonitorType): void {
   fromSheet(() => {
-    editorMonitor.value = undefined;
-    editorType.value = type;
-    editorOpen.value = true;
+    definitionEditing.value = undefined;
+    definitionType.value = type === "http" || type === "tls" || type === "tcp" || type === "icmp" || type === "beacon" ? type : undefined;
+    definitionEditorOpen.value = true;
   });
+}
+
+function openEditDefinition(definition: CheckDefinitionView): void {
+  fromSheet(() => {
+    definitionEditing.value = definition;
+    definitionType.value = undefined;
+    definitionEditorOpen.value = true;
+  });
+}
+
+/** The saved definition opens on Checks once the list holds it. */
+async function onDefinitionSaved(saved: CheckDefinitionView): Promise<void> {
+  returnTo = null;
+  await Promise.all([definitionsQuery.refresh(), monitorsQuery.refresh()]);
+  openCheck(saved.id);
+  data.refresh();
 }
 
 function openEdit(monitor: MonitorView): void {
@@ -500,10 +551,13 @@ function refreshAll(): void {
   refreshTick.value += 1;
   if (canReadMonitors.value) {
     void monitorsQuery.refresh();
+    void definitionsQuery.refresh();
     void incidentsQuery.refresh();
     data.refresh();
   }
   if (canReadNodes.value) void nodesQuery.refresh();
+  // Group edits change what a selector resolves to and how the picker reads it.
+  if (canReadGroups.value) void groupsQuery.refresh();
 }
 
 const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQuery.refreshing.value);
@@ -584,12 +638,19 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :can-admin="canAdminMonitors"
         :window="data.window.value"
         :offered="data.offered.value"
+        :definitions="definitions"
+        :fleet-mesh="definitionsQuery.data.value?.fleet_mesh"
+        :definitions-loading="definitionsQuery.loading.value && definitionsQuery.data.value === undefined"
+        :definitions-error="definitionsQuery.error.value?.message ?? null"
+        :groups="groups"
         @window="(w) => (windowParam = w)"
         @create="openCreate"
         @edit="openEdit"
+        @edit-definition="openEditDefinition"
         @path-set="openPathSet"
         @retention="openRetention"
         @changed="refreshAll"
+        @retry-definitions="definitionsQuery.refresh"
       />
 
       <KeepaliveLayer
@@ -622,6 +683,19 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       :plan="plan"
       @close="editorOpen = false; backToSheet()"
       @saved="onCheckSaved"
+      @reload="refreshAll"
+    />
+    <DefinitionEditorSheet
+      v-if="canAdminMonitors"
+      :open="definitionEditorOpen"
+      :definition="definitionEditing"
+      :initial-type="definitionType"
+      :nodes="nodes"
+      :groups="groups"
+      :allow-broad="allowBroad"
+      :m3="m3"
+      @close="definitionEditorOpen = false; backToSheet()"
+      @saved="onDefinitionSaved"
       @reload="refreshAll"
     />
     <PathSetSheet

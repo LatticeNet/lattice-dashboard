@@ -1232,6 +1232,12 @@ export interface MonitorView {
    */
   managed_by?: string;
   /**
+   * The check definition the monitor was expanded from (design 32 D1),
+   * absent for any other owner. Its fields are the definition's; it is
+   * edited and deleted through the definition.
+   */
+  check_definition_id?: string;
+  /**
    * The optimistic version an edit names (POST /api/monitors/update, design
    * 29 D1). Absent from a server that predates editing, which is how the
    * console knows not to offer it.
@@ -1302,6 +1308,124 @@ export interface MonitorUpdateInput {
   /** Absent keeps the stored rule; an object replaces it whole, so `{}` resets it to the defaults (design 29 D13). */
   degraded?: MonitorDegradedRule;
   enabled?: boolean;
+}
+
+/* ---- Check definitions (design 32 D1, D5; lattice-sdk model/check_definitions.go) ---- */
+
+/** What an operator writes for a check definition. */
+export interface CheckDefinitionSpec {
+  name: string;
+  type: MonitorType;
+  /** The nodes that run it; a tls check runs on the control plane and takes none. */
+  sources: TargetSelector;
+  /** Target nodes, for tcp, icmp and beacon. */
+  targets: TargetSelector;
+  /** External targets: URLs for http, host:port for tcp and tls, IPv4 for icmp. */
+  addresses?: string[];
+  interval_sec: number;
+  timeout_sec: number;
+  packets?: number;
+  threshold_days?: number;
+  expect_status?: string;
+  alert?: MonitorAlertPolicy | string;
+  alert_after?: number;
+  degraded?: MonitorDegradedRule | null;
+  enabled: boolean;
+}
+
+export interface CheckDefinition extends CheckDefinitionSpec {
+  id: string;
+  /** A secret header carries its name, `secret` and `set`, never its value. */
+  headers?: MonitorHeader[];
+  /** The origins the secret headers were saved for. */
+  secrets_origins?: string[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+  updated_by?: string;
+}
+
+/** What a definition holds now: paths in the set, and targets that left it, kept paused with their runs. */
+export interface CheckDefinitionSummary {
+  monitors: number;
+  paths: number;
+  paused_targets: number;
+  paused_runs: number;
+}
+
+/** One expanded monitor; `in_set` false marks a paused target. */
+export interface CheckDefinitionMonitor {
+  monitor_id: string;
+  method: string;
+  target: string;
+  target_node?: string;
+  in_set: boolean;
+  enabled: boolean;
+  sources: string[];
+  runs: number;
+}
+
+export interface CheckDefinitionView extends CheckDefinition {
+  summary: CheckDefinitionSummary;
+  /** On a read of one definition and after a save. */
+  monitors?: CheckDefinitionMonitor[];
+}
+
+/** The path set, listed as the built-in check named Fleet mesh; it keeps its own editor. */
+export interface CheckFleetMesh {
+  name: string;
+  enabled: boolean;
+  stored: boolean;
+  version: number;
+  method: string;
+  sources: number;
+  targets: number;
+  paths: number;
+  paused_targets: number;
+}
+
+export interface CheckDefinitionList {
+  definitions: CheckDefinitionView[];
+  /** Always sent by a server that has definitions; absent only from the console's own empty answer. */
+  fleet_mesh?: CheckFleetMesh;
+}
+
+/** The body of a create (no id), an edit (id and version) and a dry run of either. Headers are operations. */
+export interface CheckDefinitionSave extends CheckDefinitionSpec {
+  id?: string;
+  version?: number;
+  headers?: MonitorHeaderEdit[];
+}
+
+export interface CheckPreviewTarget {
+  monitor_id: string;
+  /** What the method dials now; empty when nothing can be dialled, and `reason` says why. */
+  target: string;
+  target_node?: string;
+  reason?: string;
+  /** The detail behind the reason (a latency endpoint note: udp_only, no_tcp_line, ...). */
+  note?: string;
+}
+
+export interface CheckPreviewPair {
+  /** Empty for a tls check, whose source is the control plane. */
+  source: string;
+  monitor_id: string;
+  /** Why the pair would read unknown (a path reason, including packet_budget); absent when it is measured. */
+  reason?: string;
+}
+
+/** The server's dry run: exactly what a save of the same body writes and measures. */
+export interface CheckDefinitionPreview {
+  sources: string[];
+  targets: CheckPreviewTarget[];
+  pairs: CheckPreviewPair[];
+  paths: number;
+  measured: number;
+  writes: { created: string[]; updated: string[]; paused: string[]; deleted: string[] };
+  notes?: Record<string, string>;
+  /** Other definitions whose paths the save would pause or resume: the packet budget is shared. */
+  also_changes?: string[];
 }
 
 /* ---- Paths (design 29 D5): one source probing one target with one method ---- */

@@ -68,3 +68,55 @@ export function monitoringQuerySchema(options: MonitoringQueryOptions): QuerySch
     text: (m) => [m.name, m.id, m.type, m.target, ...(m.assign_all ? [] : nodeNames(m))],
   };
 }
+
+/**
+ * What the query reads off one row of the Checks list, whatever the row is
+ * (design 32 D1): a check definition, Fleet mesh or a single check. `nodes`
+ * are the names of the nodes it runs on, absent for the control plane.
+ */
+export interface CheckRowFacts {
+  name: string;
+  id: string;
+  type: string;
+  targets: string[];
+  nodes?: string[];
+  interval?: number;
+  timeout?: number;
+  enabled: boolean;
+  managed: boolean;
+  all: boolean;
+  health: MonitorHealth["kind"];
+}
+
+/** The same fields as monitoringQuerySchema, over every kind of row. */
+export function checkRowsQuerySchema<T>(facts: (row: T) => CheckRowFacts): QuerySchema<T> {
+  const fields: QueryField<T>[] = [
+    { key: "name", type: "string", hint: hint("name"), get: (r) => facts(r).name, suggest: (rows) => rows.map((r) => facts(r).name) },
+    { key: "id", type: "string", hint: hint("id"), get: (r) => facts(r).id },
+    { key: "type", type: "enum", hint: hint("type"), values: MONITOR_TYPES, get: (r) => facts(r).type },
+    { key: "target", type: "string", hint: hint("target"), get: (r) => facts(r).targets, sort: (r) => facts(r).targets[0] },
+    {
+      key: "status",
+      aliases: ["health"],
+      type: "enum",
+      hint: hint("status"),
+      values: MONITOR_HEALTH_KINDS,
+      valueAliases: { down: "failing", ok: "up" },
+      get: (r) => facts(r).health,
+    },
+    { key: "node", aliases: ["nodes"], type: "list", hint: hint("node"), get: (r) => facts(r).nodes ?? [], suggest: (rows) => rows.flatMap((r) => facts(r).nodes ?? []), sort: false },
+    { key: "checks", type: "number", hint: hint("checks"), get: (r) => facts(r).nodes?.length },
+    { key: "interval", aliases: ["every"], type: "duration", hint: hint("interval"), get: (r) => facts(r).interval },
+    { key: "timeout", type: "duration", hint: hint("timeout"), get: (r) => facts(r).timeout },
+    { key: "enabled", type: "bool", flag: true, hint: hint("enabled"), get: (r) => facts(r).enabled, sort: false },
+    { key: "managed", type: "bool", flag: true, hint: hint("managed"), get: (r) => facts(r).managed, sort: false },
+    { key: "all", aliases: ["everywhere"], type: "bool", flag: true, hint: hint("all"), get: (r) => facts(r).all, sort: false },
+  ];
+  return {
+    fields,
+    text: (r) => {
+      const f = facts(r);
+      return [f.name, f.id, f.type, ...f.targets, ...(f.all ? [] : (f.nodes ?? []))];
+    },
+  };
+}

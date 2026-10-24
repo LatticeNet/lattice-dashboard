@@ -1,11 +1,15 @@
 <script setup lang="ts">
 /**
- * Monitoring's Checks layer (design 29 D7, D9): every check in one list,
- * your checks first and the path set's generated checks grouped under it,
- * read-only (their paths are paused through the path set). A row opens the
- * check sheet on ?open=: its paths, one per source, and the path chart of the
- * one chosen. Create and edit open the editor the page hosts, so Overview and
- * Paths can open it too. Below the list, how long history is kept.
+ * Monitoring's Checks layer (design 29 D7, D9, design 32 D1): every check in
+ * one list. Your checks come first: check definitions (one check with a
+ * source set and a target set, with their path and paused-target counts) and
+ * single checks side by side; then the built-in Fleet mesh, the path set,
+ * which opens its own editor. A monitor a definition or the path set
+ * generated is not a row of its own. A single check's row opens its sheet on
+ * ?open=: its paths, one per source, and the path chart of the one chosen; a
+ * definition's row opens the definition's sheet on the same parameter. Create
+ * and edit open the editors the page hosts, so Overview and the Network view
+ * can open them too. Below the list, how long history is kept.
  *
  * A link that names a monitor (?open=, the old /monitoring/:id) or a node
  * (?node=, the node page's link) lands here.
@@ -13,9 +17,9 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMediaQuery } from "@vueuse/core";
-import { Activity, Globe, History, LockKeyhole, Pencil, RadioTower, Settings2, Trash2, X } from "lucide-vue-next";
+import { Activity, CircleAlert, Globe, History, LockKeyhole, Network, Pencil, RadioTower, Settings2, Trash2, Waypoints, X } from "lucide-vue-next";
 
-import { api, type MonitorSettings, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
+import { api, type CheckDefinitionView, type CheckFleetMesh, type GroupView, type MonitorSettings, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
 import { formatBytes, formatRelativeTime, shortId } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -37,12 +41,14 @@ import StatusDot from "@/components/common/StatusDot.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+import DefinitionSheet from "./DefinitionSheet.vue";
 import PathDetail from "./PathDetail.vue";
-import { CHECK_GROUP_ORDER, PACKETS_DEFAULT, canEditCheck, checkGroup, checkSourceSummary, latestCertExpiry, multiPacket, sheetSource, withPathVerdict, type PickedSource } from "./checksModel";
+import { PACKETS_DEFAULT, canEditCheck, checkSourceSummary, latestCertExpiry, multiPacket, sheetSource, withPathVerdict, type PickedSource } from "./checksModel";
+import { CHECK_ROW_GROUP_ORDER, checkRowGroup, checkRowMethod, checkRowName, checkRows, describeSelector, pathsHealth, type CheckRow, type SelectorWords } from "./definitionsModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
-import { MONITORING_QUERY_EXAMPLES, monitoringQuerySchema } from "./monitoringQuery";
+import { MONITORING_QUERY_EXAMPLES, checkRowsQuerySchema, type CheckRowFacts } from "./monitoringQuery";
 import { isServerEvaluated } from "./monitorTypeModel";
 import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
@@ -59,15 +65,24 @@ const props = defineProps<{
   window: MonitorWindow;
   /** The windows the page offers, for the sheet's own window control. */
   offered: MonitorWindow[];
+  /** Check definitions (design 32 D1) and Fleet mesh, from the definitions read. */
+  definitions: CheckDefinitionView[];
+  fleetMesh?: CheckFleetMesh;
+  definitionsLoading: boolean;
+  /** Why the definitions read failed, while it has not answered since. */
+  definitionsError?: string | null;
+  groups: GroupView[];
 }>();
 
 const emit = defineEmits<{
   create: [type?: "http" | "tls" | "tcp"];
   edit: [monitor: MonitorView];
+  editDefinition: [definition: CheckDefinitionView];
   pathSet: [];
   retention: [];
   changed: [];
   window: [window: MonitorWindow];
+  retryDefinitions: [];
 }>();
 
 const { t } = useI18n();
@@ -78,7 +93,8 @@ const wide = useMediaQuery("(min-width: 768px)");
 
 const all = computed(() => props.monitorsQuery.data.value ?? []);
 const operator = computed(() => all.value.filter((m) => !m.managed_by));
-const generated = computed(() => all.value.filter((m) => !!m.managed_by));
+/** The rows: definitions and single checks, then Fleet mesh; generated monitors are represented by those. */
+const rows = computed<CheckRow[]>(() => checkRows(all.value, props.definitions, props.fleetMesh));
 
 function nodeName(id: string): string {
   if (!id) return t("fleet.monitoring.result.controlPlane");
@@ -96,6 +112,119 @@ function healthOf(monitor: MonitorView): MonitorHealth {
   return withPathVerdict(monitorHealth(monitor, monitor.latest, props.monitorsQuery.lastUpdated.value ?? Date.now()), pathsByMonitor.value.get(monitor.id) ?? [], monitor.latest);
 }
 
+/** Each definition's monitors, by the definition id the monitors list carries. */
+const monitorsByDefinition = computed(() => {
+  const out = new Map<string, MonitorView[]>();
+  for (const m of all.value) if (m.check_definition_id) out.set(m.check_definition_id, [...(out.get(m.check_definition_id) ?? []), m]);
+  return out;
+});
+
+/** A definition's paths in the matrix: the paths of the monitors it expanded into. */
+function definitionPaths(definitionId: string): PathItem[] {
+  return (monitorsByDefinition.value.get(definitionId) ?? []).flatMap((m) => pathsByMonitor.value.get(m.id) ?? []);
+}
+
+/** Fleet mesh's paths: the matrix's generated cells. */
+const meshPaths = computed(() => (props.data.matrix.value?.paths ?? []).filter((p) => p.managed));
+
+function rowHealth(row: CheckRow): MonitorHealth {
+  const now = props.monitorsQuery.lastUpdated.value ?? Date.now();
+  switch (row.kind) {
+    case "check":
+      return healthOf(row.monitor);
+    case "definition":
+      return pathsHealth(definitionPaths(row.definition.id), row.definition.enabled, now);
+    case "fleet":
+      return pathsHealth(meshPaths.value, row.mesh.enabled, now);
+  }
+}
+
+function nameOfGroup(id: string): string {
+  return props.groups.find((g) => g.id === id)?.name || id;
+}
+
+/** A selector as the row's From and To read it: "the whole fleet", "group edge, jp-1", "the whole fleet except hk-2". */
+function selectorLabel(sel: CheckDefinitionView["sources"]): string {
+  return describeSelector(sel, props.nodes, props.groups, selectorWords.value);
+}
+
+const selectorWords = computed<SelectorWords>(() => ({
+  fleet: t("selector.wholeFleetInline"),
+  group: (name) => t("fleet.monitoring.checkDefs.sheet.group", { name }),
+  except: (base, names) => t("fleet.monitoring.checkDefs.sheet.except", { base, names }),
+}));
+
+function definitionTargets(def: CheckDefinitionView): string {
+  const nodes = selectorLabel(def.targets);
+  const addresses = def.addresses ?? [];
+  const shown = addresses.length > 2 ? `${addresses.slice(0, 2).join(", ")} +${addresses.length - 2}` : addresses.join(", ");
+  return [nodes, shown].filter(Boolean).join(", ");
+}
+
+/** The names of the nodes a row runs on, for the query's node field; undefined for the control plane. */
+function rowNodes(row: CheckRow): string[] | undefined {
+  switch (row.kind) {
+    case "check":
+      if (isServerEvaluated(row.monitor.type)) return undefined;
+      return row.monitor.assign_all ? props.nodes.map((n) => n.name || n.id) : (row.monitor.node_ids ?? []).map(nodeName);
+    case "definition": {
+      if (row.definition.type === "tls") return undefined;
+      const ids = new Set((monitorsByDefinition.value.get(row.definition.id) ?? []).flatMap((m) => m.node_ids ?? []));
+      return [...ids].map(nodeName);
+    }
+    case "fleet":
+      return [...new Set(meshPaths.value.map((p) => p.sourceName))];
+  }
+}
+
+function rowFacts(row: CheckRow): CheckRowFacts {
+  switch (row.kind) {
+    case "check":
+      return {
+        name: row.monitor.name || row.monitor.id,
+        id: row.monitor.id,
+        type: String(row.monitor.type),
+        targets: [row.monitor.target],
+        nodes: rowNodes(row),
+        interval: row.monitor.interval_sec,
+        timeout: row.monitor.timeout_sec,
+        enabled: row.monitor.enabled,
+        managed: false,
+        all: !!row.monitor.assign_all,
+        health: rowHealth(row).kind,
+      };
+    case "definition":
+      return {
+        name: row.definition.name,
+        id: row.definition.id,
+        type: row.definition.type,
+        targets: [...(row.definition.targets.nodes ?? []).map(nodeName), ...(row.definition.targets.groups ?? []).map(nameOfGroup), ...(row.definition.addresses ?? [])],
+        nodes: rowNodes(row),
+        interval: row.definition.interval_sec,
+        timeout: row.definition.timeout_sec,
+        enabled: row.definition.enabled,
+        managed: false,
+        all: !!row.definition.sources.all,
+        health: rowHealth(row).kind,
+      };
+    case "fleet":
+      return {
+        name: row.mesh.name,
+        id: row.key,
+        type: row.mesh.method,
+        targets: [...new Set(meshPaths.value.map((p) => p.targetName))],
+        nodes: rowNodes(row),
+        // Fleet mesh's schedule lives in its own editor; the list does not claim one.
+        interval: undefined,
+        timeout: undefined,
+        enabled: row.mesh.enabled,
+        managed: true,
+        all: false,
+        health: rowHealth(row).kind,
+      };
+  }
+}
+
 /* ---- The node filter (?node=, from the node page) ---- */
 
 const nodeFilter = bindQueryParam(props.owned, "node", {
@@ -104,29 +233,39 @@ const nodeFilter = bindQueryParam(props.owned, "node", {
 });
 
 const sorted = computed(() =>
-  [...all.value].sort((a, b) => {
-    const group = CHECK_GROUP_ORDER.indexOf(checkGroup(a)) - CHECK_GROUP_ORDER.indexOf(checkGroup(b));
+  [...rows.value].sort((a, b) => {
+    const group = CHECK_ROW_GROUP_ORDER.indexOf(checkRowGroup(a)) - CHECK_ROW_GROUP_ORDER.indexOf(checkRowGroup(b));
     if (group !== 0) return group;
-    const rank = healthRank(healthOf(a)) - healthRank(healthOf(b));
+    const rank = healthRank(rowHealth(a)) - healthRank(rowHealth(b));
     if (rank !== 0) return rank;
-    return (a.name || a.id).localeCompare(b.name || b.id);
+    return checkRowName(a).localeCompare(checkRowName(b));
   }),
 );
+
+/** Whether a row runs on, or measures, the node the node page linked with. */
+function rowTouchesNode(row: CheckRow, id: string): boolean {
+  switch (row.kind) {
+    case "check":
+      return !isServerEvaluated(row.monitor.type) && (!!row.monitor.assign_all || (row.monitor.node_ids ?? []).includes(id));
+    case "definition":
+      return (monitorsByDefinition.value.get(row.definition.id) ?? []).some((m) => (m.node_ids ?? []).includes(id) || m.target_node === id);
+    case "fleet":
+      return meshPaths.value.some((p) => p.source === id || p.targetNode === id);
+  }
+}
 
 const listed = computed(() => {
   const id = nodeFilter.value;
   if (!id) return sorted.value;
-  return sorted.value.filter((m) => !isServerEvaluated(m.type) && (m.assign_all || (m.node_ids ?? []).includes(id)));
+  return sorted.value.filter((r) => rowTouchesNode(r, id));
 });
 
 /* ---- The query field (?monitors.q=, as before) ---- */
 
-const querySchema = monitoringQuerySchema({
-  health: (m) => healthOf(m),
-  allNodeNames: () => props.nodes.map((n) => n.name || n.id),
-  nodeName,
-  serverEvaluated: (m) => isServerEvaluated(m.type),
-});
+// Each row's facts once per change: the query reads about a dozen fields per row, and a
+// definition's health walks all of its paths.
+const factsByKey = computed(() => new Map(listed.value.map((r) => [r.key, rowFacts(r)])));
+const querySchema = checkRowsQuerySchema<CheckRow>((row) => factsByKey.value.get(row.key) ?? rowFacts(row));
 const storedQuery = bindQueryParam<string>(props.owned, "monitors.q", {
   parse: (raw) => (typeof raw === "string" ? raw : ""),
   format: (value) => (value.trim() ? value : undefined),
@@ -145,6 +284,18 @@ const attention = computed<AttentionItem[]>(() => {
     proof: total > 1 ? t("fleet.monitoring.status.failingOn", { n: failing, total }) : t("fleet.monitoring.status.failing"),
     action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(monitor.id) },
   }));
+  // A definition reads failing from its paths: name it, with how many of them are down.
+  for (const def of props.definitions) {
+    const state = pathsHealth(definitionPaths(def.id), def.enabled, Date.now());
+    if (state.kind !== "failing") continue;
+    items.push({
+      key: `failing:${def.id}`,
+      tone: "danger",
+      claim: t("fleet.monitoring.attention.failing", { name: def.name }),
+      proof: t("fleet.monitoring.checkDefs.list.downOf", { n: state.failing, total: state.total }),
+      action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(def.id) },
+    });
+  }
   for (const monitor of operator.value) {
     const state = healthOf(monitor);
     if (state.kind !== "stale") continue;
@@ -161,8 +312,9 @@ const attention = computed<AttentionItem[]>(() => {
 
 /* ---- The table ---- */
 
-function statusView(monitor: MonitorView): { text: string; detail?: string; title?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
-  const state = healthOf(monitor);
+function statusView(row: CheckRow): { text: string; detail?: string; title?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
+  const state = rowHealth(row);
+  const monitor = row.kind === "check" ? row.monitor : undefined;
   switch (state.kind) {
     case "disabled":
       return { text: t("fleet.monitoring.checks.paused"), textClass: "text-muted-foreground" };
@@ -196,7 +348,16 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; titl
         : { text: t("fleet.monitoring.checks.unmeasured"), detail: reasonShort(state.reason), title: reasonText(state.reason), textClass: "text-muted-foreground" };
     case "up": {
       // A certificate check leads with the days left, the reason it exists; others with the newest latency.
-      const days = certDaysLeft(monitor);
+      // A definition or Fleet mesh says how many of its paths are up and how many measure nothing yet.
+      if (state.of !== undefined && state.of > state.total) {
+        return {
+          text: t("fleet.monitoring.checks.upOn", { n: state.total, total: state.of }),
+          detail: t("fleet.monitoring.checks.unknownCount", { n: state.of - state.total }),
+          tone: "success",
+          textClass: "text-foreground",
+        };
+      }
+      const days = monitor ? certDaysLeft(monitor) : undefined;
       const detail = days !== undefined ? (days < 0 ? t("fleet.monitoring.checks.certExpired") : t("fleet.monitoring.checks.certLeft", { n: days })) : state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined;
       return { text: t("fleet.monitoring.status.up"), detail, tone: "success", textClass: "text-foreground" };
     }
@@ -223,9 +384,63 @@ function failureOn(monitor: MonitorView | undefined, source: string): string | u
  * starts with: under the Path set group it says nothing, and on a phone it
  * pushed the part that differs out of the cell.
  */
-function shownName(monitor: MonitorView): string {
-  const name = monitor.name || monitor.id;
-  return monitor.managed_by && name.startsWith("Latency to ") ? name.slice("Latency to ".length) : name;
+function shownName(row: CheckRow): string {
+  return checkRowName(row);
+}
+
+/** The line under a definition's or Fleet mesh's name: its paths and the targets it keeps paused. */
+function nameDetail(row: CheckRow): string | undefined {
+  if (row.kind === "definition") {
+    const s = row.definition.summary;
+    const paths = t("fleet.monitoring.checkDefs.list.paths", { n: s.paths }, s.paths);
+    return s.paused_targets ? `${paths} · ${t("fleet.monitoring.checkDefs.list.paused", { n: s.paused_targets }, s.paused_targets)}` : paths;
+  }
+  if (row.kind === "fleet") {
+    const paths = t("fleet.monitoring.checkDefs.list.paths", { n: row.mesh.paths }, row.mesh.paths);
+    const note = t("fleet.monitoring.checkDefs.list.builtIn");
+    return row.mesh.paused_targets ? `${note} · ${paths} · ${t("fleet.monitoring.checkDefs.list.paused", { n: row.mesh.paused_targets }, row.mesh.paused_targets)}` : `${note} · ${paths}`;
+  }
+  return undefined;
+}
+
+function rowTarget(row: CheckRow): string {
+  switch (row.kind) {
+    case "check":
+      return row.monitor.target;
+    case "definition":
+      return definitionTargets(row.definition);
+    case "fleet":
+      return t("fleet.monitoring.checkDefs.list.meshTargets", { n: row.mesh.targets }, row.mesh.targets);
+  }
+}
+
+function rowAssignment(row: CheckRow): string {
+  switch (row.kind) {
+    case "check":
+      return assignmentLabel(row.monitor);
+    case "definition":
+      return row.definition.type === "tls" ? t("fleet.monitoring.assignment.controlPlane") : selectorLabel(row.definition.sources);
+    case "fleet":
+      return t("fleet.monitoring.assignment.nodeCount", { count: row.mesh.sources }, row.mesh.sources);
+  }
+}
+
+function rowInterval(row: CheckRow): string | undefined {
+  if (row.kind === "fleet") return undefined;
+  const interval = row.kind === "check" ? row.monitor.interval_sec : row.definition.interval_sec;
+  const timeout = row.kind === "check" ? row.monitor.timeout_sec : row.definition.timeout_sec;
+  return t("fleet.monitoring.definitions.interval", { interval: cadence(interval), timeout: cadence(timeout) });
+}
+
+/** The row a sheet shows, by the open id: a definition's id, or a monitor's. */
+function rowKeyOf(openId: string | null | undefined): string | null {
+  if (!openId) return null;
+  return openId.startsWith("chk_") ? `def:${openId}` : openId;
+}
+
+function openRow(row: CheckRow, el?: HTMLElement): void {
+  if (row.kind === "fleet") emit("pathSet");
+  else sheet.open(row.kind === "definition" ? row.definition.id : row.monitor.id, el);
 }
 
 function cadence(seconds: number): string {
@@ -248,14 +463,14 @@ function assignmentLabel(monitor: MonitorView): string {
   return withUnmeasured(paused ? t("fleet.monitoring.checks.withPaused", { base, n: paused }) : base);
 }
 
-const columns = computed<DataTableColumn<MonitorView>[]>(() => [
-  // Wraps on a phone: thirty generated names share "Latency to", and a cut name hides the part that differs.
-  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, value: (m) => m.name || m.id },
-  { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (m) => healthRank(healthOf(m)) },
-  { key: "type", label: t("fleet.monitoring.checks.table.method"), sortable: true, searchable: true },
-  { key: "target", label: t("fleet.monitoring.table.target"), searchable: true },
-  { key: "assignment", label: t("fleet.monitoring.checks.table.from"), value: (m) => assignmentLabel(m) },
-  { key: "interval", label: t("fleet.monitoring.table.every"), sortable: true, value: (m) => m.interval_sec },
+const columns = computed<DataTableColumn<CheckRow>[]>(() => [
+  // A long name wraps inside a capped column rather than squeezing To and From.
+  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, class: "max-w-80", value: (r) => checkRowName(r) },
+  { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (r) => healthRank(rowHealth(r)) },
+  { key: "type", label: t("fleet.monitoring.checks.table.method"), sortable: true, searchable: true, value: (r) => checkRowMethod(r) },
+  { key: "target", label: t("fleet.monitoring.checkDefs.list.to"), searchable: true, value: (r) => rowTarget(r) },
+  { key: "assignment", label: t("fleet.monitoring.checks.table.from"), value: (r) => rowAssignment(r) },
+  { key: "interval", label: t("fleet.monitoring.table.every"), sortable: true, value: (r) => (r.kind === "check" ? r.monitor.interval_sec : r.kind === "definition" ? r.definition.interval_sec : 0) },
   { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
 
@@ -295,7 +510,14 @@ const deleteImpact = computed(() => {
   return lines;
 });
 
-function menuFor(monitor: MonitorView): RowMenuItem[] {
+function menuFor(row: CheckRow): RowMenuItem[] {
+  if (row.kind === "fleet") {
+    return [{ key: "pathset", label: t("fleet.monitoring.checkDefs.list.editMesh"), icon: Settings2, hidden: !props.canAdmin, run: () => emit("pathSet") }];
+  }
+  if (row.kind === "definition") {
+    return [{ key: "edit", label: t("fleet.monitoring.checks.actions.edit"), icon: Pencil, hidden: !props.canAdmin, run: () => emit("editDefinition", row.definition) }];
+  }
+  const monitor = row.monitor;
   if (monitor.managed_by) {
     return [{ key: "pathset", label: t("fleet.monitoring.paths.sheet.editPathSet"), icon: Settings2, hidden: !props.canAdmin, run: () => emit("pathSet") }];
   }
@@ -317,7 +539,11 @@ function menuFor(monitor: MonitorView): RowMenuItem[] {
 /* ---- The check sheet ---- */
 
 const sheet = bindRouteOpen(props.owned);
-const selected = computed(() => (sheet.openId.value ? all.value.find((m) => m.id === sheet.openId.value) : undefined));
+/** A definition's id opens the definition's sheet; a monitor's, the check sheet. */
+const definitionOpen = computed(() => !!sheet.openId.value?.startsWith("chk_"));
+const openDefinition = computed(() => (definitionOpen.value ? props.definitions.find((d) => d.id === sheet.openId.value) : undefined));
+const openDefinitionPaths = computed(() => (openDefinition.value ? definitionPaths(openDefinition.value.id) : []));
+const selected = computed(() => (sheet.openId.value && !definitionOpen.value ? all.value.find((m) => m.id === sheet.openId.value) : undefined));
 
 /**
  * The open check's M2a settings (design 29): its target node, packets,
@@ -432,7 +658,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
 
     <!-- Nothing at all yet: one sentence and the watches worth starting with. -->
     <section
-      v-if="monitorsQuery.data.value !== undefined && all.length === 0"
+      v-if="monitorsQuery.data.value !== undefined && !definitionsLoading && !definitionsError && rows.length === 0"
       class="rounded-lg border border-dashed border-border px-5 py-8 text-center"
       aria-labelledby="checks-empty"
     >
@@ -457,7 +683,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       </div>
     </section>
 
-    <div v-if="nodeFilter && all.length" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+    <div v-if="nodeFilter && rows.length" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
       <button
         type="button"
         class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-foreground hover:bg-primary/20 pointer-coarse:min-h-11"
@@ -467,11 +693,11 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         <span class="truncate">{{ $t('fleet.monitoring.nodeFilter.chip', { node: nodeName(nodeFilter) }) }}</span>
         <X class="size-3 shrink-0" aria-hidden="true" />
       </button>
-      <span class="tabular">{{ $t('fleet.monitoring.nodeFilter.showing', { shown: listed.length, total: all.length }) }}</span>
+      <span class="tabular">{{ $t('fleet.monitoring.nodeFilter.showing', { shown: listed.length, total: rows.length }) }}</span>
     </div>
 
     <ListQueryBar
-      v-if="all.length"
+      v-if="rows.length"
       v-model="queryText"
       class="max-w-3xl"
       storage-key="monitors"
@@ -483,14 +709,25 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :examples="queryExamples"
     />
 
+    <div
+      v-if="definitionsError && !definitions.length"
+      role="alert"
+      class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border px-3 py-2 text-sm"
+      data-testid="definitions-failed"
+    >
+      <CircleAlert class="size-4 shrink-0 text-destructive" aria-hidden="true" />
+      <span class="min-w-0 flex-1 break-words">{{ $t('fleet.monitoring.checkDefs.list.failed') }} <span class="text-muted-foreground">{{ definitionsError }}</span></span>
+      <Button variant="outline" size="sm" type="button" @click="emit('retryDefinitions')">{{ $t('common.actions.retry') }}</Button>
+    </div>
+
     <DataTable
-      v-if="!(monitorsQuery.data.value !== undefined && all.length === 0)"
+      v-if="!(monitorsQuery.data.value !== undefined && !definitionsLoading && !definitionsError && rows.length === 0)"
       state-key="monitors"
       :columns="columns"
       :rows="query.rows.value"
-      :row-key="(m) => m.id"
-      :group-key="(m) => checkGroup(m)"
-      :group-order="CHECK_GROUP_ORDER"
+      :row-key="(r) => r.key"
+      :group-key="(r) => checkRowGroup(r)"
+      :group-order="CHECK_ROW_GROUP_ORDER"
       :loading="monitorsQuery.loading.value"
       :error="monitorsQuery.error.value ?? null"
       :has-data="monitorsQuery.data.value !== undefined"
@@ -498,21 +735,24 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :external-sort="query.sorted.value"
       :class="query.staleRows.value && 'opacity-50'"
       :inert="query.staleRows.value || undefined"
-      :row-click="(m, el) => sheet.open(m.id, el)"
-      :active-row-id="sheet.openId.value"
+      :row-click="(r, el) => openRow(r, el)"
+      :active-row-id="rowKeyOf(sheet.openId.value)"
       data-testid="checks-table"
       @retry="monitorsQuery.refresh"
       @sort="queryText = withoutSorts(queryText)"
     >
       <template #group="{ group }">
-        <span class="font-medium text-foreground">{{ $t(`fleet.monitoring.checks.group.${group.key}`) }}</span>
+        <span class="font-medium text-foreground">{{ $t(`fleet.monitoring.checkDefs.list.group.${group.key}`) }}</span>
         <span class="font-mono tabular text-muted-foreground">{{ group.rows.length }}</span>
-        <span v-if="group.key === 'pathset'" class="truncate text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.group.pathsetNote') }}</span>
+        <span v-if="group.key === 'builtin'" class="truncate text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.list.group.builtinNote') }}</span>
       </template>
       <template #cell-name="{ row }">
         <span class="flex min-w-0 items-center gap-2">
-          <Activity class="size-4 shrink-0 text-muted-foreground max-md:hidden" aria-hidden="true" />
-          <span class="font-medium md:truncate max-md:break-words" :title="row.name || row.id">{{ shownName(row) }}</span>
+          <component :is="row.kind === 'check' ? Activity : row.kind === 'fleet' ? Network : Waypoints" class="size-4 shrink-0 text-muted-foreground max-md:hidden" aria-hidden="true" />
+          <span class="min-w-0">
+            <span class="block font-medium md:truncate max-md:break-words" :title="shownName(row)">{{ shownName(row) }}</span>
+            <span v-if="nameDetail(row)" class="block text-xs text-muted-foreground tabular" data-testid="check-row-detail">{{ nameDetail(row) }}</span>
+          </span>
         </span>
       </template>
       <template #cell-status="{ row }">
@@ -523,20 +763,20 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         </span>
       </template>
       <template #cell-type="{ row }">
-        <span class="font-mono text-xs uppercase">{{ row.type }}</span>
-        <span v-if="row.type === 'tls'" class="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.threshold_days ?? 14 }) }}</span>
+        <span class="font-mono text-xs uppercase">{{ checkRowMethod(row) }}</span>
+        <span v-if="row.kind === 'check' && row.monitor.type === 'tls'" class="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.monitor.threshold_days ?? 14 }) }}</span>
       </template>
       <template #cell-target="{ row }">
-        <span class="font-mono text-xs">{{ row.target }}</span>
+        <span :class="cn('text-xs break-words', row.kind === 'check' && 'font-mono')">{{ rowTarget(row) }}</span>
       </template>
       <template #cell-assignment="{ row }">
-        <span class="text-xs text-muted-foreground">{{ assignmentLabel(row) }}</span>
+        <span class="text-xs break-words text-muted-foreground">{{ rowAssignment(row) }}</span>
       </template>
       <template #cell-interval="{ row }">
-        <span class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.interval', { interval: cadence(row.interval_sec), timeout: cadence(row.timeout_sec) }) }}</span>
+        <span class="whitespace-nowrap text-xs text-muted-foreground">{{ rowInterval(row) ?? '' }}</span>
       </template>
       <template #cell-actions="{ row }">
-        <RowMenu :name="row.name || row.id" :items="menuFor(row)" />
+        <RowMenu :name="checkRowName(row)" :items="menuFor(row)" />
       </template>
       <template v-if="nodeFilter" #empty>
         <EmptyState :icon="RadioTower" :title="$t('fleet.monitoring.nodeFilter.emptyTitle', { node: nodeName(nodeFilter) })" :description="$t('fleet.monitoring.nodeFilter.emptyDescription')">
@@ -563,8 +803,27 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
     </section>
 
     <!-- One check: its paths, and the chart of the source chosen. -->
+    <!-- One check definition: its sets, its paths, its paused targets. -->
+    <DefinitionSheet
+      :open="definitionOpen"
+      :definition="openDefinition"
+      :open-id="sheet.openId.value"
+      :list-loading="definitionsLoading"
+      :list-error="definitionsError && !definitions.length ? definitionsError : null"
+      :paths="openDefinitionPaths"
+      :nodes="nodes"
+      :groups="groups"
+      :can-admin="canAdmin"
+      :owned="owned"
+      :return-focus="sheet.returnFocus"
+      @close="sheet.close"
+      @edit="(d) => emit('editDefinition', d)"
+      @retry="emit('retryDefinitions')"
+      @changed="emit('changed')"
+    />
+
     <ObjectSheet
-      :open="!!sheet.openId.value"
+      :open="!!sheet.openId.value && !definitionOpen"
       :title="selected?.name || selected?.id || sheet.openId.value || ''"
       :subtitle="selected ? `${selected.type.toUpperCase()} · ${selected.target}` : undefined"
       :state="sheetState"

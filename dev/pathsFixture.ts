@@ -634,7 +634,11 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
     for (const source of sources) {
       const paused = (check.paused_node_ids ?? []).includes(source);
       const shape = operatorShape(check, source, paused);
-      const reason = paused ? "source_paused" : operatorReason(check, source);
+      // A check definition's target with nothing to dial reads that first, as monitor_paths.go judges it
+      // (pathStateOf: not_probeable, or a beacon that is off), then a pair the sweep paused over the packet
+      // budget says so (design 32 D1).
+      const undialable = check.check_definition_id && check.target_node && !check.target ? (check.type === "beacon" ? "beacon_not_enabled" : "not_probeable") : undefined;
+      const reason = undialable ?? (paused ? (check.check_definition_id ? "packet_budget" : "source_paused") : operatorReason(check, source));
       out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type }, reason, undefined, check.degraded ?? undefined));
     }
   }

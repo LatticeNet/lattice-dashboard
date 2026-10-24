@@ -60,6 +60,10 @@ import type {
   MonitorCreateInput,
   LatencyProbeConfig,
   LatencyProbePlan,
+  CheckDefinitionList,
+  CheckDefinitionPreview,
+  CheckDefinitionSave,
+  CheckDefinitionView,
   LatencyRollups,
   LatencySeries,
   LatencyWindow,
@@ -584,6 +588,22 @@ export const api = {
     settings: {
       get: (opts?: RequestOptions) => http.get<MonitorSettings>("/api/monitors/settings", undefined, opts),
       update: (input: { version: number; fine_retention_days: number }) => http.post<MonitorSettings>("/api/monitors/settings/update", input),
+    },
+    /** Design 32 D1: check definitions, one check with a source set and a target set. */
+    definitions: {
+      list: (opts?: RequestOptions) => http.get<CheckDefinitionList>("/api/monitors/definitions", undefined, opts),
+      get: (id: string, opts?: RequestOptions) => http.get<CheckDefinitionView>("/api/monitors/definitions", { id }, opts),
+      create: (input: CheckDefinitionSave) => http.post<CheckDefinitionView>("/api/monitors/definitions", input),
+      /** 409 when someone saved since `version` was read. */
+      update: (input: CheckDefinitionSave) => http.post<CheckDefinitionView>("/api/monitors/definitions/update", input),
+      /** What a save of the same body would write and measure; writes nothing. */
+      preview: (input: CheckDefinitionSave, opts?: RequestOptions) => http.post<CheckDefinitionPreview>("/api/monitors/definitions/preview", input, opts),
+      /** Deletes the definition and every monitor named, with history; 409 when the list no longer matches. */
+      delete: (input: { id: string; version: number; monitor_ids: string[] }) =>
+        http.post<{ ok: boolean; deleted: string[]; runs: number }>("/api/monitors/definitions/delete", input),
+      /** Deletes paused targets with their history; 409 for one still in the set. */
+      forget: (input: { id: string; monitor_ids: string[] }) =>
+        http.post<{ ok: boolean; forgotten: string[]; runs: number }>("/api/monitors/definitions/forget", input),
     },
     latency: {
       plan: (opts?: RequestOptions) => http.get<LatencyProbePlan>("/api/monitors/latency", undefined, opts),

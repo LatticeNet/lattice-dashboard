@@ -56,7 +56,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, BeaconPlanRequest, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, PathsResponse, Principal } from "@/lib/api/index";
+import type { AuditEvent, BeaconPlanRequest, CheckDefinition, CheckDefinitionSave, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorHeader, MonitorUpdateInput, MonitorView, MonitorWindow, PathSeriesQuery, PathsResponse, Principal } from "@/lib/api/index";
 import { canonicalHeaderName, monitorOrigin } from "@/views/fleet/checkRulesModel";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
@@ -89,6 +89,7 @@ import { M2B, REPLANS, beaconShape, runsBeaconClient } from "./beaconShapes";
 import { appliedBeaconApproval, beaconReplansFor, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
 import { GOLDEN, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
+import { SEED_LEFT_TARGET, definitionView, fleetMeshOf, planDefinition, runsOf, seedDefinitions } from "./definitionsFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
 
 export * from "@/lib/api/index";
@@ -236,6 +237,59 @@ function missingRoute<T>(path: string): Promise<T> {
   });
 }
 const pathsOld = () => PATHS_SHAPE === "old";
+
+function refuse<T>(status: number, code: string, message: string): Promise<T> {
+  return delay(undefined).then(() => {
+    throw new ApiError(status, code, message);
+  });
+}
+
+/**
+ * Paths renders also answer design 32's check definitions
+ * (dev/definitionsFixture.ts): two seeded definitions whose monitors join
+ * the monitors list, as the server's expansion writes them, so the matrix
+ * draws their paths. `?defs=none` starts with none, `?fail=definitions` fails
+ * the read, `?fail=defsave` refuses a save the way the server refuses a
+ * broad selector from a restricted token, and `?paths=old` answers the
+ * routes 404, as a server from before design 32 does.
+ */
+const definitionNodes = () => nodes.map((n) => ({ id: n.id, name: n.name ?? n.id, public_ip: n.public_ip, online: n.online, probe_methods: n.probe_methods, probe_refusals: n.probe_refusals }));
+const heldBy = (id: string) => monitors.filter((m) => m.check_definition_id === id);
+const planOf = (def: CheckDefinition) => planDefinition(def, heldBy(def.id), definitionNodes(), GROUPS, new Date().toISOString());
+function writeDefinition(def: CheckDefinition) {
+  const plan = planOf(def);
+  monitors = [...monitors.filter((m) => m.check_definition_id !== def.id), ...plan.monitors];
+}
+/** A definition as reads carry it: secret header values never leave the server. */
+function shownDefinition(def: CheckDefinition, withMonitors: boolean) {
+  const headers = def.headers?.map((h) => (h.secret ? { name: h.name, secret: true, set: true } : { name: h.name, value: h.value }));
+  const origins = def.headers?.some((h) => h.secret) ? [...new Set((def.addresses ?? []).map((a) => monitorOrigin(a)).filter(Boolean))] : undefined;
+  return definitionView({ ...def, ...(headers ? { headers } : {}), ...(origins ? { secrets_origins: origins as string[] } : {}) }, heldBy(def.id), planOf(def).preview, withMonitors);
+}
+function definitionFrom(input: CheckDefinitionSave, held: CheckDefinition | undefined): CheckDefinition {
+  const { headers: ops, id: _id, version: _version, ...spec } = input;
+  const now = new Date().toISOString();
+  return {
+    ...spec,
+    name: spec.name.trim() || "Untitled check",
+    id: held?.id ?? `chk_${Date.now().toString(36)}`,
+    headers: ops?.length ? applyHeaderOps(held?.headers, ops) : held?.headers,
+    version: (held?.version ?? 0) + 1,
+    created_at: held?.created_at ?? now,
+    updated_at: now,
+    updated_by: "cdcd",
+  };
+}
+let definitions: CheckDefinition[] =
+  PARAMS.has("paths") && !pathsOld() && PATHS_SHAPE !== "empty" && PARAMS.get("defs") !== "none"
+    ? seedDefinitions(definitionNodes(), GROUPS.map((g) => g.id), (ms) => new Date(Date.now() + ms).toISOString())
+    : [];
+for (const def of definitions) {
+  // The ping measured Helsinki before Helsinki left its set: that monitor stays, paused, with its history.
+  const left = definitionNodes().find((n) => n.name === SEED_LEFT_TARGET);
+  if (def.id === "chk_apac_ping" && left) writeDefinition({ ...def, targets: { nodes: [...(def.targets.nodes ?? []), left.id] } });
+  writeDefinition(def);
+}
 
 /** ?m3=golden: a read the golden responses do not hold fails, rather than answer something the server never sent. */
 function notGolden(what: string): never {
@@ -746,6 +800,61 @@ export const api = {
     delete: (id: string) => {
       monitors = monitors.filter((m) => m.id !== id);
       return delay({ ok: true });
+    },
+    definitions: {
+      list: () =>
+        pathsOld()
+          ? missingRoute("/api/monitors/definitions")
+          : answer("definitions", () => ({
+              definitions: definitions.map((d) => shownDefinition(d, false)),
+              fleet_mesh: fleetMeshOf(planFor(latency.config, latency.stored), latency.stored),
+            })),
+      get: (id: string) => {
+        const def = definitions.find((d) => d.id === id);
+        return def ? answer("definitions", () => shownDefinition(def, true)) : refuse(404, "not_found", "check definition not found");
+      },
+      preview: (input: CheckDefinitionSave) => {
+        const held = definitions.find((d) => d.id === input.id);
+        return delay(planOf(definitionFrom(input, held)).preview, Number(PARAMS.get("previewMs")) || LATENCY_MS);
+      },
+      create: (input: CheckDefinitionSave) => {
+        if (FAIL.has("defsave")) return refuse(403, "forbidden", "a group or whole-fleet selector requires an unrestricted principal; name the nodes instead");
+        const def = definitionFrom(input, undefined);
+        definitions = [...definitions, def];
+        writeDefinition(def);
+        return delay(shownDefinition(def, true));
+      },
+      update: (input: CheckDefinitionSave) => {
+        const held = definitions.find((d) => d.id === input.id);
+        if (!held) return refuse(404, "not_found", "check definition not found");
+        if (input.version !== held.version) return refuse(409, "conflict", "check definition changed since it was read");
+        if (FAIL.has("defsave")) return refuse(403, "forbidden", "a group or whole-fleet selector requires an unrestricted principal; name the nodes instead");
+        const def = definitionFrom(input, held);
+        definitions = definitions.map((d) => (d.id === def.id ? def : d));
+        writeDefinition(def);
+        return delay(shownDefinition(def, true));
+      },
+      delete: (input: { id: string; version: number; monitor_ids: string[] }) => {
+        const held = definitions.find((d) => d.id === input.id);
+        if (!held) return refuse(404, "not_found", "check definition not found");
+        const ids = heldBy(input.id).map((m) => m.id).sort();
+        if (input.version !== held.version || ids.join() !== [...input.monitor_ids].sort().join()) {
+          return refuse(409, "conflict", "the definition or its monitors changed since they were read");
+        }
+        monitors = monitors.filter((m) => m.check_definition_id !== input.id);
+        definitions = definitions.filter((d) => d.id !== input.id);
+        return delay({ ok: true, deleted: ids, runs: ids.reduce((n, id) => n + runsOf(id), 0) });
+      },
+      forget: (input: { id: string; monitor_ids: string[] }) => {
+        const held = definitions.find((d) => d.id === input.id);
+        if (!held) return refuse(404, "not_found", "check definition not found");
+        const inSet = new Set(planOf(held).preview.targets.map((t) => t.monitor_id));
+        const still = input.monitor_ids.find((id) => inSet.has(id));
+        if (still) return refuse(409, "conflict", `monitor ${still} is still in the definition's target set`);
+        const gone = new Set(input.monitor_ids);
+        monitors = monitors.filter((m) => !(m.check_definition_id === input.id && gone.has(m.id)));
+        return delay({ ok: true, forgotten: [...gone], runs: [...gone].reduce((n, id) => n + runsOf(id), 0) });
+      },
     },
     latency: {
       // `?latencyMs=<ms>` slows the plan and rollups reads, so the loading state can be drawn.

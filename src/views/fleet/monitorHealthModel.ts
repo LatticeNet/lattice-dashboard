@@ -50,7 +50,8 @@ export type MonitorHealth =
    * up. Only checksModel.withPathVerdict gives it, from the matrix.
    */
   | { kind: "degraded"; degraded: number; total: number; latencyMs?: number; lastAt: number }
-  | { kind: "up"; total: number; latencyMs?: number; lastAt: number };
+  /** `of`, on a check measured over many paths, counts every path it has; `total` of them are up. */
+  | { kind: "up"; total: number; of?: number; latencyMs?: number; lastAt: number };
 
 /** Failing first, then the warnings (degraded, then what cannot be trusted), then what is fine. */
 const RANK: Record<MonitorHealth["kind"], number> = {

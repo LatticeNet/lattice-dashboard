@@ -222,10 +222,27 @@ test("attention: downs one per target first, then unknowns grouped by reason, pa
   );
   const jp = items[0]!;
   assert.equal(jp.kind === "down" && jp.paths[0]!.sourceName, "cd-hs-sh", "the worse loss leads");
-  assert.equal(attentionQuery(items[0]!), 'state:down target:=xuezhang-jp-nat');
+  // Exact path keys, never a name (design 32 D1): a check to the node would match its name too.
+  assert.equal(attentionQuery(items[0]!), `state:down path:=${jp.paths.map((p) => p.key).join(",")}`);
   assert.equal(attentionQuery(items[2]!), "state:unknown reason:=udp_only");
   assert.equal(attentionQuery(items[4]!), "state:paused");
-  assert.equal(attentionQuery({ kind: "down", rowKey: "x", targetName: "[cd] hk mini", paths: [], worstLoss: 1, measuredBy: 1 }), 'state:down target:="[cd] hk mini"');
+});
+
+test("target: finds a check definition's path by the node it reaches, and path: finds one path by its key", () => {
+  // Design 32 D1: a definition's monitor is an operator check, keyed <source>~@<monitor id>, never managed.
+  const r = response();
+  r.paths.push({ source: "sh", target_node: "jp", target: "203.0.113.9", monitor_id: "mon_chk_def1_7f3a", managed: false, method: "icmp", state: "up", p50_ms: 52, samples: 60, expected: 60 });
+  const m = buildPathsMatrix(r, { checkName: (id) => (id === "mon_chk_def1_7f3a" ? "Ping APAC" : undefined) });
+  const schema = pathsQuerySchema({ reasonText: (x) => x ?? "" });
+  const keys = (q: string) => {
+    const compiled = compileQuery(q, schema);
+    assert.ok(compiled.ok, q);
+    return applyQuery(m.paths, compiled.query).map((p) => p.key).sort();
+  };
+  assert.deepEqual(keys("target:=xuezhang-jp-nat"), ["sh~@mon_chk_def1_7f3a", "sh~jp"], "the node's own name finds the definition's path too");
+  assert.deepEqual(keys('target:="Ping APAC"'), ["sh~@mon_chk_def1_7f3a"], "and the check's name still finds its row");
+  assert.deepEqual(keys("path:=sh~@mon_chk_def1_7f3a"), ["sh~@mon_chk_def1_7f3a"]);
+  assert.equal(m.paths.find((p) => p.key === "sh~@mon_chk_def1_7f3a")?.managed, false, "a definition's path is never Fleet mesh");
 });
 
 test("attention: an offline agent is one line for its source, not one per path", () => {
@@ -589,7 +606,7 @@ test("attention with triangulation: down by target, down by source, degraded by 
   });
   assert.deepEqual(shape, ["down:dmit4:3:target", "downSource:volc:4:source", "degraded:lon:2:target", "degraded:tyo:1:path", "unknown:results_stopped", "paused"]);
   const source = items[1]!;
-  assert.equal(attentionQuery(source), "state:down source:=volc-sh target:=a,b,c,d");
+  assert.equal(attentionQuery(source), `state:down path:=${source.paths.map((p) => p.key).join(",")}`);
   // Show lists exactly the item's paths: volc-sh's down path to dmit4 carries the target verdict and is not in it.
   const m = buildPathsMatrix(threeSources());
   const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
@@ -597,7 +614,7 @@ test("attention with triangulation: down by target, down by source, degraded by 
   assert.deepEqual(shown.sort(), source.paths.map((p) => p.key).sort());
   assert.equal(shown.length, 4);
   assert.deepEqual(source.kind === "downSource" && source.verdict.evidence, { kind: "source", source: "volc-sh", bad: 5, fresh: 7, elsewhere: 4 });
-  assert.equal(attentionQuery(items[2]!), "state:degraded target:=lon");
+  assert.equal(attentionQuery(items[2]!), `state:degraded path:=${items[2]!.paths.map((p) => p.key).join(",")}`);
   const tyo = items[3]!;
   assert.deepEqual(tyo.kind === "degraded" && tyo.verdict?.evidence, { kind: "path", target: "tyo", others: 2 });
 });
@@ -610,7 +627,7 @@ test("attention: with one source every down and degraded item reads this path", 
   for (const i of judged) assert.equal((i as { verdict?: { kind: string } }).verdict?.kind, "path");
 });
 
-test("a source item's Show quotes names the query would split, and lists each target once", () => {
+test("a source item's Show names its paths by key, whatever the targets are called", () => {
   assert.equal(quoteQueryValue("[cd]-linode-sgp"), "[cd]-linode-sgp");
   assert.equal(quoteQueryValue("hk, sg"), '"hk, sg"', "a comma would separate two values");
   const r = threeSources();
@@ -618,7 +635,7 @@ test("a source item's Show quotes names the query would split, and lists each ta
   const m = buildPathsMatrix(r);
   const item = pathAttention(m).find((i) => i.kind === "downSource")!;
   const q = attentionQuery(item);
-  assert.equal(q, 'state:down source:=volc-sh target:="[cd] hk mini",c,d,"edge,sg"', "in the item's target order");
+  assert.equal(q, `state:down path:=${item.paths.map((p) => p.key).join(",")}`, "in the item's order");
   const shown = applyQuery(m.paths, compileQuery(q, pathsQuerySchema({ reasonText: (x) => x ?? "" })).query).map((p) => p.key);
   assert.deepEqual(shown.sort(), item.paths.map((p) => p.key).sort());
 });
