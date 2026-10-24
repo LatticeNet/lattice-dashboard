@@ -95,6 +95,15 @@ export const FINE_DAYS = PARAMS.get("retention") === "14" ? 14 : 7;
 export const M3 = PARAMS.get("m3") === "1" && PATHS_SHAPE !== "old";
 /** `?m3=golden`: the M3 server's own answers, verbatim (see the header). */
 export const GOLDEN = PARAMS.get("m3") === "golden";
+/**
+ * Design 32 R1: the path set is migrated into the check definition
+ * chk_fleet_mesh, which adopted its monitors, so every cell of a path set
+ * pair names that definition, as a migrated server sends it. On by default,
+ * as every server this console ships with is migrated; `?migrated=0` serves
+ * the path set as it was.
+ */
+export const MIGRATED = PARAMS.get("migrated") !== "0" && PATHS_SHAPE !== "old" && !GOLDEN;
+export const FLEET_MESH_ID = "chk_fleet_mesh";
 // The M3 fixture shows a method switch on gomami-hk as well.
 const SWITCH = PARAMS.get("switch") === "1" || M3;
 const SEVERAL = PATHS_SHAPE === "three" || PATHS_SHAPE === "six";
@@ -639,7 +648,8 @@ function operatorPaths(checks: MonitorView[], window: MonitorWindow): PathView[]
       // budget says so (design 32 D1).
       const undialable = check.check_definition_id && check.target_node && !check.target ? (check.type === "beacon" ? "beacon_not_enabled" : "not_probeable") : undefined;
       const reason = undialable ?? (paused ? (check.check_definition_id ? "packet_budget" : "source_paused") : operatorReason(check, source));
-      out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type }, reason, undefined, check.degraded ?? undefined));
+      const definition = check.check_definition_id ? { check_definition_id: check.check_definition_id } : {};
+      out.push(pathFrom(shape, window, { source, target: check.target, ...(check.target_node ? { target_node: check.target_node } : {}), monitor_id: check.id, managed: false, method: check.type, ...definition }, reason, undefined, check.degraded ?? undefined));
     }
   }
   return out;
@@ -701,6 +711,7 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         monitor_id: pair?.monitor_id ?? target.monitor_id ?? `mon_lat_${target.node_id}`,
         managed: true,
         method: beacon ? "beacon" : icmp ? "icmp" : "tcp",
+        ...(MIGRATED ? { check_definition_id: FLEET_MESH_ID } : {}),
       };
       // The target reports no socket where its plan put one (the server's beaconTargetListenGate).
       const agent = beacon ? beaconShape(node?.name).agent : undefined;
@@ -715,7 +726,8 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
       }
       if (target.target === "not_probeable" || (pair?.reason === "not_probeable" && !icmp)) {
         // The server says not_probeable whatever the plan's note (udp_only, no_public_address, no_tcp_line).
-        paths.push({ ...base, target: "", monitor_id: "", state: "unknown", reason: "not_probeable", p50_ms: null, p95_ms: null, jitter_ms: null, loss: null, samples: 0, expected: 0, prev: null, last_at: null });
+        // Migrated, the definition holds a monitor for the target, enabled and with nothing to dial (design 32 R1).
+        paths.push({ ...base, target: "", monitor_id: MIGRATED ? `mon_chk_fleet_mesh_${target.node_id}` : "", state: "unknown", reason: "not_probeable", p50_ms: null, p95_ms: null, jitter_ms: null, loss: null, samples: 0, expected: 0, prev: null, last_at: null });
         continue;
       }
       if (!plan.config.enabled) {

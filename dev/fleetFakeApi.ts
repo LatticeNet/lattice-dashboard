@@ -87,7 +87,7 @@ import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, plan
 import { lineChains } from "./topologyFixture";
 import { M2B, REPLANS, beaconShape, runsBeaconClient } from "./beaconShapes";
 import { appliedBeaconApproval, beaconReplansFor, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
-import { GOLDEN, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
+import { FLEET_MESH_ID, GOLDEN, MIGRATED, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
 import { SEED_LEFT_TARGET, definitionView, fleetMeshOf, planDefinition, runsOf, seedDefinitions } from "./definitionsFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
@@ -305,6 +305,77 @@ for (const def of definitions) {
   const left = definitionNodes().find((n) => n.name === SEED_LEFT_TARGET);
   if (def.id === "chk_apac_ping" && left) writeDefinition({ ...def, targets: { nodes: [...(def.targets.nodes ?? []), left.id] } });
   writeDefinition(def);
+}
+
+/**
+ * Design 32 R1: the path set as the check definition it became. Its stored
+ * form stays the harness's latency configuration, which the fake planner
+ * reads, so an edit here (Stop measuring this pair, Switch to Auto, leave a
+ * target out) moves the matrix the way the server's sync would. The region
+ * rule reads as the whole fleet minus the nodes it leaves out.
+ */
+let meshVersion = 5;
+function fleetMeshDefinition(): CheckDefinition {
+  const c = latency.config;
+  const plan = pathPlan();
+  const leftOut = plan.nodes.filter((n) => n.target === "none" && ["mainland", "excluded", "region_unknown"].includes(n.target_reason ?? "")).map((n) => n.node_id);
+  const type = (c.method === "auto" || c.method === "icmp" || c.method === "beacon" ? c.method : "tcp") as CheckDefinition["type"];
+  return {
+    id: FLEET_MESH_ID,
+    name: "Fleet mesh",
+    type,
+    sources: { nodes: [...c.sources] },
+    targets: c.auto_targets ? { all: true, exclude: [...new Set(leftOut)].sort() } : { nodes: [...(c.include_targets ?? [])] },
+    interval_sec: c.interval_sec,
+    timeout_sec: c.timeout_sec,
+    ...(type === "tcp" ? {} : { packets: 3 }),
+    alert: c.alert || "off",
+    ...(c.alert_after ? { alert_after: c.alert_after } : {}),
+    ...(c.degraded ? { degraded: c.degraded } : {}),
+    enabled: c.enabled,
+    ...(c.disabled_pairs?.length ? { excluded_pairs: c.disabled_pairs.map((p) => ({ ...p })) } : {}),
+    version: meshVersion,
+    created_at: "2026-10-24T10:00:00Z",
+    updated_at: c.updated_at ?? "2026-10-24T10:00:00Z",
+    updated_by: c.updated_by,
+  };
+}
+function fleetMeshView(withMonitors: boolean): CheckDefinitionView {
+  const plan = pathPlan();
+  const held = generatedLatencyMonitors(plan);
+  const active = plan.pairs.filter((p) => p.active).length;
+  return {
+    ...fleetMeshDefinition(),
+    summary: { monitors: held.length, paths: active, paused_targets: 0, paused_runs: 0 },
+    ...(withMonitors
+      ? { monitors: held.map((m) => ({ monitor_id: m.id, method: m.type, target: m.target, target_node: m.target_node, in_set: true, enabled: m.enabled, sources: m.node_ids ?? [], runs: 1440 })) }
+      : {}),
+  };
+}
+/** A save of Fleet mesh, written back into the configuration the planner reads. */
+function saveFleetMesh(input: CheckDefinitionSave): CheckDefinitionView {
+  const plan = pathPlan();
+  const mainland = new Set(plan.nodes.filter((n) => n.target_reason === "mainland" || n.target_reason === "region_unknown").map((n) => n.node_id));
+  const c = latency.config;
+  latency = {
+    stored: true,
+    config: {
+      ...c,
+      method: input.type === "tcp" ? "" : input.type,
+      sources: [...(input.sources.nodes ?? c.sources)],
+      exclude_targets: input.targets.all ? (input.targets.exclude ?? []).filter((id) => !mainland.has(id)) : c.exclude_targets,
+      interval_sec: input.interval_sec,
+      timeout_sec: input.timeout_sec,
+      alert: typeof input.alert === "string" ? input.alert : c.alert,
+      enabled: input.enabled,
+      disabled_pairs: (input.excluded_pairs ?? []).map((p) => ({ ...p })),
+      version: c.version + 1,
+      updated_by: "cdcd",
+      updated_at: new Date().toISOString(),
+    },
+  };
+  meshVersion += 1;
+  return fleetMeshView(true);
 }
 
 /** ?m3=golden: a read the golden responses do not hold fails, rather than answer something the server never sent. */
@@ -751,7 +822,12 @@ export const api = {
         monitors: [
           ...monitors.map((m) => ({ ...viewOf(m), latest: PARAMS.has("paths") ? pathsLatest(m.id) : monitorLatest(m.id) })),
           ...(PARAMS.has("latency") || PARAMS.has("paths")
-            ? generatedLatencyMonitors(planFor(latency.config, latency.stored)).map((m) => (PARAMS.has("paths") ? { ...m, latest: pathsLatest(m.id) } : m))
+            ? generatedLatencyMonitors(planFor(latency.config, latency.stored)).map((m) => ({
+                ...m,
+                ...(PARAMS.has("paths") ? { latest: pathsLatest(m.id) } : {}),
+                // Adopted by Fleet mesh: the path set's mark stays, the definition is named beside it (design 32 R1).
+                ...(MIGRATED && PARAMS.has("paths") ? { check_definition_id: FLEET_MESH_ID } : {}),
+              }))
             : []),
           // A beacon's reachability check (design 29 D12), still running and failing: the console must list it nowhere.
           ...(M2B && PARAMS.has("paths") ? [reachabilityCheck()] : []),
@@ -842,10 +918,11 @@ export const api = {
         pathsOld()
           ? missingRoute("/api/monitors/definitions")
           : answer("definitions", () => ({
-              definitions: definitions.map((d) => shownDefinition(d, false)),
-              fleet_mesh: fleetMeshOf(planFor(latency.config, latency.stored), latency.stored),
+              definitions: [...(MIGRATED && PARAMS.has("paths") ? [fleetMeshView(false)] : []), ...definitions.map((d) => shownDefinition(d, false))],
+              fleet_mesh: { ...fleetMeshOf(planFor(latency.config, latency.stored), latency.stored), ...(MIGRATED && PARAMS.has("paths") ? { migrated: true, definitions: [FLEET_MESH_ID] } : {}) },
             })),
       get: (id: string) => {
+        if (id === FLEET_MESH_ID && MIGRATED) return answer("definitions", () => fleetMeshView(true));
         const def = definitions.find((d) => d.id === id);
         return def ? answer("definitions", () => shownDefinition(def, true)) : refuse(404, "not_found", "check definition not found");
       },
@@ -863,6 +940,18 @@ export const api = {
         return delay(shownDefinition(def, true));
       },
       update: (input: CheckDefinitionSave) => {
+        if (input.id === FLEET_MESH_ID && MIGRATED) {
+          if (CONFLICT_ONCE && !raced.has(FLEET_MESH_ID)) {
+            raced.add(FLEET_MESH_ID);
+            latency = { ...latency, config: { ...latency.config, interval_sec: latency.config.interval_sec + 30, updated_by: "operator-b", updated_at: new Date().toISOString() } };
+            meshVersion += 1;
+            return refuse(409, "version_conflict", "check definition changed since it was read");
+          }
+          if (input.version !== meshVersion) return refuse(409, "version_conflict", "check definition changed since it was read");
+          const refused = refusedSave<CheckDefinitionView>();
+          if (refused) return refused;
+          return delay(saveFleetMesh(input));
+        }
         const held = definitions.find((d) => d.id === input.id);
         if (!held) return refuse(404, "not_found", "check definition not found");
         if (CONFLICT_ONCE && !raced.has(held.id)) {
@@ -905,7 +994,17 @@ export const api = {
     },
     latency: {
       // `?latencyMs=<ms>` slows the plan and rollups reads, so the loading state can be drawn.
-      plan: () => answer("latency", () => (GOLDEN ? goldenPlan() : planFor(latency.config, latency.stored)), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
+      plan: () =>
+        answer(
+          "latency",
+          () => {
+            if (GOLDEN) return goldenPlan();
+            const plan = planFor(latency.config, latency.stored);
+            // Migrated, the path set reads as such: it names the definitions it became and is not edited (design 32 R1).
+            return MIGRATED && PARAMS.has("paths") ? { ...plan, config: { ...plan.config, migrated: { at: "2026-10-24T10:00:00Z", definitions: [FLEET_MESH_ID] } } } : plan;
+          },
+          Number(PARAMS.get("latencyMs")) || LATENCY_MS,
+        ),
       rollups: () =>
         answer("latency", () => rollupsFor(planFor(latency.config, latency.stored)), Number(PARAMS.get("rollupsMs")) || Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       series: (source: string, target: string, window: LatencyWindow) =>
