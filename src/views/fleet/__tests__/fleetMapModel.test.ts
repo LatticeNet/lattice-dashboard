@@ -36,6 +36,15 @@ import {
   type Viewport,
 } from "../fleetMapModel.ts";
 
+// cpuMs reads this process's CPU time. The budgets below are about the work a
+// pass does; the suite runs its files in parallel, often beside Go race
+// suites, and a file waiting for a core reads as slow on the clock while
+// doing no more work.
+function cpuMs(): number {
+  const used = process.cpuUsage();
+  return (used.user + used.system) / 1000;
+}
+
 test("the projection puts 0,0 in the middle and clamps what is off the map", () => {
   assert.deepEqual(project(0, 0), { x: 500, y: 250 });
   assert.deepEqual(project(-200, 100), { x: 0, y: 0 });
@@ -224,9 +233,9 @@ test("500 nodes separate in one pass: each reach is computed once per cluster an
     calls += 1;
     return [{ dx: 0, dy: 0, r: 2.5 + Math.sqrt(count) * 0.5 }, ...(down && count > 1 ? [{ dx: 3, dy: -3, r: 2 }] : [])];
   };
-  const started = performance.now();
+  const started = cpuMs();
   const clusters = clusterPoints(row, 1, reach);
-  const elapsed = performance.now() - started;
+  const elapsed = cpuMs() - started;
   const merges = row.length - clusters.length;
   assert.equal(clusters.reduce((sum, c) => sum + c.ids.length, 0), 500);
   assert.equal(calls, row.length + merges, "one reach per starting cluster and one per merge");
@@ -398,17 +407,17 @@ test("500 nodes: clustering at every zoom step, a spread, the arrow keys and the
   const width = 1392;
   const unitsPerPx = MAP_WIDTH / width;
   const reachAt = (scale: number) => (count: number) => [{ dx: 0, dy: 0, r: ((clusterRadius(count) + 4) * unitsPerPx) / scale }];
-  const started = performance.now();
+  const started = cpuMs();
   const max = maxZoomFor(width);
   let clusters: ReturnType<typeof clusterPoints> = [];
   for (let scale = 1; scale <= max; scale *= 1.5) clusters = clusterPoints(points, (18 * unitsPerPx) / scale, reachAt(scale));
-  const clusterMs = performance.now() - started;
-  const spreadStarted = performance.now();
+  const clusterMs = cpuMs() - started;
+  const spreadStarted = cpuMs();
   const slots = spreadSlots(200, { x: width / 2, y: width / 4 }, { width, height: width / 2 }, 26, 13);
   const marks = points.map((point) => ({ key: point.id, x: point.x, y: point.y }));
   for (const point of points) nearestInDirection(point, marks, "right");
   for (const point of points) arcPaths(spots[0]!, point);
-  const restMs = performance.now() - spreadStarted;
+  const restMs = cpuMs() - spreadStarted;
   assert.equal(slots?.length, 200);
   assert.ok(clusters.length > 1);
   // About 20 ms (six zoom steps) and 5 ms on a laptop; the budgets catch a return to a cubic pass or a quadratic spread.
