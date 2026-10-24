@@ -1,42 +1,47 @@
 /**
- * The Topology layer of Monitoring: the fleet's paths as one deterministic
- * drawing, from the reads the page already makes.
+ * The graph mode of Monitoring's Network view (design 32 D2): the fleet's
+ * paths as one deterministic drawing, from the reads the page already makes.
  *
  *   control plane   every node's heartbeat freshness, counted (the relation
  *                   is the same for every node, so it is drawn once, as a
  *                   count, and as a mark on each node, never as 34 lines)
- *   probes          the path set's paths, source to target, from the same
- *                   matrix Paths draws (usePathsData) at the page's window;
- *                   an edge's state is the path's display state (up,
- *                   degraded, down, unknown, paused) and its colour that
- *                   state's tone, nothing else (design 29 D13)
+ *   paths           every path the matrix holds (usePathsData) at the page's
+ *                   window, the path set's and the operator's checks alike,
+ *                   from the drawn sources: one edge per pair of endpoints,
+ *                   in the path's display state (up, degraded, down, unknown
+ *                   with its reason, paused) and that state's tone only
+ *                   (design 29 D13). A check to a node is an edge between two
+ *                   real nodes; a check to an address ends at one terminal
+ *                   per address. Several checks on one pair draw one edge,
+ *                   which lists each of them
  *   chains          relay line to exit node (GET /api/network/lines/chains)
- *   checks          operator monitors, from the nodes that run them (or the
- *                   control plane, for a certificate watch) to their target;
- *                   a source whose newest run passes on a path the matrix
- *                   judges degraded reads degraded, as the Checks list does
  *
  * Layout, left to right as traffic leaves the fleet: the control plane and
- * the drawn probe sources in a narrow left column (they are few; the picker
+ * the drawn sources in a narrow left column (they are few; the picker
  * chooses which, the first four in the path set's order by default), each
  * drawing its own fan; every other node in one tall column grouped by region
  * in rough order of distance from mainland China, then by country, then by
  * name, each target row carrying one state mark per drawn source so
  * overlapping fans stay readable; chains as arcs on that column's right edge,
- * so a relay that is also a probe target keeps one row; checks in a right
- * column. Past COLLAPSE_AT rows each country folds into one row and the
- * edges into it fold into one, coloured by the worst.
+ * so a relay that is also a target keeps one row; address terminals in a
+ * right column. Past COLLAPSE_AT rows each country folds into one row and
+ * the edges into it fold into one, coloured by the worst.
+ *
+ * The page's query (the same grammar and the same ?paths.q= as list mode)
+ * never removes anything from the drawing: matching edges and their ends keep
+ * full strength and the rest fade, and every source with a matching path is
+ * drawn while the query holds, so no match hides behind the picker.
  *
  * Kept free of Vue so `node --test` covers it directly.
  */
-import type { Incident, LatencyProbeNode, LatencyProbePlan, LineChainView, MonitorView, Node } from "@/lib/api/types";
+import type { Incident, LatencyProbeNode, LatencyProbePlan, LineChainView, Node } from "@/lib/api/types";
 import { nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 import { REGION_ORDER, regionOf, regionRank, type RegionKey } from "@/lib/regions";
 import type { QueryValue } from "@/components/common/tableUrlState";
-import { quietAfterMs } from "@/views/fleet/latencyModel";
-import { cellKey, displayState, reasonCode, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
+import { worstFirst } from "@/views/fleet/nodePathsModel";
+import { countPaths, displayState, reachBySource, type PathCounts, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
 
-export { REGION_ORDER, regionOf, regionRank, quietAfterMs, type RegionKey };
+export { REGION_ORDER, regionOf, regionRank, type RegionKey };
 
 /* ------------------------------------------------------------------ */
 /* Nodes                                                                */
@@ -63,89 +68,93 @@ export interface TopoNode {
   freshness?: Freshness;
   /** The last beat, epoch ms; absent for a node that never reported. */
   lastSeenAt?: number;
-  probeSource: boolean;
-  /** The plan's target state: probed, paused, not_probeable or none. */
+  /** A drawn source or a source the picker offers. */
+  source: boolean;
+  /** The path set's word on the node as a target: probed, paused, not_probeable or none. */
   probeTarget?: string;
   targetReason?: string;
   endpointNote?: string;
   endpoint?: string;
   relay: boolean;
   exit: boolean;
-  checkSource: boolean;
   /** Open or acknowledged incidents on the node. */
   incidents: number;
-  /** In the node list; false for a node only the plan, a chain or a monitor named. */
+  /** In the node list; false for a node only the plan, the matrix or a chain named. */
   listed: boolean;
 }
 
 /** Endpoint id of the control plane; node ids never start with "@". */
 export const CONTROL_PLANE = "@cp";
-export const checkEndpoint = (monitorId: string) => `@check:${monitorId}`;
+/** Endpoint id of an address a check dials (a URL, a host and port), one per address. */
+export const addressEndpoint = (address: string) => `@addr:${address}`;
 
 /* ------------------------------------------------------------------ */
 /* Edges                                                                */
 /* ------------------------------------------------------------------ */
 
 /**
- * A probe edge's state is its path's display state (pathsModel.displayState):
+ * A path edge's state is its paths' display state (pathsModel.displayState):
  * up, degraded, down, unknown (with the server's reason) or paused. The server
  * decides freshness, so a path whose source went quiet already reads unknown;
  * nothing here re-judges it with a clock.
  */
-export type ProbeState = PathDisplay;
+export type EdgePathState = PathDisplay;
 export type ChainState = "converged" | "pending" | "drifted" | "failed";
-/** `degraded`: the newest run passed, but the control plane judges the path degraded (design 29 D13). */
-export type CheckState = "up" | "degraded" | "failing" | "stale" | "none";
-export type TopoEdgeKind = "probe" | "chain" | "check";
-export type TopoEdgeState = ProbeState | ChainState | CheckState;
+export type TopoEdgeKind = "path" | "chain";
+export type TopoEdgeState = EdgePathState | ChainState;
 
 export interface TopoLastSample {
   at: number;
-  /** The outcome, when it is known: a check's newest result has one; a probe path only says when it last heard. */
+  /** The outcome when it is known: a path only says when it last heard, and that a down one failed. */
   ok?: boolean;
-  ms?: number;
-  error?: string;
 }
 
 export interface TopoEdge {
   id: string;
   kind: TopoEdgeKind;
-  /** Node id, CONTROL_PLANE, or checkEndpoint(monitor id). */
+  /** A node id or CONTROL_PLANE. */
   from: string;
+  /** A node id, or addressEndpoint(address) for a check to an address. */
   to: string;
   state: TopoEdgeState;
   /** Lower is worse; lists and bundles sort and pick by it. */
   severity: number;
+  /** The figures of the path that speaks for the edge. */
   p50Ms?: number;
   p95Ms?: number;
   loss?: number;
   samples?: number;
   expected?: number;
-  /** A probe's reason as the server sent it: why it is unknown, paused or degraded. */
+  /** Why it is unknown, paused or degraded, as the server sent it. */
   reason?: string;
-  /** A probe's method (tcp, icmp, beacon). */
   method?: string;
   last?: TopoLastSample;
+  /**
+   * The paths this edge draws, the one that speaks for it first: one per
+   * check that measures the pair (design 32 D1). Absent on a chain.
+   */
+  paths?: PathItem[];
+  /** The path the edge opens: the one that speaks for it, or under a query the first that matches. */
+  pathKey?: string;
   chain?: { status: string; sourceLine: string; targetLine?: string; error?: string };
-  monitorId?: string;
+  /** Kept by the page's query; true for every edge without one. The query reads paths, so under one a chain is never kept. */
+  matched: boolean;
 }
 
-export interface TopoCheck {
-  /** checkEndpoint(monitor id). */
+/** A terminal for an address the checks dial: drawn once however many checks and sources reach it. */
+export interface TopoAddress {
+  /** addressEndpoint(address). */
   id: string;
-  monitorId: string;
-  name: string;
-  type: string;
-  target: string;
-  enabled: boolean;
-  /** Dialled by the control plane (tls). */
-  serverEvaluated: boolean;
-  assignAll: boolean;
-  /** Every node that runs it, drawn or not. */
-  sourceIds: string[];
-  summary: Record<CheckState, number>;
-  /** An every-node check draws only its sources that are not up; this says so. */
-  fannedOut: boolean;
+  address: string;
+  /** The methods that dial it, sorted. */
+  methods: string[];
+  /** The names of the checks that dial it, sorted. */
+  checks: string[];
+  /** Its paths, drawn or not, by state. */
+  counts: PathCounts;
+  /** Why its first unknown path is unknown, for a terminal nothing measures. */
+  reason?: string;
+  matched: boolean;
 }
 
 export interface ControlPlaneSummary {
@@ -159,49 +168,53 @@ export interface ControlPlaneSummary {
   known: boolean;
 }
 
-export type TopologyLayer = "all" | "probes" | "chains" | "checks";
-export const TOPOLOGY_LAYERS: readonly TopologyLayer[] = ["all", "probes", "chains", "checks"];
+export type TopologyLayer = "all" | "paths" | "chains";
+export const TOPOLOGY_LAYERS: readonly TopologyLayer[] = ["all", "paths", "chains"];
+
+/** `?topo=` read: the old probes and checks filters both show paths now (design 32 D2). */
+export function parseTopologyLayer(raw: QueryValue | undefined): TopologyLayer {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value === "probes" || value === "checks") return "paths";
+  return TOPOLOGY_LAYERS.includes(value as TopologyLayer) ? (value as TopologyLayer) : "all";
+}
 
 export interface TopologyInput {
   /** Undefined when not read (no node:read, or still loading). */
   nodes?: readonly Node[];
-  /** The path set plan: its source order and each target's note; probe edges come from the matrix. */
+  /** The path set plan: its source order and each target's note; edges come from the matrix. */
   plan?: LatencyProbePlan;
   /** The shared matrix (usePathsData) at the page's window; undefined until read. */
-  matrix?: Pick<PathsMatrix, "sources" | "paths" | "cells">;
+  matrix?: Pick<PathsMatrix, "sources" | "paths">;
   /** The sources the picker drew (`?topo.sources=`); undefined draws the default. */
   drawnSources?: readonly string[];
+  /** The path keys the page's query keeps; undefined when there is no query. */
+  matching?: ReadonlySet<string>;
   /** Undefined when not read or not readable. */
   chains?: readonly LineChainView[];
-  /** Every monitor the server listed; generated ones are left out here. */
-  monitors?: readonly MonitorView[];
   incidents?: readonly Incident[];
   /** The page's window, for the words that name it. */
   window: string;
   layer: TopologyLayer;
-  now: number;
 }
 
 export interface TopologyCounts {
-  /** Probe paths drawn (the drawn sources' only). */
-  paths: number;
-  down: number;
-  degraded: number;
-  unknown: number;
-  paused: number;
+  /** Paths drawn: the drawn sources' and the control plane's. */
+  drawn: number;
+  /** Paths whose source is not drawn; the view says so, since the page's count holds them. */
+  undrawn: number;
   chains: number;
   chainsBroken: number;
   /** Chains whose exit is not decided yet (only planned): not drawn. */
   chainsUnplaced: number;
-  checks: number;
-  checksFailing: number;
 }
 
-/** A source the picker lists: every path set source with its reach counts, drawn or not. */
+/** A source the picker lists: every source with a path, with its reach counts, drawn or not. */
 export interface TopoSourceChoice {
   node: TopoNode;
   reach: SourceReach;
   drawn: boolean;
+  /** Drawn only because the query matches one of its paths: not the picker's to untick, and never written to ?topo.sources=. */
+  forced: boolean;
 }
 
 export interface TopologyModel {
@@ -209,7 +222,7 @@ export interface TopologyModel {
   window: string;
   /** Every node the reads named, by id. */
   nodes: Map<string, TopoNode>;
-  /** The left column: the drawn probe sources, in the path set's order. */
+  /** The left column: the drawn sources, in the path set's order. */
   sources: TopoNode[];
   /** Every source the picker offers, in the path set's order. */
   sourceChoices: TopoSourceChoice[];
@@ -217,10 +230,19 @@ export interface TopologyModel {
   drawnSourceIds: string[];
   /** The tall column, sorted region, country, name, id. */
   members: TopoNode[];
-  checks: TopoCheck[];
+  addresses: TopoAddress[];
   edges: TopoEdge[];
+  /**
+   * Every source's edge into a target node, drawn or not, so a row's summary
+   * counts every source that probes it whatever the picker draws.
+   */
+  inbound: Map<string, TopoEdge[]>;
   cp: ControlPlaneSummary;
   counts: TopologyCounts;
+  /** A query is filtering: what it does not keep is drawn faded. */
+  filtering: boolean;
+  /** Endpoints of a matching edge; empty without a query. */
+  matchedEnds: Set<string>;
 }
 
 function parseTime(value: string | undefined): number | undefined {
@@ -231,9 +253,8 @@ function parseTime(value: string | undefined): number | undefined {
 }
 
 const SEVERITY: Record<TopoEdgeKind, Record<string, number>> = {
-  probe: { down: 0, degraded: 1, unknown: 4, up: 7, paused: 8 },
+  path: { down: 0, degraded: 1, unknown: 4, up: 7, paused: 8 },
   chain: { failed: 0, drifted: 1, pending: 4, converged: 7 },
-  check: { failing: 0, degraded: 1, stale: 2, none: 4, up: 7 },
 };
 
 export function edgeSeverity(kind: TopoEdgeKind, state: TopoEdgeState): number {
@@ -259,51 +280,39 @@ export function formatDrawnSources(ids: readonly string[] | undefined, defaults:
 }
 
 /**
- * The path set's sources in its order, then any other source with a path to
- * a node; from the matrix alone when the plan is not read. A source the plan
- * notes (deleted or disabled) probes nothing and is left out, so it never
- * takes one of the default four places.
+ * The path set's sources in its order, then every other node the matrix
+ * shows running a path (an operator check's sources), in the matrix's
+ * order; from the matrix alone when the plan is not read. A source the plan
+ * notes (deleted or disabled) comes last, so it never takes one of the
+ * default four places, and is still offered while the matrix holds its
+ * paths: every path the page counts can be drawn. The control plane is never
+ * a choice: its box is always drawn.
  */
-export function probeSourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_notes"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
+export function sourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_notes"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
   const noted = new Set(Object.keys(plan?.source_notes ?? {}));
-  const probing = new Set((matrix?.paths ?? []).filter((p) => p.targetNode && !p.rowKey.startsWith("@") && p.source && !noted.has(p.source)).map((p) => p.source));
+  const running = new Set((matrix?.paths ?? []).filter((p) => p.source).map((p) => p.source));
+  const candidates = [...(plan?.config.sources ?? []), ...(matrix?.sources ?? []).map((c) => c.nodeId)].filter((id) => running.has(id));
   const out: string[] = [];
-  for (const id of plan?.config.sources ?? []) if (probing.has(id) && !out.includes(id)) out.push(id);
-  for (const column of matrix?.sources ?? []) if (probing.has(column.nodeId) && !out.includes(column.nodeId)) out.push(column.nodeId);
+  for (const id of candidates) if (!noted.has(id) && !out.includes(id)) out.push(id);
+  for (const id of candidates) if (noted.has(id) && !out.includes(id)) out.push(id);
   return out;
-}
-
-/** The sources drawn: the picker's choice that still probes, kept in the path set's order; else the first four. */
-export function drawnSources(order: readonly string[], chosen: readonly string[] | undefined): string[] {
-  const picked = chosen ? order.filter((id) => chosen.includes(id)) : [];
-  return picked.length ? picked : order.slice(0, DEFAULT_DRAWN_SOURCES);
-}
-
-/** Reasons a path has nothing to dial on its target: no edge is drawn, and the row says "not probed". */
-const NOTHING_TO_DIAL = new Set(["not_probeable", "no_tcp_line", "udp_only", "no_public_address", "no_inventory"]);
-
-/** A path Topology draws as a probe: one the path set generated to a node, with something to dial. */
-function isDrawnProbe(path: Pick<PathItem, "targetNode" | "rowKey" | "state" | "reason">): boolean {
-  if (!path.targetNode || path.rowKey.startsWith("@")) return false;
-  return !(path.state === "unknown" && NOTHING_TO_DIAL.has(reasonCode(path.reason) ?? path.reason ?? ""));
 }
 
 /**
- * Each source's reach as the drawing counts it (the picker's line): its
- * drawn probes by state, so "12 of 12 up" matches the fan, and a target with
- * nothing to dial is not counted as a problem.
+ * The sources drawn: the picker's choice that still runs a path, kept in the
+ * path set's order, else the first four; and while a query holds, every
+ * source with a matching path as well, so a match is never hidden behind the
+ * picker.
  */
-export function drawnReach(matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): Map<string, SourceReach> {
-  const out = new Map<string, SourceReach>();
-  for (const column of matrix?.sources ?? []) out.set(column.nodeId, { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 });
-  for (const path of matrix?.paths ?? []) {
-    if (!isDrawnProbe(path)) continue;
-    const reach = out.get(path.source);
-    if (!reach) continue;
-    reach[displayState(path)] += 1;
-    reach.total += 1;
-  }
-  return out;
+export function drawnSources(order: readonly string[], chosen: readonly string[] | undefined, withMatches: ReadonlySet<string> = new Set()): string[] {
+  const base = pickedSources(order, chosen);
+  return order.filter((id) => base.includes(id) || withMatches.has(id));
+}
+
+/** The sources the picker draws, before the query adds any: its choice that still runs a path, else the first four. */
+export function pickedSources(order: readonly string[], chosen: readonly string[] | undefined): string[] {
+  const picked = chosen ? order.filter((id) => chosen.includes(id)) : [];
+  return picked.length ? picked : order.slice(0, DEFAULT_DRAWN_SOURCES);
 }
 
 /** A chain row's status in the four words the drawing uses. */
@@ -326,10 +335,9 @@ function emptyNode(id: string, name: string, country?: string): TopoNode {
     name: name || id,
     country: country || undefined,
     region: regionOf(country),
-    probeSource: false,
+    source: false,
     relay: false,
     exit: false,
-    checkSource: false,
     incidents: 0,
     listed: false,
   };
@@ -344,14 +352,25 @@ function compareMembers(a: TopoNode, b: TopoNode): number {
   );
 }
 
-const SERVER_EVALUATED = new Set(["tls"]);
+/** Where a path ends in the drawing: its target node, or the terminal of the address it dials. */
+export function pathEnd(path: Pick<PathItem, "targetNode" | "target" | "monitorId">): string {
+  return path.targetNode || addressEndpoint(path.target || `@${path.monitorId}`);
+}
 
-/** An every-node check with more sources than this draws only the ones that are not up. */
-export const CHECK_FAN = 6;
+/**
+ * A pair's paths in the order they speak: the live ones (up, degraded,
+ * down) before the rest, and within each the worst first. A check that
+ * cannot run (unknown) or that the operator paused does not grey a pair that
+ * another check measures; the sheet still lists it.
+ */
+export function pairOrder(paths: readonly PathItem[]): PathItem[] {
+  const live = (p: PathItem) => (["up", "degraded", "down"].includes(displayState(p)) ? 0 : 1);
+  return [...paths].sort((a, b) => live(a) - live(b) || worstFirst(a, b));
+}
 
-/** The whole model for one layer and window. */
+/** The whole model for one layer, window and query. */
 export function buildTopology(input: TopologyInput): TopologyModel {
-  const { plan, matrix, window, layer, now } = input;
+  const { plan, matrix, window, layer, matching } = input;
   const nodes = new Map<string, TopoNode>();
 
   for (const node of input.nodes ?? []) {
@@ -397,70 +416,91 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   }
 
   const edges: TopoEdge[] = [];
-  const counts: TopologyCounts = {
-    paths: 0,
-    down: 0,
-    degraded: 0,
-    unknown: 0,
-    paused: 0,
-    chains: 0,
-    chainsBroken: 0,
-    chainsUnplaced: 0,
-    checks: 0,
-    checksFailing: 0,
-  };
+  const counts: TopologyCounts = { drawn: 0, undrawn: 0, chains: 0, chainsBroken: 0, chainsUnplaced: 0 };
+  const showPaths = layer === "all" || layer === "paths";
   const showChains = layer === "all" || layer === "chains";
-  const showChecks = layer === "all" || layer === "checks";
+  const matchedEnds = new Set<string>();
 
-  /* ---- Probes ---- */
+  /* ---- Paths ---- */
   const sources: TopoNode[] = [];
-  const order = probeSourceOrder(plan, matrix);
-  const drawn = drawnSources(order, input.drawnSources);
-  const reachOf = drawnReach(matrix);
+  const order = sourceOrder(plan, matrix);
+  const withMatches = new Set(matching ? (matrix?.paths ?? []).filter((p) => p.source && matching.has(p.key)).map((p) => p.source) : []);
+  const drawn = drawnSources(order, input.drawnSources, withMatches);
+  const picked = new Set(pickedSources(order, input.drawnSources));
+  const reachOf = new Map(matrix ? reachBySource(matrix).map((r) => [r.source, r]) : []);
   const sourceName = new Map((matrix?.sources ?? []).map((s) => [s.nodeId, s.name]));
   const sourceChoices: TopoSourceChoice[] = order.map((id) => {
     const node = ensure(id);
-    node.probeSource = true;
+    node.source = true;
     if (node.name === node.id && sourceName.get(id)) node.name = sourceName.get(id)!;
     const reach = reachOf.get(id) ?? { source: id, name: node.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
-    return { node, reach, drawn: drawn.includes(id) };
+    return { node, reach, drawn: drawn.includes(id), forced: drawn.includes(id) && !picked.has(id) };
   });
-  const showProbes = layer === "all" || layer === "probes";
-  if (showProbes) for (const id of drawn) sources.push(nodes.get(id)!);
-  if (showProbes && matrix) {
+  if (showPaths) for (const id of drawn) sources.push(nodes.get(id)!);
+  const addresses = new Map<string, { address: string; paths: PathItem[]; methods: Set<string>; checks: Set<string> }>();
+  const inbound = new Map<string, TopoEdge[]>();
+  if (showPaths && matrix) {
     const drawnSet = new Set(drawn);
-    for (const path of matrix.cells.values()) {
-      // Your checks stay checks: a probe is a path the path set generated to a node.
-      if (!isDrawnProbe(path) || !drawnSet.has(path.source)) continue;
-      const target = ensure(path.targetNode!);
-      if (target.name === target.id && path.targetNodeName) target.name = path.targetNodeName;
-      if (!target.country && path.country) {
-        target.country = path.country;
-        target.region = regionOf(path.country);
+    const pairs = new Map<string, { from: string; to: string; paths: PathItem[]; drawn: boolean }>();
+    for (const path of matrix.paths) {
+      const to = pathEnd(path);
+      if (!path.targetNode) {
+        const entry = addresses.get(to) ?? { address: path.target || path.checkName || path.monitorId, paths: [], methods: new Set<string>(), checks: new Set<string>() };
+        entry.paths.push(path);
+        if (path.method) entry.methods.add(path.method);
+        entry.checks.add(path.checkName || path.monitorId);
+        addresses.set(to, entry);
       }
-      if (!target.probeTarget || target.probeTarget === "none") target.probeTarget = "probed";
-      const state = displayState(path);
+      // The control plane's box is always drawn; a node source only when the picker or the query draws it.
+      const drawnFrom = !path.source || drawnSet.has(path.source);
+      if (!drawnFrom) counts.undrawn += 1;
+      const from = path.source || CONTROL_PLANE;
+      const key = `${from}>${to}`;
+      const pair = pairs.get(key) ?? { from, to, paths: [], drawn: drawnFrom };
+      pair.paths.push(path);
+      pairs.set(key, pair);
+    }
+    for (const { from, to, paths, drawn: drawnFrom } of pairs.values()) {
+      const ordered = pairOrder(paths);
+      const lead = ordered[0]!;
+      if (drawnFrom && lead.targetNode) {
+        const target = ensure(lead.targetNode);
+        if (target.name === target.id && lead.targetNodeName) target.name = lead.targetNodeName;
+        if (!target.country && lead.country) {
+          target.country = lead.country;
+          target.region = regionOf(lead.country);
+        }
+      }
+      const kept = matching ? ordered.filter((p) => matching.has(p.key)) : ordered;
+      const state = displayState(lead);
       const edge: TopoEdge = {
-        id: `probe:${path.source}~${path.targetNode}`,
-        kind: "probe",
-        from: path.source,
-        to: path.targetNode!,
+        id: `path:${from}>${to}`,
+        kind: "path",
+        from,
+        to,
         state,
-        severity: edgeSeverity("probe", state),
-        p50Ms: path.p50Ms,
-        p95Ms: path.p95Ms,
-        loss: path.loss,
-        samples: path.samples,
-        expected: path.expected,
-        reason: path.reason,
-        method: path.method,
-        monitorId: path.monitorId || undefined,
+        severity: edgeSeverity("path", state),
+        p50Ms: lead.p50Ms,
+        p95Ms: lead.p95Ms,
+        loss: lead.loss,
+        samples: lead.samples,
+        expected: lead.expected,
+        reason: lead.reason,
+        method: lead.method,
+        paths: ordered,
+        pathKey: (kept[0] ?? lead).key,
+        matched: !matching || kept.length > 0,
       };
       // The matrix says when the path last heard; only a down path's newest outcome is known (it failed).
-      if (path.lastAt !== undefined) edge.last = { at: path.lastAt, ok: state === "down" ? false : undefined };
+      if (lead.lastAt !== undefined) edge.last = { at: lead.lastAt, ok: state === "down" ? false : undefined };
+      if (lead.targetNode) inbound.set(to, [...(inbound.get(to) ?? []), edge]);
+      if (!drawnFrom) continue;
+      if (matching && edge.matched) {
+        matchedEnds.add(from);
+        matchedEnds.add(to);
+      }
       edges.push(edge);
-      counts.paths += 1;
-      if (state === "down" || state === "degraded" || state === "unknown" || state === "paused") counts[state] += 1;
+      counts.drawn += paths.length;
     }
   }
 
@@ -490,85 +530,40 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         targetLine: row.current?.target_line_uuid,
         error: row.last_error || row.attempt?.error || undefined,
       },
+      // The query reads paths only: under one, a chain is part of the rest and fades.
+      matched: !matching,
     });
     counts.chains += 1;
     if (state === "failed" || state === "drifted") counts.chainsBroken += 1;
   }
 
-  /* ---- Checks ---- */
-  const checks: TopoCheck[] = [];
-  if (showChecks) {
-    const runners = [...nodes.values()].filter((n) => n.listed && n.status !== "disabled").map((n) => n.id);
-    for (const monitor of input.monitors ?? []) {
-      if (monitor.managed_by) continue;
-      const serverEvaluated = SERVER_EVALUATED.has(monitor.type);
-      const latest = new Map((monitor.latest ?? []).map((l) => [l.node_id ?? "", l]));
-      const staleAfter = quietAfterMs(monitor.interval_sec);
-      let sourceIds: string[];
-      if (serverEvaluated) sourceIds = [CONTROL_PLANE];
-      else if (monitor.assign_all) sourceIds = [...new Set([...runners, ...[...latest.keys()].filter(Boolean)])].sort();
-      else sourceIds = [...new Set(monitor.node_ids ?? [])].sort();
-      const check: TopoCheck = {
-        id: checkEndpoint(monitor.id),
-        monitorId: monitor.id,
-        name: monitor.name || monitor.id,
-        type: monitor.type,
-        target: monitor.target,
-        enabled: monitor.enabled,
-        serverEvaluated,
-        assignAll: !!monitor.assign_all && !serverEvaluated,
-        sourceIds,
-        summary: { up: 0, degraded: 0, failing: 0, stale: 0, none: 0 },
-        fannedOut: false,
-      };
-      const perSource = sourceIds.map((sourceId) => {
-        const result = latest.get(serverEvaluated ? "" : sourceId);
-        const at = parseTime(result?.at);
-        let state: CheckState = "none";
-        if (result && at !== undefined) state = now - at > staleAfter ? "stale" : result.success ? "up" : "failing";
-        // Degraded takes the warning tone wherever a path state is drawn (design 29 D13): a passing run on a
-        // path the control plane judges degraded is not a green up. A check's path sits in its own matrix row.
-        if (state === "up" && !serverEvaluated && matrix?.cells.get(cellKey(`@${monitor.id}`, sourceId))?.state === "degraded") state = "degraded";
-        check.summary[state] += 1;
-        return { sourceId, result, at, state };
-      });
-      check.fannedOut = check.assignAll && perSource.length > CHECK_FAN;
-      for (const { sourceId, result, at, state } of perSource) {
-        if (sourceId !== CONTROL_PLANE) ensure(sourceId).checkSource = true;
-        // An every-node check draws the sources with news; the rest are counted on the check.
-        if (check.fannedOut && state === "up") continue;
-        if (!monitor.enabled) continue;
-        edges.push({
-          id: `check:${monitor.id}:${sourceId}`,
-          kind: "check",
-          from: sourceId,
-          to: check.id,
-          state,
-          severity: edgeSeverity("check", state),
-          monitorId: monitor.id,
-          last: result && at !== undefined ? { at, ok: result.success, ms: result.latency_ms, error: result.error } : undefined,
-        });
-      }
-      checks.push(check);
-      counts.checks += 1;
-      if (monitor.enabled && check.summary.failing > 0) counts.checksFailing += 1;
-    }
-    checks.sort((a, b) => Number(b.summary.failing > 0) - Number(a.summary.failing > 0) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-  }
+  /* ---- Address terminals ---- */
+  const drawnEnds = new Set(edges.map((e) => e.to));
+  const terminals: TopoAddress[] = [...addresses]
+    .filter(([id]) => drawnEnds.has(id))
+    .map(([id, entry]) => ({
+      id,
+      address: entry.address,
+      methods: [...entry.methods].sort(),
+      checks: [...entry.checks].sort((a, b) => a.localeCompare(b)),
+      counts: countPaths(entry.paths),
+      reason: entry.paths.find((p) => displayState(p) === "unknown")?.reason,
+      matched: !matching || matchedEnds.has(id),
+    }))
+    .sort((a, b) => Number(b.counts.down > 0) - Number(a.counts.down > 0) || a.address.localeCompare(b.address) || a.id.localeCompare(b.id));
 
   /* ---- Columns ---- */
   const left = new Set(sources.map((s) => s.id));
+  const ends = new Set(edges.flatMap((e) => [e.from, e.to]));
   const inLayer = (node: TopoNode): boolean => {
     if (left.has(node.id)) return false;
     switch (layer) {
       case "all":
         return true;
-      case "probes":
-        return node.probeTarget === "probed" || node.probeTarget === "paused" || node.probeTarget === "not_probeable";
+      case "paths":
+        return ends.has(node.id) || node.probeTarget === "probed" || node.probeTarget === "paused" || node.probeTarget === "not_probeable";
       case "chains":
         return node.relay || node.exit;
-      case "checks":
-        return node.checkSource;
     }
   };
   const members = [...nodes.values()].filter(inLayer).sort(compareMembers);
@@ -580,7 +575,22 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     cp[node.freshness] += 1;
   }
 
-  return { layer, window, nodes, sources, sourceChoices, drawnSourceIds: showProbes ? drawn : [], members, checks, edges, cp, counts };
+  return {
+    layer,
+    window,
+    nodes,
+    sources,
+    sourceChoices,
+    drawnSourceIds: showPaths ? drawn : [],
+    members,
+    addresses: terminals,
+    edges,
+    inbound,
+    cp,
+    counts,
+    filtering: !!matching,
+    matchedEnds,
+  };
 }
 
 /** The edges that touch one endpoint. */
@@ -588,14 +598,18 @@ export function edgesOf(model: Pick<TopologyModel, "edges">, id: string): TopoEd
   return model.edges.filter((e) => e.from === id || e.to === id);
 }
 
+/** Whether an endpoint keeps full strength: everything does without a query; with one, the ends of a matching edge. */
+export function endMatched(model: Pick<TopologyModel, "filtering" | "matchedEnds">, id: string): boolean {
+  return !model.filtering || model.matchedEnds.has(id);
+}
+
 /**
- * States that describe the path now. A stale check is history, unknown is
- * silence and paused is off: none of them says how the path behaves today.
+ * States that describe the path now. Unknown is silence and paused is off:
+ * neither says how the path behaves today.
  */
 const LIVE: Record<TopoEdgeKind, ReadonlySet<string>> = {
-  probe: new Set(["up", "degraded", "down"]),
+  path: new Set(["up", "degraded", "down"]),
   chain: new Set(["converged", "pending", "drifted", "failed"]),
-  check: new Set(["up", "degraded", "failing"]),
 };
 
 export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
@@ -603,7 +617,7 @@ export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
 }
 
 /**
- * The edge that speaks for several into one place (a row's probes, a folded
+ * The edge that speaks for several into one place (a row's paths, a folded
  * bundle): the worst of the live ones, and the worst of the rest only when
  * none is live. Severity alone ranks unknown above up, so one source whose
  * path went unknown would grey a row the other sources still measure. Lists
@@ -616,36 +630,43 @@ export function worstLive(edges: readonly TopoEdge[]): TopoEdge {
   return pool.reduce((a, b) => (b.severity < a.severity || (b.severity === a.severity && (b.p50Ms ?? -1) > (a.p50Ms ?? -1)) ? b : a));
 }
 
-/** What a node's row says about the probes into it: the worst live one, and how many there are. */
-export function rowProbe(model: Pick<TopologyModel, "edges">, nodeId: string): { edge: TopoEdge; count: number } | undefined {
-  const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
+/** What a node's row says about the paths into it: the worst live one, and how many there are. */
+export function rowPath(model: Pick<TopologyModel, "edges">, nodeId: string): { edge: TopoEdge; count: number } | undefined {
+  const into = model.edges.filter((e) => e.kind === "path" && e.to === nodeId);
   if (into.length === 0) return undefined;
   return { edge: worstLive(into), count: into.length };
 }
 
-/** A target row's word across its drawn sources: the state that speaks for it and how many of them read it. */
+/** A target row's word across the sources that probe it: the state that speaks for it and how many of them read it. */
 export interface RowSummary {
   /** The worst live state among the paths into the row, else the worst of the rest. */
-  state: ProbeState;
-  /** Drawn sources whose path reads that state. */
+  state: EdgePathState;
+  /** Sources whose path reads that state. */
   n: number;
-  /** Drawn sources with a path into the row. */
+  /** Sources with a path into the row, drawn or not: the matrix's count, as the node sheet lists them. */
   of: number;
+  /** Why an unknown row is unknown: the speaking path's reason. */
+  reason?: string;
 }
 
 /**
  * With several sources drawn, a target row summarises across them ("down
  * from 1 of 4") rather than printing its worst edge: the worst edge alone
  * made one failing source read as the node being down while three others
- * reach it, and a p50 without its source said nothing true. Undefined with
- * one drawn source, whose edge says it all, and for a row no path enters.
+ * reach it, and a p50 without its source said nothing true. It counts every
+ * source that probes the row, drawn or not, so drawing more sources never
+ * changes what it says. Undefined with one drawn source, whose edge says it
+ * all, and for a row no path enters.
  */
-export function rowSummary(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
+export function rowSummary(model: Pick<TopologyModel, "inbound" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
   if (model.drawnSourceIds.length < 2) return undefined;
-  const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
+  const into = model.inbound.get(nodeId) ?? [];
   if (into.length === 0) return undefined;
-  const state = worstLive(into).state as ProbeState;
-  return { state, n: into.filter((e) => e.state === state).length, of: into.length };
+  const lead = worstLive(into);
+  const state = lead.state as EdgePathState;
+  const summary: RowSummary = { state, n: into.filter((e) => e.state === state).length, of: into.length };
+  if (state === "unknown" && lead.reason) summary.reason = lead.reason;
+  return summary;
 }
 
 /**
@@ -653,17 +674,9 @@ export function rowSummary(model: Pick<TopologyModel, "edges" | "drawnSourceIds"
  * fans that overlap on the row stay readable; undefined where that source has
  * no path to it.
  */
-export function rowMarks(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): { source: string; state?: ProbeState }[] {
-  const into = new Map(model.edges.filter((e) => e.kind === "probe" && e.to === nodeId).map((e) => [e.from, e.state as ProbeState]));
+export function rowMarks(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): { source: string; state?: EdgePathState }[] {
+  const into = new Map(model.edges.filter((e) => e.kind === "path" && e.to === nodeId).map((e) => [e.from, e.state as EdgePathState]));
   return model.drawnSourceIds.map((source) => ({ source, state: into.get(source) }));
-}
-
-/** Every path worst first, for the list and for the phone. */
-export function pathsWorstFirst(model: Pick<TopologyModel, "edges" | "nodes" | "checks">): TopoEdge[] {
-  const name = (id: string) => model.nodes.get(id)?.name ?? model.checks.find((c) => c.id === id)?.name ?? id;
-  return [...model.edges].sort(
-    (a, b) => a.severity - b.severity || (b.p50Ms ?? 0) - (a.p50Ms ?? 0) || name(a.to).localeCompare(name(b.to)) || a.id.localeCompare(b.id),
-  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -679,13 +692,13 @@ export interface EdgeStyle {
   width: number;
   /**
    * Drawn as two rails (the colour, with the card's colour down its middle).
-   * Chains carry it so that shape, not only hue, tells them from probes.
+   * Chains carry it so that shape, not only hue, tells them from paths.
    */
   double?: boolean;
 }
 
-/** A probe state's tone token: state tones are the only saturated colour (design 29 D13). */
-export const PROBE_TONE: Record<ProbeState, string> = {
+/** A path state's tone token: state tones are the only saturated colour (design 29 D13). */
+export const PATH_TONE: Record<EdgePathState, string> = {
   up: "--success",
   degraded: "--warning",
   down: "--destructive",
@@ -694,25 +707,25 @@ export const PROBE_TONE: Record<ProbeState, string> = {
 };
 
 /**
- * One rule for every edge. A probe's colour is its state's tone and nothing
+ * One rule for every edge. A path's colour is its state's tone and nothing
  * else (the latency bands that coloured edges were a second saturated
  * scale): up, degraded and down solid; unknown dashed and paused dotted, both
  * muted, so neither can pass for a live green.
  */
 export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state">): EdgeStyle {
   switch (edge.kind) {
-    case "probe":
+    case "path":
       switch (edge.state) {
         case "up":
-          return { color: PROBE_TONE.up, stroke: "solid", width: 1.5 };
+          return { color: PATH_TONE.up, stroke: "solid", width: 1.5 };
         case "degraded":
-          return { color: PROBE_TONE.degraded, stroke: "solid", width: 2 };
+          return { color: PATH_TONE.degraded, stroke: "solid", width: 2 };
         case "down":
-          return { color: PROBE_TONE.down, stroke: "solid", width: 2.5 };
+          return { color: PATH_TONE.down, stroke: "solid", width: 2.5 };
         case "paused":
-          return { color: PROBE_TONE.paused, stroke: "dotted", width: 1.25 };
+          return { color: PATH_TONE.paused, stroke: "dotted", width: 1.25 };
         default:
-          return { color: PROBE_TONE.unknown, stroke: "dashed", width: 1.25 };
+          return { color: PATH_TONE.unknown, stroke: "dashed", width: 1.25 };
       }
     case "chain":
       switch (edge.state) {
@@ -724,19 +737,6 @@ export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state">): EdgeStyle {
           return { color: "--destructive", stroke: "dashed", width: 4.5, double: true };
         default:
           return { color: "--info", stroke: "dashed", width: 4.5, double: true };
-      }
-    case "check":
-      switch (edge.state) {
-        case "up":
-          return { color: "--success", stroke: "solid", width: 1.25 };
-        case "degraded":
-          return { color: "--warning", stroke: "solid", width: 1.75 };
-        case "failing":
-          return { color: "--destructive", stroke: "solid", width: 2 };
-        case "stale":
-          return { color: "--muted-foreground", stroke: "dashed", width: 1.25 };
-        default:
-          return { color: "--muted-foreground", stroke: "dotted", width: 1.25 };
       }
   }
 }
@@ -751,11 +751,11 @@ export const GROUP_GAP = 8;
 export const CP_H = 64;
 export const SOURCE_H = 56;
 export const SOURCE_GAP = 12;
-export const CHECK_H = 52;
-export const CHECK_GAP = 8;
+export const ADDRESS_H = 52;
+export const ADDRESS_GAP = 8;
 export const LEFT_W = 208;
-export const CHECK_W = 232;
-/** Where the first probe source sits: right under the control plane box. */
+export const ADDRESS_W = 232;
+/** Where the first source sits: right under the control plane box. */
 export const SOURCES_TOP = CP_H + 24;
 /** Rows past this fold by country. */
 export const COLLAPSE_AT = 60;
@@ -792,6 +792,10 @@ export interface LayoutEdge {
   d: string;
   /** Where the line ends, and which way it points there (1 right, -1 left), for an arrowhead. */
   end: { x: number; y: number; dir: 1 | -1 };
+  /** The box or row it starts from (an anchorOf key), so the keyboard reaches it right after that box. */
+  fromKey: string;
+  /** The column it ends in: the left column, the tall column, or the addresses. */
+  toColumn: "left" | "row" | "address";
 }
 
 export interface TopologyLayout {
@@ -802,7 +806,7 @@ export interface TopologyLayout {
   rowsX: number;
   rowsW: number;
   rows: LayoutRow[];
-  checks: { check: TopoCheck; box: Box }[];
+  addresses: { address: TopoAddress; box: Box }[];
   edges: LayoutEdge[];
   /** Countries folded into one row each. */
   collapsed: boolean;
@@ -830,9 +834,10 @@ function arc(x: number, y1: number, y2: number): string {
 }
 
 /**
- * A line from the left column to a check would cross the tall column, which
- * hides it behind its rows and shows it in every gap between them. It rides a
- * lane above the column instead: up, across, and down into the check.
+ * A line from the left column to an address would cross the tall column,
+ * which hides it behind its rows and shows it in every gap between them. It
+ * rides a lane above the column instead: up, across, and down into the
+ * address.
  */
 export const TOP_LANE = -10;
 
@@ -852,21 +857,21 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const expanded = options.expanded ?? new Set<string>();
   const collapsed = model.members.length > (options.collapseAt ?? COLLAPSE_AT);
   const hasChains = model.edges.some((e) => e.kind === "chain");
-  const hasChecks = model.checks.length > 0;
+  const hasAddresses = model.addresses.length > 0;
 
   const arcW = hasChains ? 80 : 16;
-  const checkW = hasChecks ? CHECK_W : 0;
-  const checkGap = hasChecks ? 56 : 0;
+  const addressW = hasAddresses ? ADDRESS_W : 0;
+  const addressGap = hasAddresses ? 56 : 0;
   const drawnCount = model.drawnSourceIds.length;
   const baseRowsW = clamp(Math.round(width * 0.3), 260, 380);
   const rowsExtra = drawnCount > 1 ? ROW_SUMMARY_EXTRA_W + ROW_MARK_W * drawnCount : 0;
-  const rowsW = baseRowsW + clamp(width - LEFT_W - baseRowsW - arcW - checkW - checkGap - FAN_MIN_W, 0, rowsExtra);
-  const spare = width - LEFT_W - rowsW - arcW - checkW - checkGap;
+  const rowsW = baseRowsW + clamp(width - LEFT_W - baseRowsW - arcW - addressW - addressGap - FAN_MIN_W, 0, rowsExtra);
+  const spare = width - LEFT_W - rowsW - arcW - addressW - addressGap;
   const gapLR = clamp(spare, 72, 300);
   const rowsX = LEFT_W + gapLR;
-  const checksX = hasChecks ? Math.max(rowsX + rowsW + arcW + checkGap, width - checkW) : 0;
+  const addressesX = hasAddresses ? Math.max(rowsX + rowsW + arcW + addressGap, width - addressW) : 0;
   // Narrower than the columns need: the drawing keeps its columns and its frame scrolls sideways.
-  const drawnWidth = Math.max(width, hasChecks ? checksX + checkW : rowsX + rowsW + arcW);
+  const drawnWidth = Math.max(width, hasAddresses ? addressesX + addressW : rowsX + rowsW + arcW);
 
   /* ---- The tall column ---- */
   const rows: LayoutRow[] = [];
@@ -919,8 +924,8 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const rowByKey = new Map(rows.map((row) => [row.key, row]));
 
   /* ---- Left column ---- */
-  // The sources sit right under the control plane and the checks start at
-  // the top, so the fan's origin and the first check are on the first screen
+  // The sources sit right under the control plane and the addresses start at
+  // the top, so the fan's origin and the first address are on the first screen
   // however tall the column grows. Curves to the bottom of the column get
   // longer; an origin below the fold cost more.
   const cp: Box = { x: 0, y: 0, w: LEFT_W, h: CP_H };
@@ -934,26 +939,26 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   });
   const sourceBox = new Map(sources.map((s) => [`source:${s.node.id}`, s.box]));
 
-  /* ---- Checks ---- */
+  /* ---- Addresses ---- */
   let cy = 0;
-  const checks = model.checks.map((check) => {
-    const box: Box = { x: checksX, y: cy, w: checkW, h: CHECK_H };
-    anchorOf.set(check.id, check.id);
-    cy += CHECK_H + CHECK_GAP;
-    return { check, box };
+  const addresses = model.addresses.map((address) => {
+    const box: Box = { x: addressesX, y: cy, w: addressW, h: ADDRESS_H };
+    anchorOf.set(address.id, address.id);
+    cy += ADDRESS_H + ADDRESS_GAP;
+    return { address, box };
   });
-  const checkBox = new Map(checks.map((c) => [c.check.id, c.box]));
+  const addressBox = new Map(addresses.map((c) => [c.address.id, c.box]));
 
   /* ---- Edges ---- */
-  type Anchor = { kind: "left" | "row" | "check"; xl: number; xr: number; y: number };
+  type Anchor = { kind: "left" | "row" | "address"; xl: number; xr: number; y: number };
   const anchor = (id: string): Anchor | undefined => {
     const key = anchorOf.get(id);
     if (!key) return undefined;
     if (key === CONTROL_PLANE) return { kind: "left", xl: cp.x, xr: cp.x + cp.w, y: cp.y + cp.h / 2 };
     const sb = sourceBox.get(key);
     if (sb) return { kind: "left", xl: sb.x, xr: sb.x + sb.w, y: sb.y + sb.h / 2 };
-    const cb = checkBox.get(key);
-    if (cb) return { kind: "check", xl: cb.x, xr: cb.x + cb.w, y: cb.y + cb.h / 2 };
+    const cb = addressBox.get(key);
+    if (cb) return { kind: "address", xl: cb.x, xr: cb.x + cb.w, y: cb.y + cb.h / 2 };
     const row = rowByKey.get(key);
     if (row) return { kind: "row", xl: rowsX, xr: rowsX + rowsW, y: row.y + row.h / 2 };
     return undefined;
@@ -974,19 +979,19 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   }
 
   const edges: LayoutEdge[] = [];
-  for (const [key, { edges: list, from, to }] of bundles) {
+  for (const [key, { edges: list, from, to, fromKey }] of bundles) {
     const worst = worstLive(list);
     let d: string;
     let end: LayoutEdge["end"];
-    // A chain out of a probe source rides 6 px below the probe to the same row, so the two never merge.
+    // A chain out of a source rides 6 px below the path to the same row, so the two never merge.
     const lift = worst.kind === "chain" && from.kind === "left" ? 6 : 0;
     if (from.kind === "row" && to.kind === "row") {
       d = arc(from.xr, from.y, to.y);
       end = { x: from.xr, y: to.y, dir: -1 };
-    } else if (to.kind === "check" && from.kind === "left" && model.members.length > 0) {
+    } else if (to.kind === "address" && from.kind === "left" && model.members.length > 0) {
       d = overTheTop(from.xr, from.y, to.xl, to.y);
       end = { x: to.xl, y: to.y, dir: 1 };
-    } else if (to.kind === "check") {
+    } else if (to.kind === "address") {
       d = bezier(from.xr, from.y, to.xl, to.y);
       end = { x: to.xl, y: to.y, dir: 1 };
     } else if (from.kind === "row" && to.kind === "left") {
@@ -999,21 +1004,45 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
       d = bezier(from.xr, from.y + lift, to.xl, to.y + lift);
       end = { x: to.xl, y: to.y + lift, dir: 1 };
     }
-    edges.push({ edge: worst, bundle: list, key, d, end });
+    edges.push({ edge: worst, bundle: list, key, d, end, fromKey, toColumn: to.kind });
   }
   // Worst drawn last, so a red line is never under a green one.
   edges.sort((a, b) => b.edge.severity - a.edge.severity || a.key.localeCompare(b.key));
 
   const lastSource = sources[sources.length - 1];
-  const lastCheck = checks[checks.length - 1];
+  const lastAddress = addresses[addresses.length - 1];
   const height = Math.max(
     rowsHeight,
     cp.y + cp.h,
     lastSource ? lastSource.box.y + lastSource.box.h : 0,
-    lastCheck ? lastCheck.box.y + lastCheck.box.h : 0,
+    lastAddress ? lastAddress.box.y + lastAddress.box.h : 0,
   );
 
-  return { width: drawnWidth, height, cp, sources, rowsX, rowsW, rows, checks, edges, collapsed, anchorOf };
+  return { width: drawnWidth, height, cp, sources, rowsX, rowsW, rows, addresses, edges, collapsed, anchorOf };
+}
+
+/**
+ * The drawn lines in the order the keyboard reaches them (design 32 D2):
+ * grouped by the box they start from, in the order the boxes are drawn
+ * (the control plane, then each source top to bottom, then the tall
+ * column's rows), and inside a group by where they end, the tall column top
+ * to bottom before the addresses. A page puts each group right after its box,
+ * so Tab walks a source and then its paths.
+ */
+export function keyboardOrder(layout: Pick<TopologyLayout, "edges" | "sources" | "rows">): Map<string, LayoutEdge[]> {
+  const boxes = [CONTROL_PLANE, ...layout.sources.map((s) => `source:${s.node.id}`), ...layout.rows.map((r) => r.key)];
+  const rank = new Map(boxes.map((key, i) => [key, i]));
+  const column = { left: 0, row: 0, address: 1 } as const;
+  const out = new Map<string, LayoutEdge[]>();
+  const sorted = [...layout.edges].sort(
+    (a, b) => (rank.get(a.fromKey) ?? boxes.length) - (rank.get(b.fromKey) ?? boxes.length) || column[a.toColumn] - column[b.toColumn] || a.end.y - b.end.y || a.key.localeCompare(b.key),
+  );
+  for (const le of sorted) {
+    const list = out.get(le.fromKey) ?? [];
+    list.push(le);
+    out.set(le.fromKey, list);
+  }
+  return out;
 }
 
 /** The endpoints a hovered endpoint lights: itself and everything one edge away. */
@@ -1031,11 +1060,10 @@ export function neighbourhood(model: Pick<TopologyModel, "edges">, id: string): 
 /* ------------------------------------------------------------------ */
 
 /**
- * The reads the drawing is made of. The layer makes the first two and the
- * chains read; the page makes the node list, incidents and monitors, which it
- * polls for its other layers anyway.
+ * The reads the drawing is made of. The view makes the chains read; the
+ * page makes the others, which it polls for its other layers anyway.
  */
-export type TopoRead = "plan" | "paths" | "nodes" | "incidents" | "monitors" | "chains";
+export type TopoRead = "plan" | "paths" | "nodes" | "incidents" | "chains";
 
 export interface TopoReadStatus {
   /** The session holds the scope the read needs; a read it cannot make is never sent. */
@@ -1057,25 +1085,19 @@ export function readState(status: TopoReadStatus): TopoReadState {
   return status.failed ? "failed" : "loading";
 }
 
-/**
- * The reads a layer's drawing is built from, in the order the proof line
- * names a failure. The proof line speaks for exactly these: its age is the
- * oldest of them and its error the first, so a failed monitor list cannot
- * hide behind a fresh probe plan.
- */
+/** The reads a filter's drawing is built from, in the order a failure is named; never one the session cannot send. */
 export function readsFor(layer: TopologyLayer, statuses: TopoReadStatuses): TopoRead[] {
   const out: TopoRead[] = ["plan"];
-  if (layer === "all" || layer === "probes") out.push("paths");
+  if (layer === "all" || layer === "paths") out.push("paths");
   out.push("nodes", "incidents");
-  if (layer === "all" || layer === "checks") out.push("monitors");
   if (layer === "all" || layer === "chains") out.push("chains");
   return out.filter((read) => statuses[read].allowed);
 }
 
 /**
- * Reads the layer needs that never landed and whose last attempt failed.
+ * Reads the filter needs that never landed and whose last attempt failed.
  * The drawing is missing their part outright (no heartbeats, no incident
- * marks, no checks), so each gets a line that says so, with a retry. A
+ * marks, no chains), so each gets a line that says so, with a retry. A
  * failed refresh after a good read is only stale, and the proof line already
  * says that.
  */
@@ -1084,15 +1106,15 @@ export function missingReads(layer: TopologyLayer, statuses: TopoReadStatuses): 
 }
 
 /** Why a filter has nothing to draw, or "loading" while the read it needs is still on its way. */
-export type TopologyEmpty = "noSources" | "chainsDenied" | "chainsFailed" | "noChains" | "monitorsFailed" | "noChecks" | "noNodes";
+export type TopologyEmpty = "noSources" | "chainsDenied" | "chainsFailed" | "noChains" | "noNodes";
 
 export function layerEmpty(
-  model: Pick<TopologyModel, "layer" | "sources" | "members" | "checks" | "counts">,
+  model: Pick<TopologyModel, "layer" | "sources" | "members" | "addresses" | "edges" | "counts">,
   statuses: TopoReadStatuses,
 ): TopologyEmpty | "loading" | null {
   switch (model.layer) {
-    case "probes":
-      return model.sources.length === 0 ? "noSources" : null;
+    case "paths":
+      return model.edges.length === 0 ? "noSources" : null;
     case "chains":
       switch (readState(statuses.chains)) {
         case "unreadable":
@@ -1103,16 +1125,6 @@ export function layerEmpty(
           return "loading";
         default:
           return model.counts.chains === 0 ? "noChains" : null;
-      }
-    case "checks":
-      // An unread monitor list is not an empty one: "No checks yet" would be a guess.
-      switch (readState(statuses.monitors)) {
-        case "failed":
-          return "monitorsFailed";
-        case "loading":
-          return "loading";
-        default:
-          return model.checks.length === 0 ? "noChecks" : null;
       }
     default:
       return model.members.length === 0 && model.sources.length === 0 ? "noNodes" : null;

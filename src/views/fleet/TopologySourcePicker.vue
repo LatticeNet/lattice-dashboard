@@ -1,11 +1,14 @@
 <script setup lang="ts">
 /**
- * Topology's source picker (design 29 D13): which sources draw their fan.
- * Every path set source is listed in the path set's order with its reach
- * counts (up, degraded, down of its paths), so the operator picks the ones
+ * The Network graph's source picker (design 29 D13, design 32 D2): which
+ * sources draw their fan. Every source with a path is listed, the path set's
+ * first in its order, with its reach counts (up, degraded, down of its
+ * paths, the same counts Overview gives), so the operator picks the ones
  * worth drawing; the control reads "4 of 9 sources". The choice lives in
- * ?topo.sources= (the layer writes it); the menu stays open while ticking, and
+ * ?topo.sources= (the view writes it); the menu stays open while ticking, and
  * the last drawn source cannot be unticked, so the drawing is never empty.
+ * A source the search drew (one of its paths matches) is ticked and locked,
+ * and is never written to the address: clearing the search takes it away.
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
@@ -22,10 +25,12 @@ const emit = defineEmits<{ update: [ids: string[]] }>();
 const { t } = useI18n();
 
 const drawn = computed(() => props.choices.filter((c) => c.drawn).map((c) => c.node.id));
-const isDefault = computed(() => formatDrawnSources(drawn.value, props.choices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id)) === undefined);
+/** The operator's own choice: a source the query drew is not in it, so clearing the query takes it away again. */
+const picked = computed(() => props.choices.filter((c) => c.drawn && !c.forced).map((c) => c.node.id));
+const isDefault = computed(() => formatDrawnSources(picked.value, props.choices.slice(0, DEFAULT_DRAWN_SOURCES).map((c) => c.node.id)) === undefined);
 
 function toggle(id: string, on: boolean): void {
-  const next = on ? [...drawn.value, id] : drawn.value.filter((x) => x !== id);
+  const next = on ? [...picked.value, id] : picked.value.filter((x) => x !== id);
   if (next.length === 0) return;
   emit("update", props.choices.map((c) => c.node.id).filter((x) => next.includes(x)));
 }
@@ -34,8 +39,8 @@ function toggle(id: string, on: boolean): void {
 function reach(choice: TopoSourceChoice): { key: string; text: string; tone: string }[] {
   const r = choice.reach;
   const parts = [{ key: "up", text: t("fleet.monitoring.topology.sources.reach", { up: r.up, total: r.total }), tone: "text-muted-foreground" }];
-  if (r.degraded) parts.push({ key: "degraded", text: t("fleet.monitoring.topology.proof.degraded", { n: r.degraded }), tone: "text-warning-text" });
-  if (r.down) parts.push({ key: "down", text: t("fleet.monitoring.topology.proof.down", { n: r.down }), tone: "text-destructive" });
+  if (r.degraded) parts.push({ key: "degraded", text: t("fleet.monitoring.paths.proof.degraded", { n: r.degraded }), tone: "text-warning-text" });
+  if (r.down) parts.push({ key: "down", text: t("fleet.monitoring.paths.proof.down", { n: r.down }), tone: "text-destructive" });
   return parts;
 }
 </script>
@@ -58,7 +63,7 @@ function reach(choice: TopoSourceChoice): { key: string; text: string; tone: str
         v-for="choice in choices"
         :key="choice.node.id"
         :model-value="choice.drawn"
-        :disabled="choice.drawn && drawn.length === 1"
+        :disabled="choice.forced || (choice.drawn && picked.length === 1)"
         class="relative flex min-h-9 cursor-default items-start gap-2 rounded-sm py-1.5 ps-8 pe-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:opacity-60 pointer-coarse:min-h-11"
         :data-source="choice.node.id"
         @select="(e: Event) => e.preventDefault()"
@@ -74,6 +79,7 @@ function reach(choice: TopoSourceChoice): { key: string; text: string; tone: str
           <span class="block text-xs">
             <template v-for="(part, i) in reach(choice)" :key="part.key"><span v-if="i" class="text-muted-foreground"> · </span><span :class="part.tone">{{ part.text }}</span></template>
           </span>
+          <span v-if="choice.forced" class="block text-xs text-muted-foreground" data-forced>{{ $t('fleet.monitoring.network.graph.forced') }}</span>
         </span>
       </DropdownMenuCheckboxItem>
       <template v-if="!isDefault">

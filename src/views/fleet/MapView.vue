@@ -541,7 +541,7 @@ const STATUS_TEXT: Record<string, string> = {
           </template>
           <span v-if="latency && latency.otherSources > 0">{{ $t('fleet.map.layer.otherSources', { n: latency.otherSources }, latency.otherSources) }}</span>
           <RouterLink
-            :to="{ name: 'monitoring', query: { view: 'paths' } }"
+            :to="{ name: 'monitoring', query: { view: 'network' } }"
             class="underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
           >
             {{ $t('fleet.map.layer.open') }}

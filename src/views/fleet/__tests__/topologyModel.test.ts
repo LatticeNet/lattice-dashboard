@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { Incident, LatencyProbePlan, LineChainView, MonitorView, Node, PathView, PathsResponse } from "@/lib/api/types";
+import type { Incident, LatencyProbePlan, LineChainView, Node, PathView, PathsResponse } from "@/lib/api/types";
 
 import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
+import { quietAfterMs } from "../latencyModel.ts";
 import { buildPathsMatrix } from "../pathsModel.ts";
-import { checkLineValue, edgeValue, rowSummaryValue } from "../topologyCopy.ts";
+import { addressLineValue, edgeValue, rowSummaryValue, stateLabel } from "../topologyCopy.ts";
 import {
-  CHECK_FAN,
   DEFAULT_DRAWN_SOURCES,
-  PROBE_TONE,
+  PATH_TONE,
   drawnSources,
   formatDrawnSources,
   parseDrawnSources,
-  probeSourceOrder,
+  parseTopologyLayer,
+  sourceOrder,
   rowMarks,
   CONTROL_PLANE,
   COLLAPSE_AT,
@@ -26,20 +27,20 @@ import {
   ROW_SUMMARY_EXTRA_W,
   SOURCES_TOP,
   TOP_LANE,
+  addressEndpoint,
   buildTopology,
   chainState,
-  checkEndpoint,
   edgeStyle,
+  endMatched,
+  keyboardOrder,
   layerEmpty,
   layoutTopology,
   missingReads,
   neighbourhood,
-  pathsWorstFirst,
-  quietAfterMs,
   readState,
   readsFor,
   regionOf,
-  rowProbe,
+  rowPath,
   rowSummary,
   type TopoReadStatus,
   type TopoReadStatuses,
@@ -112,12 +113,19 @@ function plan(over: Partial<LatencyProbePlan> = {}): LatencyProbePlan {
   };
 }
 
-type ProbeSpec = Partial<PathView> & { state: string };
+type PathSpec = Partial<PathView> & { state: string };
 
 /** A path set path from `source` to `target` as the paths route sends it. */
-function probe(source: string, target: string, spec: ProbeSpec): PathView {
+function probe(source: string, target: string, spec: PathSpec): PathView {
   return { source, target_node: target, target: "203.0.113.1:443", monitor_id: `mon_lat_${target}`, managed: true, method: "tcp", samples: 60, expected: 60, ...spec };
 }
+
+/** A path of an operator check: to a node when `target_node` is given, else to the address it dials. */
+function check(source: string, monitorId: string, spec: PathSpec & { target: string }): PathView {
+  return { source, monitor_id: monitorId, managed: false, method: "tcp", samples: 60, expected: 60, ...spec };
+}
+
+const CHECK_NAMES: Record<string, string> = { ping: "ICMP to hk", web: "Status page", cert: "sub cert", relay: "HK relay port" };
 
 /** The matrix of an M3 server: one row per target, one column per source. */
 function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[] = [{ node_id: "sh", name: "cd-hs-sh" }]) {
@@ -126,7 +134,7 @@ function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[
     return { node_id: id, name: n?.name ?? id, country: n?.geo?.country };
   });
   const response: PathsResponse = { window: "1h", observed_at: ago(0), degraded_at: ago(30_000), sources, targets, paths };
-  return buildPathsMatrix(response);
+  return buildPathsMatrix(response, { checkName: (id) => CHECK_NAMES[id] });
 }
 
 /** cd-hs-sh's paths over the hour: up, degraded, down, stale, paused, and a UDP-only target with nothing to dial. */
@@ -145,15 +153,15 @@ const CHAINS: LineChainView[] = [
   { source_line_uuid: "line-new", source_node_id: "jp", status: "planned", current: null, attempt: { operation: "set", approval_id: "apr_1", status: "planned" } },
 ];
 
-function monitor(over: Partial<MonitorView>): MonitorView {
-  return { id: "mon", name: "check", type: "http", target: "https://example.net/healthz", interval_sec: 60, timeout_sec: 10, enabled: true, latest: [], ...over } as MonitorView;
-}
-
 function input(over: Partial<TopologyInput> = {}): TopologyInput {
-  return { nodes: NODES, plan: plan(), matrix: matrixOf(PATHS), chains: CHAINS, monitors: [], incidents: [], window: "1h", layer: "all", now: NOW, ...over };
+  return { nodes: NODES, plan: plan(), matrix: matrixOf(PATHS), chains: CHAINS, incidents: [], window: "1h", layer: "all", ...over };
 }
 
-const edge = (m: ReturnType<typeof buildTopology>, id: string) => m.edges.find((e) => e.id === id)!;
+const edge = (m: ReturnType<typeof buildTopology>, id: string) => {
+  const found = m.edges.find((e) => e.id === id);
+  assert.ok(found, `edge ${id}`);
+  return found;
+};
 
 /* ---- Regions ---- */
 
@@ -170,79 +178,129 @@ test("regions run in order of distance from mainland China; Hong Kong is not mai
   assert.deepEqual(
     m.members.map((n) => n.id),
     ["bj", "hk", "jp", "us4", "us1", "us2", "de", "x"],
-    "region, then country, then name; the probe source sits in the left column",
+    "region, then country, then name; the source sits in the left column",
   );
   assert.deepEqual(m.sources.map((n) => n.id), ["sh"]);
 });
 
-/* ---- Probe classification ---- */
+/* ---- Edges from the matrix ---- */
 
-test("probe edges are the matrix's paths in their display state; not-probeable draws nothing", () => {
+test("path edges are the matrix's paths in their display state; a target with nothing to dial is unknown with its reason", () => {
   const m = buildTopology(input());
-  assert.equal(edge(m, "probe:sh~hk").state, "up");
-  assert.equal(edge(m, "probe:sh~us1").state, "degraded");
-  assert.equal(edge(m, "probe:sh~us1").reason, "degraded_loss");
-  assert.equal(edge(m, "probe:sh~us2").state, "down");
-  assert.equal(edge(m, "probe:sh~us4").state, "unknown", "a stale path is the server's unknown, never a colour");
-  assert.equal(edge(m, "probe:sh~us4").reason, "results_stopped");
-  assert.equal(edge(m, "probe:sh~de").state, "paused");
-  assert.equal(m.edges.find((e) => e.to === "jp"), undefined, "a UDP-only target has no probe to draw");
-  assert.deepEqual(
-    { paths: m.counts.paths, down: m.counts.down, degraded: m.counts.degraded, unknown: m.counts.unknown, paused: m.counts.paused },
-    { paths: 5, down: 1, degraded: 1, unknown: 1, paused: 1 },
-  );
+  assert.equal(edge(m, "path:sh>hk").state, "up");
+  assert.equal(edge(m, "path:sh>us1").state, "degraded");
+  assert.equal(edge(m, "path:sh>us1").reason, "degraded_loss");
+  assert.equal(edge(m, "path:sh>us2").state, "down");
+  assert.equal(edge(m, "path:sh>us4").state, "unknown", "a stale path is the server's unknown, never a colour");
+  assert.equal(edge(m, "path:sh>us4").reason, "results_stopped");
+  assert.equal(edge(m, "path:sh>de").state, "paused");
+  // Design 32 D1: no path is left out of the drawing, so the drawing never counts fewer than the page.
+  assert.equal(edge(m, "path:sh>jp").state, "unknown");
+  assert.equal(edge(m, "path:sh>jp").reason, "not_probeable");
+  assert.equal(m.counts.drawn, 6);
+  assert.equal(m.counts.undrawn, 0);
 });
 
 test("state tones are the only colour: up, degraded and down solid in their tone, unknown dashed and paused dotted, both muted", () => {
   const m = buildTopology(input());
   const style = (id: string) => edgeStyle(edge(m, id));
-  assert.deepEqual([style("probe:sh~hk").color, style("probe:sh~hk").stroke], ["--success", "solid"]);
-  assert.deepEqual([style("probe:sh~us1").color, style("probe:sh~us1").stroke], ["--warning", "solid"]);
-  assert.deepEqual([style("probe:sh~us2").color, style("probe:sh~us2").stroke], ["--destructive", "solid"]);
-  assert.deepEqual([style("probe:sh~us4").color, style("probe:sh~us4").stroke], ["--muted-foreground", "dashed"]);
-  assert.deepEqual([style("probe:sh~de").color, style("probe:sh~de").stroke], ["--muted-foreground", "dotted"]);
-  // No latency band colours a probe any more: fast or slow, an up path is the up tone.
-  for (const e of m.edges.filter((x) => x.kind === "probe")) assert.ok(Object.values(PROBE_TONE).includes(edgeStyle(e).color), e.id);
+  assert.deepEqual([style("path:sh>hk").color, style("path:sh>hk").stroke], ["--success", "solid"]);
+  assert.deepEqual([style("path:sh>us1").color, style("path:sh>us1").stroke], ["--warning", "solid"]);
+  assert.deepEqual([style("path:sh>us2").color, style("path:sh>us2").stroke], ["--destructive", "solid"]);
+  assert.deepEqual([style("path:sh>us4").color, style("path:sh>us4").stroke], ["--muted-foreground", "dashed"]);
+  assert.deepEqual([style("path:sh>de").color, style("path:sh>de").stroke], ["--muted-foreground", "dotted"]);
+  for (const e of m.edges.filter((x) => x.kind === "path")) assert.ok(Object.values(PATH_TONE).includes(edgeStyle(e).color), e.id);
 });
 
 test("freshness is the server's: a path it reads up stays up whatever the node list says of its source", () => {
   const nodes = NODES.map((n) => (n.id === "sh" ? ({ ...n, status: "offline", online: false, last_seen: ago(3_600_000) } as Node) : n));
   const m = buildTopology(input({ nodes }));
-  assert.equal(edge(m, "probe:sh~hk").state, "up");
-  assert.equal(edge(m, "probe:sh~us4").state, "unknown");
+  assert.equal(edge(m, "path:sh>hk").state, "up");
+  assert.equal(edge(m, "path:sh>us4").state, "unknown");
 });
 
 test("the last sample rides on the edge with its time", () => {
   const m = buildTopology(input());
-  assert.deepEqual(edge(m, "probe:sh~hk").last, { at: NOW - 20_000, ok: undefined }, "a path says when it last heard, not how that run went");
-  assert.equal(edge(m, "probe:sh~us2").last!.ok, false);
+  assert.deepEqual(edge(m, "path:sh>hk").last, { at: NOW - 20_000, ok: undefined }, "a path says when it last heard, not how that run went");
+  assert.equal(edge(m, "path:sh>us2").last!.ok, false);
+});
+
+/* ---- Checks are paths ---- */
+
+test("a check to a node is an edge between two real nodes: no pseudo-node, and one target appears once", () => {
+  const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "down", loss: 1 });
+  const m = buildTopology(input({ matrix: matrixOf([...PATHS, ping]) }));
+  const pair = edge(m, "path:sh>hk");
+  // Two checks measure sh to hk: one edge, in the worst live state, that lists each check.
+  assert.equal(pair.state, "down");
+  assert.deepEqual(pair.paths!.map((p) => p.key), ["sh~@ping", "sh~hk"]);
+  assert.equal(pair.pathKey, "sh~@ping", "it opens the path that speaks for it");
+  assert.equal(m.edges.filter((e) => e.to === "hk" && e.kind === "path").length, 1);
+  assert.ok(!m.members.some((n) => n.id.startsWith("@")), "every row is a node");
+  assert.deepEqual(m.addresses, []);
+  assert.equal(m.counts.drawn, 7);
+});
+
+test("a check that cannot run does not grey a pair another check measures; the edge still lists it", () => {
+  const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "unknown", reason: "icmp_not_permitted", samples: 0 });
+  const m = buildTopology(input({ matrix: matrixOf([...PATHS, ping]) }));
+  const pair = edge(m, "path:sh>hk");
+  assert.equal(pair.state, "up");
+  assert.equal(pair.p50Ms, 34);
+  assert.deepEqual(pair.paths!.map((p) => p.key), ["sh~hk", "sh~@ping"]);
+  // Only checks that cannot run: the pair reads unknown, with the reason.
+  const alone = buildTopology(input({ matrix: matrixOf([ping]) }));
+  assert.equal(edge(alone, "path:sh>hk").state, "unknown");
+  assert.equal(edge(alone, "path:sh>hk").reason, "icmp_not_permitted");
+});
+
+test("an address keeps one terminal however many checks and sources dial it; a certificate check leaves the control plane", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }, { node_id: "", name: "Control plane" }];
+  const url = "https://status.example.net/healthz";
+  const paths = [
+    ...PATHS,
+    check("sh", "web", { target: url, method: "http", state: "up", p50_ms: 120 }),
+    check("bj", "web", { target: url, method: "http", state: "down", loss: 1 }),
+    check("", "cert", { target: "sub.example.net:443", method: "tls", state: "up" }),
+  ];
+  const two = plan({ config: { ...plan().config, sources: ["sh", "bj"] } });
+  const m = buildTopology(input({ plan: two, matrix: matrixOf(paths, sources) }));
+  assert.deepEqual(
+    m.addresses.map((a) => [a.id, a.address, a.methods, a.checks, a.counts.paths, a.counts.down]),
+    [
+      // Down first, then by address.
+      [addressEndpoint(url), url, ["http"], ["Status page"], 2, 1],
+      [addressEndpoint("sub.example.net:443"), "sub.example.net:443", ["tls"], ["sub cert"], 1, 0],
+    ],
+  );
+  assert.equal(edge(m, `path:sh>${addressEndpoint(url)}`).state, "up");
+  assert.equal(edge(m, `path:bj>${addressEndpoint(url)}`).state, "down");
+  assert.equal(edge(m, `path:${CONTROL_PLANE}>${addressEndpoint("sub.example.net:443")}`).from, CONTROL_PLANE);
+  assert.equal(m.counts.drawn, paths.length);
+  // The terminal's line: red when one of its paths is down.
+  const t = (key: string, named: Record<string, unknown> = {}) => `${key.split(".").pop()} ${Object.values(named).join("/")}`;
+  assert.deepEqual(addressLineValue(t, m.addresses[0]!), { text: "down 1/2", tone: "text-destructive" });
+  assert.deepEqual(addressLineValue(t, m.addresses[1]!), { text: "up 1/1", tone: "text-muted-foreground" });
 });
 
 /* ---- Sources: one fan each, the picker, ?topo.sources= ---- */
 
 const NINE = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
-function nineSources(): TopologyInput {
-  const sources = NINE.map((id) => ({ node_id: id, name: `src-${id}` }));
-  const paths: PathView[] = [];
-  NINE.forEach((source, i) => {
-    paths.push(probe(source, "hk", { state: i === 1 ? "down" : "up", p50_ms: 30 + i }));
-    paths.push(probe(source, "de", { state: i === 2 ? "degraded" : "up", p50_ms: 240 + i, reason: i === 2 ? "degraded_latency" : undefined }));
-  });
-  // The path set's order is its own (sorted ids), not the matrix's.
-  const p = plan({ config: { ...plan().config, sources: [...NINE].reverse() } });
-  return input({ plan: p, matrix: matrixOf(paths, sources), chains: [], layer: "probes" });
-}
-
-/** nineSources with its paths changed before the matrix is built. */
-function withPaths(change: (p: PathView) => PathView): TopologyInput {
-  const sources = NINE.map((id) => ({ node_id: id, name: `src-${id}` }));
+function ninePaths(change: (p: PathView) => PathView = (p) => p): PathView[] {
   const paths: PathView[] = [];
   NINE.forEach((source, i) => {
     paths.push(change(probe(source, "hk", { state: i === 1 ? "down" : "up", p50_ms: 30 + i })));
     paths.push(change(probe(source, "de", { state: i === 2 ? "degraded" : "up", p50_ms: 240 + i, reason: i === 2 ? "degraded_latency" : undefined })));
   });
-  return { ...nineSources(), matrix: matrixOf(paths, sources) };
+  return paths;
+}
+
+function nineSources(change?: (p: PathView) => PathView): TopologyInput {
+  const sources = NINE.map((id) => ({ node_id: id, name: `src-${id}` }));
+  // The path set's order is its own (sorted ids), not the matrix's.
+  const p = plan({ config: { ...plan().config, sources: [...NINE].reverse() } });
+  return input({ plan: p, matrix: matrixOf(ninePaths(change), sources), chains: [], layer: "paths" });
 }
 
 test("by default the first four sources in the path set's order are drawn, each with its own fan", () => {
@@ -252,24 +310,49 @@ test("by default the first four sources in the path set's order are drawn, each 
   assert.deepEqual(m.drawnSourceIds, ["s9", "s8", "s7", "s6"]);
   assert.equal(m.sourceChoices.length, 9, "the picker lists every source");
   assert.deepEqual(m.sourceChoices.filter((c) => c.drawn).map((c) => c.node.id), ["s9", "s8", "s7", "s6"]);
-  for (const source of m.drawnSourceIds) assert.equal(m.edges.filter((e) => e.kind === "probe" && e.from === source).length, 2, `${source}'s fan`);
-  assert.equal(m.edges.filter((e) => e.kind === "probe").length, 8, "undrawn sources draw nothing");
-  assert.equal(m.counts.paths, 8);
+  for (const source of m.drawnSourceIds) assert.equal(m.edges.filter((e) => e.kind === "path" && e.from === source).length, 2, `${source}'s fan`);
+  assert.equal(m.edges.filter((e) => e.kind === "path").length, 8, "undrawn sources draw nothing");
+  // The page's count holds every path: the drawing says how many it leaves to the picker.
+  assert.equal(m.counts.drawn, 8);
+  assert.equal(m.counts.undrawn, 10);
   const layout = layoutTopology(m, { width: 1200 });
   assert.equal(layout.sources.length, 4);
   for (const le of layout.edges) assert.equal(le.bundle.length, 1, "one line per source and target: fans never merge");
 });
 
-test("the picker's choice draws those sources in the path set's order; one that stopped probing falls back to the default", () => {
+test("the picker's choice draws those sources in the path set's order; one that stopped running falls back to the default", () => {
   const m = buildTopology({ ...nineSources(), drawnSources: ["s2", "s3", "s1"] });
   assert.deepEqual(m.drawnSourceIds, ["s3", "s2", "s1"]);
-  assert.equal(edge(m, "probe:s2~hk").state, "down");
-  assert.equal(edge(m, "probe:s3~de").state, "degraded");
+  assert.equal(edge(m, "path:s2>hk").state, "down");
+  assert.equal(edge(m, "path:s3>de").state, "degraded");
   const reach = m.sourceChoices.find((c) => c.node.id === "s2")!.reach;
   assert.deepEqual([reach.up, reach.down, reach.degraded, reach.total], [1, 1, 0, 2], "reach counts for the picker");
   assert.deepEqual(buildTopology({ ...nineSources(), drawnSources: ["gone"] }).drawnSourceIds, ["s9", "s8", "s7", "s6"]);
   assert.deepEqual(drawnSources(["a", "b"], undefined), ["a", "b"]);
-  assert.deepEqual(probeSourceOrder(undefined, matrixOf(PATHS)), ["sh"], "without the plan, the matrix's sources");
+  assert.deepEqual(sourceOrder(undefined, matrixOf(PATHS)), ["sh"], "without the plan, the matrix's sources");
+});
+
+test("a source the plan notes as gone comes last but can still be drawn, so every path the page counts can be", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "old", name: "retired" }, { node_id: "bj", name: "cd-bj-iplc" }];
+  const paths = [...PATHS, probe("old", "hk", { state: "unknown", reason: "source_unavailable", samples: 0 }), probe("bj", "hk", { state: "up", p50_ms: 30 })];
+  const p = plan({ config: { ...plan().config, sources: ["old", "sh", "bj"] }, source_notes: { old: "deleted" } } as Partial<LatencyProbePlan>);
+  assert.deepEqual(sourceOrder(p, matrixOf(paths, sources)), ["sh", "bj", "old"]);
+  const m = buildTopology(input({ plan: p, matrix: matrixOf(paths, sources), drawnSources: ["sh"] }));
+  assert.equal(m.counts.undrawn, 2);
+  // "Draw all" draws it: nothing the page counts is out of reach.
+  const every = buildTopology(input({ plan: p, matrix: matrixOf(paths, sources), drawnSources: m.sourceChoices.map((c) => c.node.id) }));
+  assert.equal(every.counts.undrawn, 0);
+  assert.equal(edge(every, "path:old>hk").state, "unknown");
+});
+
+test("a check's own sources are offered after the path set's, so a check from any node can be drawn", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "us1", name: "DMIT-pro-malibu" }];
+  const relay = check("us1", "relay", { target_node: "hk", target: "203.0.113.21:443", state: "up", p50_ms: 160 });
+  const m = buildTopology(input({ matrix: matrixOf([...PATHS, relay], sources) }));
+  assert.deepEqual(m.sourceChoices.map((c) => c.node.id), ["sh", "us1"]);
+  assert.deepEqual(m.drawnSourceIds, ["sh", "us1"]);
+  assert.equal(edge(m, "path:us1>hk").state, "up");
+  assert.ok(!m.members.some((n) => n.id === "us1"), "a drawn source sits in the left column only");
 });
 
 test("a target row carries one mark per drawn source, in the picker's order", () => {
@@ -279,76 +362,97 @@ test("a target row carries one mark per drawn source, in the picker's order", ()
     { source: "s2", state: "down" },
     { source: "s1", state: "up" },
   ]);
-  assert.deepEqual(rowMarks(m, "jp"), [{ source: "s3", state: undefined }, { source: "s2", state: undefined }, { source: "s1", state: undefined }], "no path, no state");
+  assert.deepEqual(rowMarks(m, "jp"), [{ source: "s3", state: undefined }, { source: "s2", state: undefined }, { source: "s1", state: undefined }], "not measured, no state");
 });
 
-test("several sources: a target row summarises across them; one failing source does not read as the node down", () => {
+test("several sources: a target row summarises across every source that probes it; one failing source does not read as the node down", () => {
   const m = buildTopology({ ...nineSources(), drawnSources: ["s1", "s2", "s3", "s4"] });
-  // hk: s2 is down, s1, s3 and s4 reach it.
-  assert.deepEqual(rowSummary(m, "hk"), { state: "down", n: 1, of: 4 });
+  // hk: s2 is down, the other eight reach it, drawn or not.
+  assert.deepEqual(rowSummary(m, "hk"), { state: "down", n: 1, of: 9 });
   // de: s3 is degraded, the rest up.
-  assert.deepEqual(rowSummary(m, "de"), { state: "degraded", n: 1, of: 4 });
-  // Every drawn source up: the row says so across all of them, not the slowest one's p50.
-  const up = buildTopology({ ...nineSources(), drawnSources: ["s1", "s4", "s5"] });
-  assert.deepEqual(rowSummary(up, "hk"), { state: "up", n: 3, of: 3 });
+  assert.deepEqual(rowSummary(m, "de"), { state: "degraded", n: 1, of: 9 });
+  // Drawing more or other sources never changes what a row says (design 32 D1: one count).
+  for (const drawn of [["s5", "s6"], NINE]) {
+    const other = buildTopology({ ...nineSources(), drawnSources: [...drawn] });
+    assert.deepEqual(rowSummary(other, "hk"), rowSummary(m, "hk"), `drawn ${drawn.join(",")}`);
+  }
+  // Every source up: the row says so across all of them, not the slowest one's p50.
+  const allUp = (change?: (p: PathView) => PathView) => nineSources((p) => {
+    const next = p.source === "s2" && p.target_node === "hk" ? { ...p, state: "up" } : p;
+    return change ? change(next) : next;
+  });
+  assert.deepEqual(rowSummary(buildTopology({ ...allUp(), drawnSources: ["s1", "s4", "s5"] }), "hk"), { state: "up", n: 9, of: 9 });
   // A source whose path went unknown is counted among those with a path, not among the up ones.
   const stale = { state: "unknown", reason: "results_stopped", samples: 0 };
-  const unknownOne = withPaths((p) => (p.source === "s4" && p.target_node === "hk" ? { ...p, ...stale } : p));
-  assert.deepEqual(rowSummary(buildTopology({ ...unknownOne, drawnSources: ["s1", "s4", "s5"] }), "hk"), { state: "up", n: 2, of: 3 });
-  // Nothing live: the worst of the rest speaks.
-  const dead = withPaths((p) => (p.target_node === "hk" ? { ...p, ...stale } : p));
-  assert.equal(rowSummary(buildTopology({ ...dead, drawnSources: ["s1", "s4"] }), "hk")!.state, "unknown");
+  const unknownOne = allUp((p) => (p.source === "s4" && p.target_node === "hk" ? { ...p, ...stale } : p));
+  assert.deepEqual(rowSummary(buildTopology({ ...unknownOne, drawnSources: ["s1", "s4", "s5"] }), "hk"), { state: "up", n: 8, of: 9 });
+  // Nothing live: the worst of the rest speaks, and says why.
+  const dead = nineSources((p) => (p.target_node === "hk" ? { ...p, ...stale } : p));
+  assert.deepEqual(rowSummary(buildTopology({ ...dead, drawnSources: ["s1", "s4"] }), "hk"), { state: "unknown", n: 9, of: 9, reason: "results_stopped" });
   // One source drawn: no summary, the edge's own value speaks.
   assert.equal(rowSummary(buildTopology({ ...nineSources(), drawnSources: ["s2"] }), "hk"), undefined);
   assert.equal(rowSummary(m, "jp"), undefined, "no path into the row");
 });
 
-test("the row summary's words exist in both locales, under the keys the copy reads", () => {
+/* ---- One vocabulary (design 32 D1) ---- */
+
+/** A tiny t over a locale's messages: walks the key path and fills {placeholders}; a missing key comes back as the key. */
+function translator(messages: Record<string, unknown>) {
+  return (key: string, named: Record<string, unknown> = {}) => {
+    const found = key.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined), messages);
+    return typeof found === "string" ? found.replace(/\{(\w+)\}/g, (_, k: string) => String(named[k] ?? "")) : key;
+  };
+}
+
+test("the row summary's words exist in both locales, and unknown says why", () => {
   for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
-    // A tiny t: walks the key path through the messages and fills {placeholders}; a missing key comes back as the key.
-    const t = (key: string, named: Record<string, unknown> = {}) => {
-      const found = key.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined), messages);
-      return typeof found === "string" ? found.replace(/\{(\w+)\}/g, (_, k: string) => String(named[k] ?? "")) : key;
-    };
+    const t = translator(messages);
     for (const summary of [
       { state: "down", n: 1, of: 4 },
       { state: "degraded", n: 2, of: 4 },
       { state: "up", n: 3, of: 4 },
       { state: "up", n: 4, of: 4 },
-      { state: "unknown", n: 4, of: 4 },
+      { state: "unknown", n: 4, of: 4, reason: "agent_offline" },
+      { state: "unknown", n: 1, of: 4, reason: "results_stopped" },
       { state: "paused", n: 1, of: 1 },
+      { state: "paused", n: 1, of: 2 },
     ] as const) {
       const v = rowSummaryValue(t, summary);
       assert.ok(!v.text.startsWith("fleet."), `${v.text} resolves`);
-      if (summary.state !== "unknown" && summary.state !== "paused") assert.match(v.text, new RegExp(String(summary.of)));
+      // Every source unknown or paused: the marks say "all", the words say why.
+      if (summary.n !== summary.of || summary.state === "down" || summary.state === "degraded" || summary.state === "up") assert.match(v.text, new RegExp(String(summary.of)));
+      if (summary.state === "unknown") assert.ok(v.text.includes(t(`fleet.monitoring.paths.reasonShort.${summary.reason}`)), `${v.text} carries its reason`);
     }
   }
-  const en = (key: string, named: Record<string, unknown> = {}) => {
-    const leaf = key.split(".").pop()!;
-    const state = leaf.replace(/All$/, "");
-    return leaf.endsWith("All") ? `${state} from all ${named.of}` : `${state} from ${named.n} of ${named.of}`;
-  };
+  const en = translator(enFleet as unknown as Record<string, unknown>);
   assert.deepEqual(rowSummaryValue(en, { state: "down", n: 1, of: 4 }), { text: "down from 1 of 4", tone: "text-destructive" });
-  // Every drawn source reading the state says "all", whichever state it is.
   assert.deepEqual(rowSummaryValue(en, { state: "down", n: 4, of: 4 }), { text: "down from all 4", tone: "text-destructive" });
   assert.deepEqual(rowSummaryValue(en, { state: "degraded", n: 3, of: 3 }), { text: "degraded from all 3", tone: "text-warning-text" });
-  assert.deepEqual(rowSummaryValue(en, { state: "degraded", n: 2, of: 3 }), { text: "degraded from 2 of 3", tone: "text-warning-text" });
   assert.deepEqual(rowSummaryValue(en, { state: "up", n: 4, of: 4 }), { text: "up from all 4", tone: "text-foreground" });
+  assert.deepEqual(rowSummaryValue(en, { state: "unknown", n: 2, of: 2, reason: "agent_offline" }), { text: "unknown: agent offline", tone: "text-muted-foreground" });
 });
 
-test("a check card's line: red when failing, amber only when degraded, muted when the rest are only stale, silent or paused", () => {
-  const t = (key: string, named: Record<string, unknown> = {}) => `${key.split(".").pop()} ${Object.values(named).join("/")}`;
-  const check = (summary: Partial<Record<"up" | "degraded" | "failing" | "stale" | "none", number>>, enabled = true) => {
-    const s = { up: 0, degraded: 0, failing: 0, stale: 0, none: 0, ...summary };
-    const total = s.up + s.degraded + s.failing + s.stale + s.none;
-    return { enabled, sourceIds: Array.from({ length: total }, (_, i) => `n${i}`), summary: s };
-  };
-  assert.deepEqual(checkLineValue(t, check({ up: 2, failing: 1 })), { text: "failing 1/3", tone: "text-destructive" });
-  assert.deepEqual(checkLineValue(t, check({ up: 2, degraded: 1, stale: 1 })), { text: "degraded 1/4", tone: "text-warning-text" });
-  // Two pass and the others are stale or have no result: that is unknown, never amber.
-  assert.deepEqual(checkLineValue(t, check({ up: 2, stale: 1, none: 1 })), { text: "summary 2/4", tone: "text-muted-foreground" });
-  assert.deepEqual(checkLineValue(t, check({ up: 3 })), { text: "summary 3/3", tone: "text-muted-foreground" });
-  assert.deepEqual(checkLineValue(t, check({ up: 3 }, false)), { text: "disabled ", tone: "text-muted-foreground" });
+test("an edge says up, degraded, down, paused or unknown, and unknown always carries its reason", () => {
+  const removed = /no path|not probed|nothing heard|no data/i;
+  for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
+    const t = translator(messages);
+    const m = buildTopology(input());
+    for (const e of m.edges.filter((x) => x.kind === "path")) {
+      const words = [stateLabel(t, e), edgeValue(t, e).text];
+      for (const w of words) assert.ok(!w.startsWith("fleet."), `${e.id}: ${w} resolves`);
+      if (e.state === "unknown") assert.ok(stateLabel(t, e).includes(t(`fleet.monitoring.paths.reasonShort.${e.reason}`)), `${e.id} says why`);
+      if (messages === (enFleet as unknown)) for (const w of words) assert.doesNotMatch(w, removed, `${e.id}: ${w}`);
+    }
+  }
+  const en = translator(enFleet as unknown as Record<string, unknown>);
+  const m = buildTopology(input());
+  assert.equal(stateLabel(en, edge(m, "path:sh>us4")), "unknown: results stopped");
+  assert.equal(stateLabel(en, edge(m, "path:sh>jp")), "unknown: nothing to dial");
+  assert.equal(edgeValue(en, edge(m, "path:sh>de")).text, "paused");
+  assert.equal(edgeValue(en, edge(m, "path:sh>hk")).text, "34 ms");
+  // An unknown reason the console has no words for is shown as the server sent it.
+  assert.equal(stateLabel(en, { kind: "path", state: "unknown", reason: "brand_new_reason" }), "unknown: brand_new_reason");
+  assert.equal(stateLabel(en, { kind: "path", state: "unknown" }), "unknown: no reason given");
 });
 
 test("?topo.sources= round trips: ids comma separated, the default written as nothing", () => {
@@ -360,6 +464,44 @@ test("?topo.sources= round trips: ids comma separated, the default written as no
   assert.equal(formatDrawnSources(["s1", "s2"], ["s9", "s8", "s7", "s6"]), "s1,s2");
   assert.deepEqual(parseDrawnSources(formatDrawnSources(["s1", "s2"], [])), ["s1", "s2"]);
   assert.equal(formatDrawnSources([], ["a"]), undefined);
+});
+
+test("?topo= keeps all, paths and chains; the old probes and checks filters both show paths", () => {
+  assert.equal(parseTopologyLayer(undefined), "all");
+  assert.equal(parseTopologyLayer("chains"), "chains");
+  assert.equal(parseTopologyLayer("paths"), "paths");
+  assert.equal(parseTopologyLayer("probes"), "paths");
+  assert.equal(parseTopologyLayer("checks"), "paths");
+  assert.equal(parseTopologyLayer("nonsense"), "all");
+});
+
+/* ---- The query in graph mode ---- */
+
+test("a query keeps matching edges and their ends at full strength and fades the rest; every match is drawn", () => {
+  const all = buildTopology(nineSources());
+  assert.equal(all.filtering, false);
+  assert.ok(all.edges.every((e) => e.matched), "without a query everything keeps full strength");
+  assert.ok(endMatched(all, "s9") && endMatched(all, "hk"));
+  // s5 is not among the default four, and its path to hk matches: it is drawn while the query holds.
+  const matching = new Set(["s5~hk", "s2~hk"]);
+  const m = buildTopology({ ...nineSources(), matching });
+  assert.deepEqual(m.drawnSourceIds, ["s9", "s8", "s7", "s6", "s5", "s2"]);
+  assert.deepEqual(m.edges.filter((e) => e.matched).map((e) => e.id).sort(), ["path:s2>hk", "path:s5>hk"]);
+  assert.equal(edge(m, "path:s9>hk").matched, false);
+  assert.equal(edge(m, "path:s5>de").matched, false);
+  assert.ok(endMatched(m, "s5") && endMatched(m, "s2") && endMatched(m, "hk"));
+  assert.ok(!endMatched(m, "s9") && !endMatched(m, "de"));
+  // The graph and the list count the same: every path the query keeps is on a matching edge.
+  const onEdges = m.edges.flatMap((e) => (e.matched ? e.paths!.filter((p) => matching.has(p.key)) : []));
+  assert.equal(onEdges.length, matching.size);
+  // The query's sources are drawn but not picked: the picker locks them and never writes them to the address.
+  assert.deepEqual(m.sourceChoices.filter((c) => c.forced).map((c) => c.node.id), ["s5", "s2"]);
+  assert.deepEqual(m.sourceChoices.filter((c) => c.drawn && !c.forced).map((c) => c.node.id), ["s9", "s8", "s7", "s6"]);
+  assert.ok(all.sourceChoices.every((c) => !c.forced));
+  // A query that keeps one of a pair's checks opens that one.
+  const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "up", p50_ms: 36 });
+  const pair = buildTopology(input({ matrix: matrixOf([...PATHS, ping]), matching: new Set(["sh~@ping"]) }));
+  assert.equal(edge(pair, "path:sh>hk").pathKey, "sh~@ping");
 });
 
 /* ---- Chains ---- */
@@ -376,6 +518,9 @@ test("chains run relay to exit; a planned chain with no exit yet is counted, not
   assert.equal(m.counts.chainsUnplaced, 1);
   assert.equal(m.nodes.get("hk")!.relay && m.nodes.get("hk")!.exit, true, "a middle hop is both");
   assert.equal(edgeStyle(chains[0]!).color, "--primary");
+  assert.ok(chains.every((e) => e.matched), "without a query every chain keeps full strength");
+  const filtered = buildTopology(input({ matching: new Set(["sh~hk"]) }));
+  assert.ok(filtered.edges.filter((e) => e.kind === "chain").every((e) => !e.matched), "the query reads paths, so a chain fades under one");
 });
 
 test("chain status words", () => {
@@ -387,70 +532,15 @@ test("chain status words", () => {
   assert.equal(chainState({ status: "drifted", attempt: null }), "drifted");
 });
 
-/* ---- Checks ---- */
-
-test("checks run from their nodes, a certificate watch from the control plane, and stale results say so", () => {
-  const monitors = [
-    monitor({ id: "relay", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", node_ids: ["us1", "de"], latest: [
-      { node_id: "us1", at: ago(10_000), success: false, fail_streak: 3, since: ago(60_000) },
-      { node_id: "de", at: ago(3_600_000), success: true, fail_streak: 0, since: ago(86_400_000) },
-    ] }),
-    monitor({ id: "tls", name: "sub cert", type: "tls", target: "sub.example.net:443", interval_sec: 3600, latest: [{ node_id: "", at: ago(600_000), success: true, fail_streak: 0, since: ago(86_400_000) }] }),
-    monitor({ id: "gen", name: "Latency to hk", type: "tcp", managed_by: "latency" }),
-  ];
-  const m = buildTopology(input({ monitors }));
-  assert.deepEqual(m.checks.map((c) => c.monitorId), ["relay", "tls"], "generated monitors are the probes, not checks; failing first");
-  assert.equal(edge(m, "check:relay:us1").state, "failing");
-  assert.equal(edge(m, "check:relay:de").state, "stale");
-  assert.equal(edge(m, "check:tls:@cp").from, CONTROL_PLANE);
-  assert.equal(edge(m, "check:tls:@cp").state, "up", "an hourly watch heard ten minutes ago is current");
-  assert.equal(m.counts.checksFailing, 1);
-});
-
-test("an every-node check draws only the sources with news and counts the rest", () => {
-  const latestFor = NODES.filter((n) => n.status !== "offline").map((n, i) => ({ node_id: n.id, at: ago(5_000), success: i !== 2, fail_streak: i === 2 ? 4 : 0, since: ago(60_000) }));
-  const m = buildTopology(input({ monitors: [monitor({ id: "all", assign_all: true, latest: latestFor })] }));
-  const check = m.checks[0]!;
-  assert.equal(check.fannedOut, NODES.length - 0 > CHECK_FAN);
-  assert.equal(check.sourceIds.length, NODES.length, "every listed node runs it");
-  assert.deepEqual(check.summary, { up: 7, degraded: 0, failing: 1, stale: 0, none: 1 });
-  assert.deepEqual(m.edges.filter((e) => e.kind === "check").map((e) => [e.from, e.state]).sort(), [["hk", "failing"], ["us4", "none"]]);
-});
-
-test("a check edge reads degraded where its newest run passes on a path the matrix judges degraded (design 29 D13)", () => {
-  const latest = ["sh", "hk", "de"].map((id) => ({ node_id: id, at: ago(5_000), success: id !== "de", fail_streak: id === "de" ? 1 : 0, since: ago(60_000) }));
-  const web = monitor({ id: "web", name: "web", type: "tcp", target: "203.0.113.9:443", node_ids: ["sh", "hk", "de"], latest });
-  // The check's own matrix row: degraded from sh and from de (whose newest run failed), up from hk.
-  const checkPath = (source: string, state: string) => ({ source, target: "203.0.113.9:443", monitor_id: "web", managed: false, method: "tcp", state, samples: 60, expected: 60, ...(state === "degraded" ? { reason: "degraded_latency" } : {}) });
-  const matrix = matrixOf([...PATHS, checkPath("sh", "degraded"), checkPath("hk", "up"), checkPath("de", "degraded")]);
-  const m = buildTopology(input({ matrix, monitors: [web] }));
-  assert.equal(edge(m, "check:web:sh").state, "degraded");
-  assert.equal(edge(m, "check:web:hk").state, "up");
-  assert.equal(edge(m, "check:web:de").state, "failing", "a failed newest run stays failing");
-  assert.deepEqual(m.checks[0]!.summary, { up: 1, degraded: 1, failing: 1, stale: 0, none: 0 });
-  assert.deepEqual(edgeStyle(edge(m, "check:web:sh")), { color: "--warning", stroke: "solid", width: 1.75 });
-  assert.deepEqual(edgeValue((key) => key, edge(m, "check:web:sh")), { text: "fleet.monitoring.topology.state.degraded", tone: "text-warning-text" });
-  // Without the matrix (not read yet) the newest run is all there is.
-  assert.equal(edge(buildTopology(input({ matrix: undefined, monitors: [web] })), "check:web:sh").state, "up");
-  // The check card and the edge label have words for it in both locales.
-  for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
-    const word = (key: string) => key.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined), messages);
-    assert.match(String(word("fleet.monitoring.topology.check.degraded")), /\{n\}.*\{total\}|\{total\}.*\{n\}/);
-    assert.equal(typeof word("fleet.monitoring.topology.state.degraded"), "string");
-  }
-});
-
 /* ---- Layers, control plane, incidents ---- */
 
-test("each layer keeps only its own nodes and edges", () => {
-  const probes = buildTopology(input({ layer: "probes" }));
-  assert.deepEqual(new Set(probes.edges.map((e) => e.kind)), new Set(["probe"]));
-  assert.deepEqual(probes.members.map((n) => n.id), ["hk", "jp", "us4", "us1", "us2", "de"]);
+test("each filter keeps only its own nodes and edges", () => {
+  const paths = buildTopology(input({ layer: "paths" }));
+  assert.deepEqual(new Set(paths.edges.map((e) => e.kind)), new Set(["path"]));
+  assert.deepEqual(paths.members.map((n) => n.id), ["hk", "jp", "us4", "us1", "us2", "de"]);
   const chains = buildTopology(input({ layer: "chains" }));
-  assert.deepEqual(chains.sources, [], "the left column holds probe sources only");
+  assert.deepEqual(chains.sources, [], "the left column holds sources only");
   assert.deepEqual(chains.members.map((n) => n.id), ["bj", "hk", "us1"]);
-  const checks = buildTopology(input({ layer: "checks", monitors: [monitor({ id: "m", node_ids: ["de"] })] }));
-  assert.deepEqual(checks.members.map((n) => n.id), ["de"]);
 });
 
 test("the control plane counts heartbeat freshness over the node list, and says when it had none", () => {
@@ -476,19 +566,20 @@ test("open and acknowledged incidents mark their node; pending and resolved do n
   assert.equal(m.nodes.get("hk")!.incidents, 0);
 });
 
-test("lists run worst first; a row reports its worst probe and how many there are", () => {
-  const m = buildTopology(input());
-  assert.deepEqual(pathsWorstFirst(m).slice(0, 3).map((e) => e.id), ["probe:sh~us2", "probe:sh~us1", "chain:line-hk"]);
+test("a row reports its worst path and how many there are", () => {
   const two = plan({ config: { ...plan().config, sources: ["sh", "bj"] } });
   const paths = [...PATHS, probe("bj", "hk", { state: "down", loss: 1 })];
-  const m3 = buildTopology(input({ plan: two, matrix: matrixOf(paths, [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }]) }));
-  const row = rowProbe(m3, "hk")!;
+  const m = buildTopology(input({ plan: two, matrix: matrixOf(paths, [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }]) }));
+  const row = rowPath(m, "hk")!;
   assert.equal(row.count, 2);
   assert.equal(row.edge.state, "down");
-  assert.equal(rowProbe(m3, "jp"), undefined);
+  assert.equal(rowPath(m, "x"), undefined);
 });
 
 /* ---- Layout ---- */
+
+/** A check to an address from `source`, so the drawing has a terminal column. */
+const ADDRESS_CHECK = (source = "sh") => check(source, "web", { target: "https://status.example.net/healthz", method: "http", state: "up", p50_ms: 120 });
 
 test("layout is deterministic and keeps sources left, rows in one column, chains as arcs on its right edge", () => {
   const m = buildTopology(input());
@@ -508,16 +599,16 @@ test("layout is deterministic and keeps sources left, rows in one column, chains
   assert.ok(a.height >= a.rows[a.rows.length - 1]!.y + ROW_H);
 });
 
-test("the sources sit right under the control plane and the checks start at the top, however tall the column", () => {
-  const monitors = [monitor({ id: "a", node_ids: ["de"] }), monitor({ id: "b", node_ids: ["hk"] })];
-  const small = layoutTopology(buildTopology(input({ monitors })), { width: 1200 });
-  const tall = layoutTopology(buildTopology(fleet(COLLAPSE_AT, { layer: "all", monitors: [monitor({ id: "a", node_ids: ["n000"] }), monitor({ id: "b", node_ids: ["n001"] })] })), { width: 1200 });
+test("the sources sit right under the control plane and the addresses start at the top, however tall the column", () => {
+  const small = layoutTopology(buildTopology(input({ matrix: matrixOf([...PATHS, ADDRESS_CHECK()]) })), { width: 1200 });
+  const tallInput = fleet(COLLAPSE_AT, { layer: "all" });
+  const tall = layoutTopology(buildTopology({ ...tallInput, matrix: buildPathsMatrix({ ...fleetResponse(COLLAPSE_AT), paths: [...fleetResponse(COLLAPSE_AT).paths, ADDRESS_CHECK()] }) }), { width: 1200 });
   assert.ok(tall.height > 1500, "a column far taller than one screen");
   for (const a of [small, tall]) {
     const src = a.sources[0]!.box;
     assert.equal(src.y, SOURCES_TOP);
     assert.ok(src.y >= a.cp.y + a.cp.h, "never over the control plane box");
-    assert.equal(a.checks[0]!.box.y, 0);
+    assert.equal(a.addresses[0]!.box.y, 0);
   }
   // Three sources stack down from the same place.
   const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "x"] } });
@@ -526,24 +617,44 @@ test("the sources sit right under the control plane and the checks start at the 
   assert.deepEqual(stacked.sources.map((s) => s.box.y), [SOURCES_TOP, SOURCES_TOP + 68, SOURCES_TOP + 136]);
 });
 
-test("checks take a right column only when there are checks", () => {
+test("addresses take a right column only when a check dials one", () => {
   const none = layoutTopology(buildTopology(input()), { width: 1200 });
-  assert.equal(none.checks.length, 0);
-  const some = layoutTopology(buildTopology(input({ monitors: [monitor({ id: "m", node_ids: ["de"] })] })), { width: 1200 });
-  assert.equal(some.checks.length, 1);
-  assert.equal(some.checks[0]!.box.x + some.checks[0]!.box.w, 1200, "pinned to the right edge");
-  assert.equal(some.anchorOf.get(checkEndpoint("m")), checkEndpoint("m"));
+  assert.equal(none.addresses.length, 0);
+  const some = layoutTopology(buildTopology(input({ matrix: matrixOf([...PATHS, ADDRESS_CHECK()]) })), { width: 1200 });
+  assert.equal(some.addresses.length, 1);
+  assert.equal(some.addresses[0]!.box.x + some.addresses[0]!.box.w, 1200, "pinned to the right edge");
+  const id = addressEndpoint("https://status.example.net/healthz");
+  assert.equal(some.anchorOf.get(id), id);
+  assert.equal(some.edges.find((e) => e.edge.to === id)!.toColumn, "address");
 });
 
-test("a certificate watch's line leaves the control plane over the top of the node column, never through it", () => {
-  const tls = monitor({ id: "tls", type: "tls", target: "sub.example.net:443", interval_sec: 3600, latest: [{ node_id: "", at: ago(60_000), success: true, fail_streak: 0, since: ago(86_400_000) }] });
-  const a = layoutTopology(buildTopology(input({ monitors: [tls] })), { width: 1200 });
+test("a certificate check's line leaves the control plane over the top of the node column, never through it", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "", name: "Control plane" }];
+  const cert = check("", "cert", { target: "sub.example.net:443", method: "tls", state: "up" });
+  const a = layoutTopology(buildTopology(input({ matrix: matrixOf([...PATHS, cert], sources) })), { width: 1200 });
   const line = a.edges.find((e) => e.edge.from === CONTROL_PLANE)!;
   const ys = [...line.d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[2]));
   assert.ok(ys.includes(TOP_LANE), line.d);
   // The level run in the lane spans the whole node column.
   const run = line.d.match(new RegExp(`(-?[\\d.]+) ${TOP_LANE} L(-?[\\d.]+) ${TOP_LANE}`))!;
   assert.ok(Number(run[1]) <= a.rowsX && Number(run[2]) >= a.rowsX + a.rowsW, line.d);
+});
+
+test("the keyboard reaches a source's paths right after the source, the tall column top to bottom before the addresses", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }];
+  const two = plan({ config: { ...plan().config, sources: ["sh", "bj"] } });
+  const paths = [...PATHS, ADDRESS_CHECK("sh"), probe("bj", "hk", { state: "up", p50_ms: 30 })];
+  const a = layoutTopology(buildTopology(input({ plan: two, matrix: matrixOf(paths, sources), chains: [] })), { width: 1200 });
+  const order = keyboardOrder(a);
+  assert.deepEqual([...order.keys()], ["source:sh", "source:bj"], "in the order the boxes are drawn");
+  assert.deepEqual(
+    order.get("source:sh")!.map((le) => le.edge.to),
+    ["hk", "jp", "us4", "us1", "us2", "de", addressEndpoint("https://status.example.net/healthz")],
+    "by where they end: the rows top to bottom, then the addresses",
+  );
+  assert.deepEqual(order.get("source:bj")!.map((le) => le.edge.to), ["hk"]);
+  // Every drawn line is reachable exactly once.
+  assert.equal([...order.values()].flat().length, a.edges.length);
 });
 
 test("past the fold each country becomes one row and its edges one bundle, coloured by the worst", () => {
@@ -567,11 +678,13 @@ test("past the fold each country becomes one row and its edges one bundle, colou
 
 test("the row column grows with the drawn sources, from width the fan does not need, so target names keep their room", () => {
   // Several sources add a summary and a mark per source to each target row; both keep their width, so the name pays unless the column grows.
-  const monitors = [monitor({ id: "m", node_ids: ["de"] })];
   const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "x"] } });
-  const threeMatrix = matrixOf([...PATHS, probe("bj", "hk", { state: "up", p50_ms: 30 }), probe("x", "hk", { state: "up", p50_ms: 31 })], [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }, { node_id: "x", name: "no-country" }]);
-  const several = buildTopology(input({ plan: three, matrix: threeMatrix, monitors }));
-  const one = buildTopology(input({ monitors }));
+  const threeMatrix = matrixOf(
+    [...PATHS, ADDRESS_CHECK(), probe("bj", "hk", { state: "up", p50_ms: 30 }), probe("x", "hk", { state: "up", p50_ms: 31 })],
+    [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }, { node_id: "x", name: "no-country" }],
+  );
+  const several = buildTopology(input({ plan: three, matrix: threeMatrix }));
+  const one = buildTopology(input({ matrix: matrixOf([...PATHS, ADDRESS_CHECK()]) }));
   assert.equal(several.drawnSourceIds.length, 3);
   assert.equal(one.drawnSourceIds.length, 1);
   // 1440 px page: a 1358 px frame.
@@ -582,7 +695,7 @@ test("the row column grows with the drawn sources, from width the fan does not n
   assert.ok(wide3.rowsX - LEFT_W >= FAN_MIN_W, "the fan keeps its gap");
   const six = layoutTopology({ ...several, drawnSourceIds: ["sh", "bj", "x", "a", "b", "c"] }, { width: 1358 });
   assert.equal(six.rowsW - wide3.rowsW, 3 * ROW_MARK_W, "each drawn source adds a mark's width");
-  for (const a of [wide1, wide3, six]) assert.ok(a.checks[0]!.box.x >= a.rowsX + a.rowsW, "never under the check column");
+  for (const a of [wide1, wide3, six]) assert.ok(a.addresses[0]!.box.x >= a.rowsX + a.rowsW, "never under the address column");
   // Narrow: the column grows only as far as the fan's minimum allows, and never shrinks below its old width.
   const mid = layoutTopology(several, { width: 1060 });
   assert.equal(mid.rowsX - LEFT_W, FAN_MIN_W);
@@ -592,10 +705,10 @@ test("the row column grows with the drawn sources, from width the fan does not n
 });
 
 test("too narrow for its columns, the drawing keeps them and reports its real width", () => {
-  const a = layoutTopology(buildTopology(input({ monitors: [monitor({ id: "m", node_ids: ["de"] })] })), { width: 700 });
-  const check = a.checks[0]!.box;
-  assert.ok(check.x >= a.rowsX + a.rowsW, "the check column never sits on the node column");
-  assert.equal(a.width, check.x + check.w);
+  const a = layoutTopology(buildTopology(input({ matrix: matrixOf([...PATHS, ADDRESS_CHECK()]) })), { width: 700 });
+  const box = a.addresses[0]!.box;
+  assert.ok(box.x >= a.rowsX + a.rowsW, "the address column never sits on the node column");
+  assert.equal(a.width, box.x + box.w);
 });
 
 test("hovering an endpoint lights itself and its neighbours", () => {
@@ -603,40 +716,41 @@ test("hovering an endpoint lights itself and its neighbours", () => {
   assert.deepEqual([...neighbourhood(m, "hk")].sort(), ["bj", "hk", "sh", "us1"]);
 });
 
-/* ---- Fix pass: rows and bundles, reads, boundaries ---- */
+/* ---- Rows and bundles, reads, boundaries ---- */
+
+function fleetResponse(count: number, shape: (id: string, index: number) => "up" | "down" | "stale" = () => "up"): PathsResponse {
+  const countries = ["US", "JP", "DE", "SG"];
+  const targets: PathsResponse["targets"] = [];
+  const paths: PathView[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = `n${String(i).padStart(3, "0")}`;
+    targets.push({ node_id: id, name: `node-${id}`, country: countries[i % countries.length]! });
+    const kind = shape(id, i);
+    paths.push(probe("sh", id, kind === "down" ? { state: "down", loss: 1 } : kind === "stale" ? { state: "unknown", reason: "results_stopped", samples: 0 } : { state: "up", p50_ms: 150, p95_ms: 170, loss: 0, last_at: ago(10_000) }));
+  }
+  return { window: "1h", degraded_at: ago(30_000), sources: [{ node_id: "sh", name: "cd-hs-sh" }], targets, paths };
+}
 
 /**
- * One source (sh) and `count` probed targets spread over four countries.
- * `shape` says how each target's path reads: up at 150 ms, down, or stale
- * (the server's unknown, results stopped).
+ * One source (sh) and `count` targets spread over four countries. `shape`
+ * says how each target's path reads: up at 150 ms, down, or stale (the
+ * server's unknown, results stopped).
  */
 function fleet(count: number, over: Partial<TopologyInput> & { shape?: (id: string, index: number) => "up" | "down" | "stale" } = {}): TopologyInput {
   const { shape = () => "up", ...rest } = over;
   const nodes: Node[] = [node("sh", "cd-hs-sh", "CN")];
-  const targets: LatencyProbePlan["nodes"] = [{ node_id: "sh", name: "cd-hs-sh", country: "CN", region: "mainland", source: true, target: "none" }];
+  const planNodes: LatencyProbePlan["nodes"] = [{ node_id: "sh", name: "cd-hs-sh", country: "CN", region: "mainland", source: true, target: "none" }];
   const pairs: LatencyProbePlan["pairs"] = [];
-  const paths: PathView[] = [];
-  const countries = ["US", "JP", "DE", "SG"];
-  for (let i = 0; i < count; i++) {
-    const id = `n${String(i).padStart(3, "0")}`;
-    const country = countries[i % countries.length]!;
-    nodes.push(node(id, `node-${id}`, country));
-    targets.push({ node_id: id, name: `node-${id}`, country, region: "outside_mainland", source: false, target: "probed", monitor_id: `m_${id}`, endpoint: "203.0.113.1:443" });
-    pairs.push({ source: "sh", target: id, enabled: true, active: true, monitor_id: `m_${id}` });
-    const kind = shape(id, i);
-    paths.push(probe("sh", id, kind === "down" ? { state: "down", loss: 1 } : kind === "stale" ? { state: "unknown", reason: "results_stopped", samples: 0 } : { state: "up", p50_ms: 150, p95_ms: 170, loss: 0, last_at: ago(10_000) }));
+  const response = fleetResponse(count, shape);
+  for (const target of response.targets ?? []) {
+    nodes.push(node(target.node_id, target.name ?? target.node_id, target.country));
+    planNodes.push({ node_id: target.node_id, name: target.name ?? target.node_id, country: target.country, region: "outside_mainland", source: false, target: "probed", monitor_id: `m_${target.node_id}`, endpoint: "203.0.113.1:443" });
+    pairs.push({ source: "sh", target: target.node_id, enabled: true, active: true, monitor_id: `m_${target.node_id}` });
   }
-  const response: PathsResponse = {
-    window: "1h",
-    degraded_at: ago(30_000),
-    sources: [{ node_id: "sh", name: "cd-hs-sh" }],
-    targets: targets.filter((t) => t.node_id !== "sh").map((t) => ({ node_id: t.node_id, name: t.name, country: t.country })),
-    paths,
-  };
-  return { nodes, plan: { ...plan(), nodes: targets, pairs }, matrix: buildPathsMatrix(response), chains: [], monitors: [], incidents: [], window: "1h", layer: "probes", now: NOW, ...rest };
+  return { nodes, plan: { ...plan(), nodes: planNodes, pairs }, matrix: buildPathsMatrix(response), chains: [], incidents: [], window: "1h", layer: "paths", ...rest };
 }
 
-test("a row speaks for its live probes: one source whose path went unknown does not grey what the others measure", () => {
+test("a row speaks for its live paths: one source whose path went unknown does not grey what the others measure", () => {
   const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "gz"] } });
   const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }, { node_id: "gz", name: "cd-gz" }];
   const paths = [
@@ -645,16 +759,14 @@ test("a row speaks for its live probes: one source whose path went unknown does 
     probe("gz", "hk", { state: "up", p50_ms: 160, p95_ms: 170 }),
   ];
   const m = buildTopology(input({ plan: three, matrix: matrixOf(paths, sources) }));
-  const row = rowProbe(m, "hk")!;
+  const row = rowPath(m, "hk")!;
   assert.equal(row.count, 3);
   assert.equal(row.edge.from, "gz", "the slowest live measurement, not the grey");
   assert.equal(row.edge.state, "up");
   assert.equal(row.edge.p50Ms, 160);
   // With nothing live, the grey is all there is to show.
   const dead = paths.map((p) => (p.target_node === "hk" && p.source !== "bj" ? { ...p, state: "unknown", reason: "results_stopped" } : p));
-  assert.equal(rowProbe(buildTopology(input({ plan: three, matrix: matrixOf(dead, sources) })), "hk")!.edge.state, "unknown");
-  // Lists still put the unknown path above the healthy ones.
-  assert.ok(pathsWorstFirst(m).findIndex((e) => e.id === "probe:bj~hk") < pathsWorstFirst(m).findIndex((e) => e.id === "probe:gz~hk"));
+  assert.equal(rowPath(buildTopology(input({ plan: three, matrix: matrixOf(dead, sources) })), "hk")!.edge.state, "unknown");
 });
 
 test("a folded bundle is drawn as its worst live member; grey only when every member is unknown", () => {
@@ -681,49 +793,26 @@ test("a chain between two nodes of one folded country is not drawn; one across c
   assert.deepEqual(a.edges.filter((e) => e.edge.kind === "chain").map((e) => e.key), ["chain:country:US>country:JP"]);
 });
 
-test("a chain out of a probe source rides below the probe to the same row", () => {
+test("a chain out of a source rides below the path to the same row", () => {
   const sh: LineChainView = { source_line_uuid: "line-sh", source_node_id: "sh", status: "converged", current: { target_node_id: "hk", target_line_uuid: "line-hk", artifact_digest: "e", status: "converged" }, attempt: null };
   const a = layoutTopology(buildTopology(input({ chains: [...CHAINS, sh] })), { width: 1200 });
-  const probe = a.edges.find((e) => e.edge.id === "probe:sh~hk")!;
+  const path = a.edges.find((e) => e.edge.id === "path:sh>hk")!;
   const chain = a.edges.find((e) => e.edge.id === "chain:line-sh")!;
-  assert.equal(chain.end.y, probe.end.y + 6);
+  assert.equal(chain.end.y, path.end.y + 6);
 });
 
-test("chains are drawn as two rails, so shape and not only hue tells them from probes", () => {
+test("chains are drawn as two rails, so shape and not only hue tells them from paths", () => {
   const m = buildTopology(input());
   for (const e of m.edges) assert.equal(!!edgeStyle(e).double, e.kind === "chain", e.id);
 });
 
-test("a disabled check draws nothing and counts as no failure", () => {
-  const off = monitor({ id: "off", enabled: false, node_ids: ["us1"], latest: [{ node_id: "us1", at: ago(10_000), success: false, fail_streak: 9, since: ago(600_000) }] });
-  const m = buildTopology(input({ monitors: [off] }));
-  assert.equal(m.checks.length, 1);
-  assert.equal(m.checks[0]!.enabled, false);
-  assert.equal(m.checks[0]!.summary.failing, 1, "the result is still counted on the check");
-  assert.equal(m.edges.filter((e) => e.kind === "check").length, 0);
-  assert.equal(m.counts.checksFailing, 0);
-});
-
-test("a source that does not probe a target draws no edge to it", () => {
+test("a source that does not measure a target draws no edge to it", () => {
   const m = buildTopology(input({ matrix: matrixOf(PATHS.filter((p) => p.target_node !== "us1")) }));
-  assert.equal(m.edges.find((e) => e.id === "probe:sh~us1"), undefined);
-  assert.equal(m.counts.paths, buildTopology(input()).counts.paths - 1);
+  assert.equal(m.edges.find((e) => e.id === "path:sh>us1"), undefined);
+  assert.equal(m.counts.drawn, buildTopology(input()).counts.drawn - 1);
 });
 
-test("an every-node check fans out from CHECK_FAN + 1 sources, not at CHECK_FAN", () => {
-  const runners = (n: number) => Array.from({ length: n }, (_, i) => node(`r${i}`, `runner-${i}`, "JP"));
-  const allUp = (list: Node[]) => monitor({ id: "all", assign_all: true, latest: list.map((n) => ({ node_id: n.id, at: ago(5_000), success: true, fail_streak: 0, since: ago(60_000) })) });
-  const at = runners(CHECK_FAN);
-  const atFan = buildTopology(input({ nodes: at, monitors: [allUp(at)] }));
-  assert.equal(atFan.checks[0]!.fannedOut, false);
-  assert.equal(atFan.edges.filter((e) => e.kind === "check").length, CHECK_FAN, "every source drawn");
-  const past = runners(CHECK_FAN + 1);
-  const pastFan = buildTopology(input({ nodes: past, monitors: [allUp(past)] }));
-  assert.equal(pastFan.checks[0]!.fannedOut, true);
-  assert.equal(pastFan.edges.filter((e) => e.kind === "check").length, 0, "healthy sources are counted, not drawn");
-});
-
-test("a probe interval under a minute still waits three minutes before calling a path quiet", () => {
+test("an interval under a minute still waits three minutes before calling a path quiet", () => {
   assert.equal(quietAfterMs(20), 180_000);
 });
 
@@ -732,14 +821,13 @@ const FAILED: TopoReadStatus = { allowed: true, hasData: false, failed: true };
 const STALE: TopoReadStatus = { allowed: true, hasData: true, failed: true };
 const LOADING: TopoReadStatus = { allowed: true, hasData: false, failed: false };
 const DENIED: TopoReadStatus = { allowed: false, hasData: false, failed: false };
-const reads = (over: Partial<TopoReadStatuses> = {}): TopoReadStatuses => ({ plan: OK, paths: OK, nodes: OK, incidents: OK, monitors: OK, chains: OK, ...over });
+const reads = (over: Partial<TopoReadStatuses> = {}): TopoReadStatuses => ({ plan: OK, paths: OK, nodes: OK, incidents: OK, chains: OK, ...over });
 
-test("the proof line speaks for every read the filter draws from, and never for one the session cannot send", () => {
-  assert.deepEqual(readsFor("all", reads()), ["plan", "paths", "nodes", "incidents", "monitors", "chains"]);
-  assert.deepEqual(readsFor("probes", reads()), ["plan", "paths", "nodes", "incidents"]);
-  assert.deepEqual(readsFor("checks", reads()), ["plan", "nodes", "incidents", "monitors"]);
+test("a filter's reads are the ones its drawing is built from, never one the session cannot send", () => {
+  assert.deepEqual(readsFor("all", reads()), ["plan", "paths", "nodes", "incidents", "chains"]);
+  assert.deepEqual(readsFor("paths", reads()), ["plan", "paths", "nodes", "incidents"]);
   assert.deepEqual(readsFor("chains", reads({ nodes: DENIED })), ["plan", "incidents", "chains"]);
-  assert.deepEqual(readsFor("all", reads({ chains: DENIED })), ["plan", "paths", "nodes", "incidents", "monitors"]);
+  assert.deepEqual(readsFor("all", reads({ chains: DENIED })), ["plan", "paths", "nodes", "incidents"]);
 });
 
 test("a read that never landed and failed is missing; a failed refresh after a good read is only stale", () => {
@@ -747,18 +835,9 @@ test("a read that never landed and failed is missing; a failed refresh after a g
   assert.equal(readState(STALE), "read");
   assert.equal(readState(LOADING), "loading");
   assert.equal(readState(DENIED), "unreadable");
-  assert.deepEqual(missingReads("all", reads({ monitors: FAILED, nodes: FAILED, incidents: STALE })), ["nodes", "monitors"]);
-  assert.deepEqual(missingReads("probes", reads({ monitors: FAILED })), [], "the Probes filter draws no checks");
+  assert.deepEqual(missingReads("all", reads({ chains: FAILED, nodes: FAILED, incidents: STALE })), ["nodes", "chains"]);
+  assert.deepEqual(missingReads("paths", reads({ chains: FAILED })), [], "the Paths filter draws no chains");
   assert.deepEqual(missingReads("all", reads({ nodes: { ...FAILED, allowed: false } })), [], "a read never sent cannot fail");
-});
-
-test("the Checks filter tells an unread monitor list from an empty one", () => {
-  const unread = buildTopology(input({ layer: "checks", monitors: undefined }));
-  assert.equal(layerEmpty(unread, reads({ monitors: FAILED })), "monitorsFailed");
-  assert.equal(layerEmpty(unread, reads({ monitors: LOADING })), "loading");
-  assert.equal(layerEmpty(buildTopology(input({ layer: "checks", monitors: [] })), reads()), "noChecks");
-  const some = buildTopology(input({ layer: "checks", monitors: [monitor({ id: "m", node_ids: ["de"] })] }));
-  assert.equal(layerEmpty(some, reads({ monitors: STALE })), null, "a stale list still draws its checks");
 });
 
 test("the Chains filter says denied, failed, loading or none, in that order of what is known", () => {
@@ -768,5 +847,5 @@ test("the Chains filter says denied, failed, loading or none, in that order of w
   assert.equal(layerEmpty(none, reads({ chains: LOADING })), "loading");
   assert.equal(layerEmpty(none, reads()), "noChains");
   assert.equal(layerEmpty(buildTopology(input({ layer: "chains" })), reads()), null);
-  assert.equal(layerEmpty(buildTopology(input({ layer: "probes", plan: plan({ config: { ...plan().config, sources: [] } }), matrix: matrixOf([]) })), reads()), "noSources");
+  assert.equal(layerEmpty(buildTopology(input({ layer: "paths", matrix: matrixOf([]) })), reads()), "noSources");
 });

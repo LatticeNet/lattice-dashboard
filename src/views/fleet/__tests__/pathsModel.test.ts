@@ -27,13 +27,11 @@ import {
   encodePathKey,
   formatDeltaLoss,
   formatDeltaMs,
-  groupPathRows,
   isChosenUnknown,
   isMissingRoute,
   legacyMonitoringRedirect,
   legacyWindow,
   looksLikePaths,
-  matrixSections,
   methodsBySource,
   normalizeState,
   parseWindow,
@@ -44,7 +42,6 @@ import {
   reachBySource,
   reachQuery,
   reasonCode,
-  visibleMatrix,
   runEchoes,
   runRows,
   UNKNOWN_REASONS,
@@ -98,18 +95,36 @@ test("windows: a window the server cannot answer falls back to the longest one n
   assert.equal(legacyWindow("6h"), "1h");
 });
 
-test("old links: latency becomes paths with its pair, monitors becomes checks", () => {
-  assert.deepEqual(legacyMonitoringRedirect({ view: "latency", pair: "sh~jp", window: "24h" }), { view: "paths", path: "sh~jp", window: "24h" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "latency" }), { view: "paths" });
+test("old links: paths and latency open the Network list, topology the Network view, every other parameter kept", () => {
+  // Design 32 D2: the Paths tab folded into the Network view; its links land on the list with the sheet they named.
+  assert.deepEqual(legacyMonitoringRedirect({ view: "paths", path: "cd-hs-sh~gomami-hkg", window: "24h", "paths.q": "state:down" }), {
+    view: "network",
+    as: "list",
+    path: "cd-hs-sh~gomami-hkg",
+    window: "24h",
+    "paths.q": "state:down",
+  });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "paths" }), { view: "network", as: "list" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "topology", "topo.sources": "sh,hk", peek: "jp", topo: "chains" }), { view: "network", "topo.sources": "sh,hk", peek: "jp", topo: "chains" });
+  // An ?as= the old Topology link carried is kept as it was.
+  assert.deepEqual(legacyMonitoringRedirect({ view: "topology", as: "list" }), { view: "network", as: "list" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "paths", as: "graph", path: "a~@mon_1" }), { view: "network", as: "graph", path: "a~@mon_1" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "latency", pair: "sh~jp", window: "24h" }), { view: "network", as: "list", path: "sh~jp", window: "24h" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "latency" }), { view: "network", as: "list" });
   assert.deepEqual(legacyMonitoringRedirect({ view: "monitors", open: "mon_1" }), { view: "checks", open: "mon_1" });
   assert.deepEqual(legacyMonitoringRedirect({ view: "keepalive" }), { view: "incidents" });
   assert.deepEqual(legacyMonitoringRedirect({ tab: "keepalive" }), { view: "incidents" });
-  assert.deepEqual(legacyMonitoringRedirect({ tab: "latency", pair: "a~b" }), { view: "paths", path: "a~b" });
+  assert.deepEqual(legacyMonitoringRedirect({ tab: "latency", pair: "a~b" }), { view: "network", as: "list", path: "a~b" });
+  assert.deepEqual(legacyMonitoringRedirect({ tab: "paths" }), { view: "network", as: "list" });
   // A pair without a layer is a path link; an explicit path wins over a pair.
-  assert.deepEqual(legacyMonitoringRedirect({ pair: "a~b" }), { view: "paths", path: "a~b" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "paths", pair: "a~b", path: "c~d" }), { view: "paths", path: "c~d" });
-  assert.equal(legacyMonitoringRedirect({ view: "paths" }), null);
+  assert.deepEqual(legacyMonitoringRedirect({ pair: "a~b" }), { view: "network", as: "list", path: "a~b" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "network", pair: "a~b", path: "c~d" }), { view: "network", path: "c~d" });
+  // The current spelling is left alone.
+  assert.equal(legacyMonitoringRedirect({ view: "network", path: "a~b" }), null);
+  assert.equal(legacyMonitoringRedirect({ view: "network", as: "list" }), null);
   assert.equal(legacyMonitoringRedirect({}), null);
+  // Applied once: the answer is already current.
+  assert.equal(legacyMonitoringRedirect(legacyMonitoringRedirect({ view: "paths", pair: "a~b" })!), null);
 });
 
 test("path keys: generated paths keep the old pair spelling, operator checks name the check", () => {
@@ -159,13 +174,6 @@ test("matrix: node targets as rows by region, operator checks as rows of their o
   const cell = m.cells.get(cellKey("@mon_http", "sh"))!;
   assert.equal(cell.key, "sh~@mon_http");
   assert.equal(m.cells.get(cellKey("jp", "sh"))!.key, "sh~jp");
-  const groups = groupPathRows(m.rows).map((g) => [g.group, g.rows.map((r) => r.key)]);
-  assert.deepEqual(groups, [
-    ["eastAsia", ["hk", "kix", "jp"]],
-    ["northAmerica", ["nat", "la"]],
-    ["europe", ["fsn"]],
-    ["checks", ["@mon_http"]],
-  ]);
   assert.equal(m.observedAt, Date.parse("2026-10-16T08:00:00Z"));
 });
 
@@ -234,7 +242,10 @@ test("attention: an offline agent is one line for its source, not one per path",
 
 test("reach: each source's paths by state", () => {
   const reach = reachBySource(buildPathsMatrix(response()));
-  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 2, degraded: 0, down: 1, unknown: 2, paused: 1, total: 6 }], "the operator check to a URL is not reach; a pause is not unknown");
+  const matrix = buildPathsMatrix(response());
+  // Every path the source runs, the operator check to a URL included (design 32 D1), so the lines add up to the page's count.
+  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 3, degraded: 0, down: 1, unknown: 2, paused: 1, total: 7 }], "a pause is not unknown");
+  assert.equal(reach.reduce((n, r) => n + r.total, 0), matrix.counts.paths);
   assert.equal(reachQuery(reach[0]!, "down"), "source:=cd-hs-sh state:down");
 });
 
@@ -249,8 +260,11 @@ test("delta and availability", () => {
   assert.equal(formatDeltaLoss(0.12), "+12 pt");
   assert.equal(formatDeltaLoss(-0.005), "-0.5 pt");
   assert.equal(formatDeltaLoss(0), "0 pt");
-  assert.equal(availability({ samples: 276, expected: 288, loss: 0.04 }), (276 * 0.96) / 288);
-  assert.equal(availability({ samples: 0, expected: 0 }), undefined);
+  assert.equal(availability({ state: "up", samples: 276, expected: 288, loss: 0.04 }), (276 * 0.96) / 288);
+  assert.equal(availability({ state: "up", samples: 0, expected: 0 }), undefined);
+  // A path that never ran, or does not measure now, has none: never 0%.
+  assert.equal(availability({ state: "down", samples: 0, expected: 288 }), undefined);
+  assert.equal(availability({ state: "unknown", samples: 276, expected: 288, loss: 0.4 }), undefined);
 });
 
 test("query: state, source, target, reason words, loss in percent and p50 in ms", () => {
@@ -276,33 +290,6 @@ test("query: state, source, target, reason words, loss in percent and p50 in ms"
   assert.deepEqual(run("region:europe"), ["sh~fsn"]);
   const bad = compileQuery("state:sideways", schema);
   assert.equal(bad.ok, false);
-});
-
-test("query: the matrix keeps rows and columns that hold a match, and dims the rest", () => {
-  const m = buildPathsMatrix(response());
-  const all = visibleMatrix(m, undefined);
-  assert.equal(all.rows.length, 7);
-  const filtered = visibleMatrix(m, new Set(["sh~jp", "sh~fsn"]));
-  assert.deepEqual(filtered.rows.map((r) => r.key).sort(), ["fsn", "jp"]);
-  assert.deepEqual(filtered.sources.map((s) => s.nodeId), ["sh"]);
-  assert.equal(filtered.matches(m.cells.get(cellKey("hk", "sh"))!), false);
-});
-
-test("sections: check sources do not widen the node matrix", () => {
-  const r = response();
-  r.paths.push({ source: "fsn", target: "https://status.example.com/health", monitor_id: "mon_http", managed: false, method: "http", state: "up", samples: 10, expected: 10 });
-  r.paths.push({ source: "", target: "example.com:443", monitor_id: "mon_tls", managed: false, method: "tls", state: "up", samples: 1, expected: 1 });
-  const m = buildPathsMatrix(r);
-  const sections = matrixSections(m, visibleMatrix(m, undefined));
-  assert.deepEqual(
-    sections.map((s) => [s.kind, s.sources.map((c) => c.nodeId), s.groups.map((g) => g.group)]),
-    [
-      ["nodes", ["sh"], ["eastAsia", "northAmerica", "europe"]],
-      ["checks", ["sh", "fsn", ""], ["checks"]],
-    ],
-  );
-  const onlyDown = matrixSections(m, visibleMatrix(m, new Set(["sh~jp"])));
-  assert.deepEqual(onlyDown.map((s) => s.kind), ["nodes"]);
 });
 
 function plan(): LatencyProbePlan {
@@ -548,7 +535,7 @@ test("degraded: the query finds it by state, and reach counts it apart from up a
   assert.deepEqual(run("reason:degraded_loss"), ["sh~hk"]);
   const reach = reachBySource(m)[0]!;
   assert.equal(reach.degraded, 1);
-  assert.equal(reach.up, 1);
+  assert.equal(reach.up, m.paths.filter((p) => p.source === "sh" && p.state === "up").length);
   assert.equal(reachQuery(reach, "degraded"), "source:=cd-hs-sh state:degraded");
 });
 

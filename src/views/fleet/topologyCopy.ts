@@ -1,12 +1,17 @@
 /**
- * How the Topology layer words an edge, a node and a sample, shared by the
- * graph and the list so the two never say different things about one path.
- * The caller passes its `t` and locale; nothing here holds Vue state.
+ * How the Network view's graph words an edge, a node and a sample, so the
+ * drawing, its card and an edge's keyboard label never say different things
+ * about one path. The caller passes its `t` and locale; nothing here holds
+ * Vue state.
+ *
+ * One vocabulary (design 32 D1): a path is up, degraded, down, paused or
+ * unknown, and unknown always says why.
  */
 import { formatAge } from "@/lib/format";
 
 import { formatLoss, formatMs } from "@/views/fleet/latencyModel";
-import type { ProbeState, RowSummary, TopoCheck, TopoEdge, TopoLastSample, TopoNode } from "@/views/fleet/topologyModel";
+import { reasonCode } from "@/views/fleet/pathsModel";
+import type { EdgePathState, RowSummary, TopoAddress, TopoEdge, TopoLastSample, TopoNode } from "@/views/fleet/topologyModel";
 
 type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string;
 
@@ -18,14 +23,22 @@ export interface EdgeValue {
   loss?: string;
 }
 
-export function stateLabel(t: Translate, edge: Pick<TopoEdge, "kind" | "state">): string {
-  // A check fails; a probe path is unreachable.
-  if (edge.kind === "check" && edge.state === "failing") return t("fleet.monitoring.topology.state.checkFailing");
+/** Why a path is unknown, in a few words: the reason's short form, the code as sent, or "no reason given". */
+export function reasonWords(t: Translate, reason: string | undefined): string {
+  const code = reasonCode(reason);
+  if (code) return t(`fleet.monitoring.paths.reasonShort.${code}`);
+  return reason || t("fleet.monitoring.paths.reasonShort.unspecified");
+}
+
+/** The state in words; unknown carries its reason ("unknown: agent offline"). */
+export function stateLabel(t: Translate, edge: Pick<TopoEdge, "kind" | "state" | "reason">): string {
+  if (edge.kind === "path" && edge.state === "unknown") return t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, edge.reason) });
+  if (edge.kind === "path") return t(`fleet.monitoring.paths.state.${edge.state}`);
   return t(`fleet.monitoring.topology.state.${edge.state}`);
 }
 
-/** A probe state's ink: the state tones only (design 29 D13), so a p50 is never coloured by how fast it is. */
-export const PROBE_INK: Record<ProbeState, string> = {
+/** A path state's ink: the state tones only (design 29 D13), so a p50 is never coloured by how fast it is. */
+export const PATH_INK: Record<EdgePathState, string> = {
   up: "text-foreground",
   degraded: "text-warning-text",
   down: "text-destructive",
@@ -33,8 +46,8 @@ export const PROBE_INK: Record<ProbeState, string> = {
   paused: "text-muted-foreground",
 };
 
-/** A probe state's mark on a target row: one per drawn source. */
-export const PROBE_MARK: Record<ProbeState, string> = {
+/** A path state's mark on a target row: one per drawn source. */
+export const PATH_MARK: Record<EdgePathState, string> = {
   up: "bg-success",
   degraded: "bg-warning",
   down: "bg-destructive",
@@ -42,82 +55,60 @@ export const PROBE_MARK: Record<ProbeState, string> = {
   paused: "bg-muted-foreground/40",
 };
 
-/** The short value a row or a list line prints for one edge. */
+/** The short value a row or a card line prints for one edge: p50 when measured, else the state in words. */
 export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
   const lossy = edge.loss !== undefined && edge.loss > 0 ? formatLoss(edge.loss) : undefined;
-  if (edge.kind === "probe") {
-    const state = edge.state as ProbeState;
+  if (edge.kind === "path") {
+    const state = edge.state as EdgePathState;
     switch (state) {
       case "up":
       case "degraded":
-        return { text: edge.p50Ms !== undefined ? formatMs(edge.p50Ms) : stateLabel(t, edge), tone: PROBE_INK[state], loss: lossy };
-      case "down":
-        return { text: t("fleet.monitoring.topology.value.down"), tone: PROBE_INK.down };
-      case "paused":
-        return { text: t("fleet.monitoring.topology.value.paused"), tone: PROBE_INK.paused };
+        return { text: edge.p50Ms !== undefined ? formatMs(edge.p50Ms) : stateLabel(t, edge), tone: PATH_INK[state], loss: lossy };
       default:
-        return { text: t("fleet.monitoring.topology.value.unknown"), tone: PROBE_INK.unknown };
+        return { text: stateLabel(t, edge), tone: PATH_INK[state] };
     }
   }
-  if (edge.kind === "chain") {
-    const tone = edge.state === "failed" ? "text-destructive" : edge.state === "drifted" ? "text-warning-text" : edge.state === "converged" ? "text-foreground" : "text-info-text";
-    return { text: stateLabel(t, edge), tone };
-  }
-  switch (edge.state) {
-    case "up":
-      return { text: edge.last?.ms !== undefined ? formatMs(edge.last.ms) : stateLabel(t, edge), tone: "text-foreground" };
-    case "failing":
-      return { text: stateLabel(t, edge), tone: "text-destructive" };
-    // The run passed but the path is degraded (D13): the word, in the warning ink a degraded probe's value takes.
-    case "degraded":
-      return { text: stateLabel(t, edge), tone: "text-warning-text" };
-    default:
-      return { text: stateLabel(t, edge), tone: "text-muted-foreground" };
-  }
+  const tone = edge.state === "failed" ? "text-destructive" : edge.state === "drifted" ? "text-warning-text" : edge.state === "converged" ? "text-foreground" : "text-info-text";
+  return { text: stateLabel(t, edge), tone };
 }
 
 /**
  * A target row's value with several sources drawn: "down from 1 of 4",
  * "degraded from 2 of 4", "up from 3 of 4", and "down from all 4" (likewise
  * degraded and up) when every drawn source reads it, in the speaking state's
- * ink. With no live path the row says the state alone ("unknown", "paused").
+ * ink. Unknown says why, from the path that speaks for the row; when every
+ * source reads unknown or paused the marks already say "all", so the words
+ * spend the row's width on the reason ("unknown: nothing to dial").
  */
 export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
   const { state, n, of } = summary;
-  const tone = PROBE_INK[state];
-  switch (state) {
-    case "down":
-    case "degraded":
-    case "up":
-      return { text: n === of ? t(`fleet.monitoring.topology.value.summary.${state}All`, { of }) : t(`fleet.monitoring.topology.value.summary.${state}`, { n, of }), tone };
-    default:
-      return { text: t(`fleet.monitoring.topology.value.${state}`), tone };
-  }
+  const all = n === of ? "All" : "";
+  return { text: t(`fleet.monitoring.topology.value.summary.${state}${all}`, { n, of, reason: reasonWords(t, summary.reason) }), tone: PATH_INK[state] };
 }
 
 /**
- * A check card's line: failing on N of M in red, degraded on N of M in amber,
- * else how many of its sources pass, muted. Amber means degraded wherever a
- * path state is shown (D13), so sources that are only stale, silent or paused
- * beside the passing ones keep the muted ink, as unknown does everywhere.
+ * An address terminal's line: down on N of M in red, degraded on N of M in
+ * amber, else how many of its paths are up, muted. Amber means degraded
+ * wherever a path state is shown (D13), so paths that are only unknown or
+ * paused beside the passing ones keep the muted ink.
  */
-export function checkLineValue(t: Translate, check: Pick<TopoCheck, "enabled" | "sourceIds" | "summary">): EdgeValue {
-  if (!check.enabled) return { text: t("fleet.monitoring.topology.check.disabled"), tone: "text-muted-foreground" };
-  const total = check.sourceIds.length;
-  if (check.summary.failing > 0) return { text: t("fleet.monitoring.topology.check.failing", { n: check.summary.failing, total }), tone: "text-destructive" };
-  if (check.summary.degraded > 0) return { text: t("fleet.monitoring.topology.check.degraded", { n: check.summary.degraded, total }), tone: "text-warning-text" };
-  return { text: t("fleet.monitoring.topology.check.summary", { up: check.summary.up, total }), tone: "text-muted-foreground" };
+export function addressLineValue(t: Translate, address: Pick<TopoAddress, "counts" | "reason">): EdgeValue {
+  const c = address.counts;
+  if (c.down > 0) return { text: t("fleet.monitoring.topology.address.down", { n: c.down, total: c.paths }), tone: "text-destructive" };
+  if (c.degraded > 0) return { text: t("fleet.monitoring.topology.address.degraded", { n: c.degraded, total: c.paths }), tone: "text-warning-text" };
+  // Nothing measured: say so, and why, rather than "0 of 1 up".
+  if (c.up === 0 && c.unknown > 0) return { text: t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, address.reason) }), tone: "text-muted-foreground" };
+  if (c.up === 0 && c.paused > 0) return { text: t("fleet.monitoring.paths.state.paused"), tone: "text-muted-foreground" };
+  return { text: t("fleet.monitoring.topology.address.up", { up: c.up, total: c.paths }), tone: "text-muted-foreground" };
 }
 
-/** "25s ago, 162 ms", "6d ago, failed", or "none yet". */
+/** "25s ago", "6d ago, failed", or "none yet". */
 export function lastSampleText(t: Translate, locale: string, last: TopoLastSample | undefined, now: number): string {
   if (!last) return t("fleet.monitoring.topology.card.lastNone");
   const age = formatAge(now - last.at, locale);
-  // A probe path says when it last heard, not how that run went.
-  if (last.ok === undefined) return t("fleet.monitoring.topology.card.lastHeard", { age });
-  if (!last.ok) return t("fleet.monitoring.topology.card.lastFail", { age });
-  if (last.ms === undefined) return t("fleet.monitoring.topology.card.lastOkNoValue", { age });
-  return t("fleet.monitoring.topology.card.lastOk", { age, value: formatMs(last.ms) });
+  // A path says when it last heard; only a down one's newest outcome is known.
+  if (last.ok === false) return t("fleet.monitoring.topology.card.lastFail", { age });
+  return t("fleet.monitoring.topology.card.lastHeard", { age });
 }
 
 /** The heartbeat in words: "beating", "quiet for 6d", "never reported". */

@@ -20,12 +20,20 @@
  */
 import { computed, type ComputedRef } from "vue";
 
+import type { QueryValue } from "@/components/common/tableUrlState";
 import { OPEN_PARAM, readOpenId, rowSelector, writeOpenId } from "@/composables/routeOpenModel";
 import { useOwnedRoute, type OwnedRoute } from "@/composables/useOwnedRoute";
 
 export interface RouteOpen {
   openId: ComputedRef<string | null>;
-  open: (id: string, opener?: HTMLElement | null) => void;
+  /**
+   * Open `id`. `alongside` is written in the same navigation (another
+   * sheet's parameter cleared, say), since two replaces in one tick lose the
+   * first.
+   */
+  open: (id: string, opener?: HTMLElement | null, alongside?: Record<string, QueryValue | undefined>) => void;
+  /** Show another object in the open sheet, keeping the element focus goes back to when it closes. */
+  swap: (id: string) => void;
   close: () => void;
   /**
    * The element focus should return to when the sheet closes, or null to let
@@ -54,9 +62,15 @@ export function bindRouteOpen(owned: OwnedRoute, param: string = OPEN_PARAM, opt
   /** The id the sheet showed last, for finding its row again after a reload. */
   let lastId: string | null = null;
 
-  function open(id: string, from?: HTMLElement | null): void {
+  function open(id: string, from?: HTMLElement | null, alongside?: Record<string, QueryValue | undefined>): void {
     opener = from ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     openerTable = opener?.closest<HTMLElement>("table") ?? null;
+    lastId = id;
+    if (openId.value === id && !alongside) return;
+    owned.replace(writeOpenId({ ...owned.query(), ...alongside }, param, id));
+  }
+
+  function swap(id: string): void {
     lastId = id;
     if (openId.value === id) return;
     owned.replace(writeOpenId(owned.query(), param, id));
@@ -81,7 +95,7 @@ export function bindRouteOpen(owned: OwnedRoute, param: string = OPEN_PARAM, opt
     return focusable(document.querySelector<HTMLElement>("main h1, h1"));
   }
 
-  return { openId, open, close, returnFocus };
+  return { openId, open, swap, close, returnFocus };
 }
 
 export function useRouteOpen(param: string = OPEN_PARAM): RouteOpen {
