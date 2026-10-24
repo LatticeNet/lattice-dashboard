@@ -357,6 +357,30 @@ export default {
     },
   },
 
+  // 共享的目标选择器（设计 32 D5）：节点、节点分组、整个机群和排除的节点。
+  selector: {
+    chosenLabel: "{field} 已选",
+    nothingChosen: "还没有选择",
+    wholeFleet: "整个机群",
+    wholeFleetInline: "整个机群",
+    except: "排除 {name}",
+    remove: "移除 {name}",
+    searchGroupsAndNodes: "搜索节点分组和节点",
+    searchNodes: "搜索节点",
+    groupsHeading: "节点分组",
+    groupNodes: "{n} 个节点 | {n} 个节点",
+    via: "来自 {groups}",
+    viaFleet: "来自整个机群",
+    leftOut: "已排除",
+    leaveOut: "排除",
+    leaveOutNode: "排除 {name}",
+    unseen: "不在你的节点列表里",
+    noMatch: "没有匹配的节点分组或节点。",
+    resolves: "解析为 0 个节点 | 解析为 {n} 个节点 | 解析为 {n} 个节点",
+    showNodes: "查看",
+    hideNodes: "收起",
+  },
+
   nav: {
     sections: {
       overview: "概览",

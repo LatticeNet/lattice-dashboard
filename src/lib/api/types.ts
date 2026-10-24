@@ -2108,6 +2108,18 @@ export interface GroupNetRule {
   disabled?: boolean;
 }
 
+/**
+ * A target selector (design 32 D5, lattice-sdk model.TargetSelector): explicit
+ * nodes, node groups, the whole fleet, and nodes to leave out. Stored as
+ * written, resolved by the server when used.
+ */
+export interface TargetSelector {
+  nodes?: string[];
+  groups?: string[];
+  all?: boolean;
+  exclude?: string[];
+}
+
 export interface GroupNetPolicy {
   id: string;
   scope_group_id: string;

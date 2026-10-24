@@ -362,6 +362,31 @@ export default {
     },
   },
 
+  // The shared target selector (design 32 D5): nodes, node groups, the whole
+  // fleet and nodes to leave out, for every target field.
+  selector: {
+    chosenLabel: "Chosen for {field}",
+    nothingChosen: "Nothing chosen yet",
+    wholeFleet: "Whole fleet",
+    wholeFleetInline: "the whole fleet",
+    except: "except {name}",
+    remove: "Remove {name}",
+    searchGroupsAndNodes: "Search node groups and nodes",
+    searchNodes: "Search nodes",
+    groupsHeading: "Node groups",
+    groupNodes: "{n} node | {n} nodes",
+    via: "via {groups}",
+    viaFleet: "via the whole fleet",
+    leftOut: "left out",
+    leaveOut: "Leave out",
+    leaveOutNode: "Leave {name} out",
+    unseen: "not in your node list",
+    noMatch: "No node group or node matches.",
+    resolves: "Resolves to no nodes | Resolves to {n} node | Resolves to {n} nodes",
+    showNodes: "Show them",
+    hideNodes: "Hide",
+  },
+
   nav: {
     sections: {
       overview: "Overview",
