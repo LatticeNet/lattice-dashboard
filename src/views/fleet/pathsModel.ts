@@ -97,18 +97,18 @@ export function legacyWindow(window: MonitorWindow): LatencyWindow {
 /* Layers and old links                                                 */
 /* ------------------------------------------------------------------ */
 
-export type MonitoringLayer = "overview" | "network" | "checks" | "incidents";
-export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "network", "checks", "incidents"];
+export type MonitoringLayer = "overview" | "topology" | "checks" | "incidents";
+export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "topology", "checks", "incidents"];
 
 /**
- * Layer names links used before, and where they land now (design 32 D2):
- * Paths and the old Latency layer open the Network view in list mode, the
- * old Topology the Network view as it opens by default.
+ * Layer names links used before, and where they land now (design 32 D2,
+ * R4): Paths and the old Latency layer open Topology in list mode, and
+ * Network, the view's name for one release, opens Topology as it was asked.
  */
 export const LEGACY_LAYERS: Readonly<Record<string, { view: MonitoringLayer; as?: "list" }>> = {
-  latency: { view: "network", as: "list" },
-  paths: { view: "network", as: "list" },
-  topology: { view: "network" },
+  latency: { view: "topology", as: "list" },
+  paths: { view: "topology", as: "list" },
+  network: { view: "topology" },
   monitors: { view: "checks" },
   keepalive: { view: "incidents" },
 };
@@ -121,7 +121,7 @@ function first(raw: QueryValue | undefined): string | undefined {
 /**
  * The current spelling of an old Monitoring link, or null when the query is
  * already current. `?view=paths` and `?view=latency` become
- * `?view=network&as=list`, `?view=topology` becomes `?view=network`,
+ * `?view=topology&as=list`, `?view=topology` becomes `?view=topology`,
  * `?view=monitors` becomes `?view=checks`, and the keepalive spelling of
  * Incidents becomes `?view=incidents`; the old `?tab=` key is read the same
  * way, and an old `?pair=` becomes `?path=`. Every other parameter is kept
@@ -144,7 +144,7 @@ export function legacyMonitoringRedirect(query: QueryRecord): Record<string, Que
     if (!first(query.path)) next.path = pair;
     delete next.pair;
     if (!first(next.view)) {
-      next.view = "network";
+      next.view = "topology";
       if (!first(query.as)) next.as = "list";
     }
   }
@@ -794,7 +794,7 @@ export interface SourceReach {
 /**
  * For each source, how many of its paths are up, degraded, down, unknown and
  * paused: every path it runs, a check to an address included, so the lines
- * add up to the page's one count (design 32 D1) and the Network view's
+ * add up to the page's one count (design 32 D1) and the Topology view's
  * source picker says what Overview says.
  */
 export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): SourceReach[] {

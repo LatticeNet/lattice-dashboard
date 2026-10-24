@@ -8,7 +8,7 @@
  * generated is not a row of its own. A single check's row opens its sheet on
  * ?open=: its paths, one per source, and the path chart of the one chosen; a
  * definition's row opens the definition's sheet on the same parameter. Create
- * and edit open the editors the page hosts, so Overview and the Network view
+ * and edit open the editors the page hosts, so Overview and the Topology view
  * can open them too. Below the list, how long history is kept.
  *
  * A link that names a monitor (?open=, the old /monitoring/:id) or a node

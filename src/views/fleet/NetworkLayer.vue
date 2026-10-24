@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Monitoring's Network view (design 32 D2): Topology and Paths in one view,
+ * Monitoring's Topology view (design 32 D2): Topology and Paths in one view,
  * on one matrix read, with one query.
  *
  *   graph   the fleet drawn (topologyModel): sources left, targets by region,

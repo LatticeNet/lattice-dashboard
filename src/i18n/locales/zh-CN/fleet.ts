@@ -1741,7 +1741,7 @@ export default {
           paths: "路径",
           counts: "{up} 正常 · {degraded} 降级 · {down} 宕机 · {unknown} 未知",
           pair: "{source} 到 {target}",
-          morePaths: "其余 {n} 条在网络视图中",
+          morePaths: "其余 {n} 条在拓扑视图中",
           noPaths: "还没有路径，下一次同步后出现。",
           paused: "已暂停的目标",
           pausedTitle: "{n} 个目标已离开集合，暂停保留，共 {runs} 次运行记录",
@@ -2643,7 +2643,7 @@ export default {
           degraded: "{total} 条中 {n} 条劣化",
         },
       },
-      // Design 32 D2: the Network view, graph and list on one query.
+      // Design 32 D2: the Topology view, graph and list on one query.
       network: {
         pathSet: "路径集",
         editCheck: "编辑检查",
@@ -2679,7 +2679,7 @@ export default {
       layers: {
         label: "监控分层",
         overview: "概览",
-        network: "网络",
+        topology: "拓扑",
         checks: "检查",
         incidents: "事件",
       },

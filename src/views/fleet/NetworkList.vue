@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * The Network view's list mode (design 32 D2): every path the page's query
+ * The Topology view's list mode (design 32 D2): every path the page's query
  * keeps, one row each, grouped by the target's region (checks to an address
  * last), worst first. A column header sorts inside the groups and a `sort:`
  * term in the query does the same; a header click hands the order back from

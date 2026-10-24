@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * The path sheet (design 29 D7, design 32 D2): one path, opened in place on
- * the Network view from an edge, a list row or the node sheet's lens, at
+ * the Topology view from an edge, a list row or the node sheet's lens, at
  * `?path=`. It carries the path's chart and runs (PathDetail), pausing it,
  * and the way to its check: "Edit check" for an operator check and "Edit
  * path set" for a generated path, which the page opens as a second sheet so

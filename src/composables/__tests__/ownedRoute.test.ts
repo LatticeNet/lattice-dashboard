@@ -164,7 +164,7 @@ test("sheets: closing on the page's own route clears only ?open=", async () => {
 });
 
 test("sheets: one sheet opens and another closes in the same navigation; a swap keeps where focus goes back", async () => {
-  const router = await routerAt("/nodes?view=network&peek=node_1");
+  const router = await routerAt("/nodes?view=topology&peek=node_1");
   const page = owned(router);
   const path = bindRouteOpen(page, "path");
   const peek = bindRouteOpen(page, "peek");
@@ -173,7 +173,7 @@ test("sheets: one sheet opens and another closes in the same navigation; a swap 
   const edge = { isConnected: true, closest: () => null } as unknown as HTMLElement;
   path.open("sh~jp", edge, { peek: undefined });
   await settle(router);
-  assert.deepEqual(router.currentRoute.value.query, { view: "network", path: "sh~jp" });
+  assert.deepEqual(router.currentRoute.value.query, { view: "topology", path: "sh~jp" });
   assert.equal(peek.openId.value, null);
   // Another check on the same pair, chosen inside the sheet: the sheet shows it, and Escape still lands on the edge.
   path.swap("sh~@mon_ping");
@@ -182,7 +182,7 @@ test("sheets: one sheet opens and another closes in the same navigation; a swap 
   assert.equal(path.returnFocus(), edge);
   path.close();
   await settle(router);
-  assert.deepEqual(router.currentRoute.value.query, { view: "network" });
+  assert.deepEqual(router.currentRoute.value.query, { view: "topology" });
 });
 
 const plainCodec = {

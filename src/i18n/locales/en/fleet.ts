@@ -1764,7 +1764,7 @@ export default {
           paths: "Paths",
           counts: "{up} up · {degraded} degraded · {down} down · {unknown} unknown",
           pair: "{source} to {target}",
-          morePaths: "and {n} more on the Network view",
+          morePaths: "and {n} more on the Topology view",
           noPaths: "No paths yet. They appear after the next sync.",
           paused: "Paused targets",
           pausedTitle: "{n} target left the set, kept paused with {runs} runs | {n} targets left the set, kept paused with {runs} runs",
@@ -2674,7 +2674,7 @@ export default {
           degraded: "degraded on {n} of {total}",
         },
       },
-      // Design 32 D2: the Network view, graph and list on one query.
+      // Design 32 D2: the Topology view, graph and list on one query.
       network: {
         pathSet: "path set",
         editCheck: "Edit check",
@@ -2710,7 +2710,7 @@ export default {
       layers: {
         label: "Monitoring layers",
         overview: "Overview",
-        network: "Network",
+        topology: "Topology",
         checks: "Checks",
         incidents: "Incidents",
       },

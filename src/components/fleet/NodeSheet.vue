@@ -14,7 +14,7 @@
  *
  * Nodes, Map and Groups open the same sheet on `?open=<node id>`, so a node
  * reads the same wherever it is opened. A page may lead it with a lens of its
- * own (the `lead` slot): Monitoring's Network view puts the node's paths
+ * own (the `lead` slot): Monitoring's Topology view puts the node's paths
  * first, and every other page keeps the order below. The page passes its node list and
  * the actions it allows (RowMenu items); the sheet reads the tasks and the
  * SSH posture of the open node only, once per opening and when asked.
@@ -230,7 +230,7 @@ const STATUS_TONE: Record<string, string> = {
     @retry="emit('retry')"
   >
     <div v-if="node" class="space-y-5 text-sm">
-      <!-- What the opening page leads with (the Network view's paths, design 32 D2); nothing elsewhere. -->
+      <!-- What the opening page leads with (the Topology view's paths, design 32 D2); nothing elsewhere. -->
       <slot name="lead" :node="node" />
       <!-- Status and why: the first thing an opened node answers. -->
       <section class="space-y-1.5" :aria-label="$t('fleet.nodes.sheet.status')">

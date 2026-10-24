@@ -309,7 +309,7 @@ function openTarget(incident: Incident): RouteLocationRaw | undefined {
   if (incident.kind === "path.degraded" && incident.monitor_id) {
     const targetNode = props.monitorTargets.get(incident.monitor_id)?.targetNode;
     const path = encodePathKey(targetNode ? { source: incident.node_id ?? "", targetNode } : { source: incident.node_id ?? "", monitorId: incident.monitor_id });
-    return { name: "monitoring", query: { view: "network", path } };
+    return { name: "monitoring", query: { view: "topology", path } };
   }
   if (incident.node_id) return { name: "node-detail", params: { id: incident.node_id } };
   return undefined;

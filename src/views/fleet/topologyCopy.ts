@@ -1,5 +1,5 @@
 /**
- * How the Network view's graph words an edge, a node and a sample, so the
+ * How the Topology view's graph words an edge, a node and a sample, so the
  * drawing, its card and an edge's keyboard label never say different things
  * about one path. The caller passes its `t` and locale; nothing here holds
  * Vue state.

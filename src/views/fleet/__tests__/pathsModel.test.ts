@@ -95,33 +95,34 @@ test("windows: a window the server cannot answer falls back to the longest one n
   assert.equal(legacyWindow("6h"), "1h");
 });
 
-test("old links: paths and latency open the Network list, topology the Network view, every other parameter kept", () => {
-  // Design 32 D2: the Paths tab folded into the Network view; its links land on the list with the sheet they named.
+test("old links: paths and latency open the Topology list, network the Topology view, every other parameter kept", () => {
+  // Design 32 D2 and R4: the Paths tab folded into the view now named Topology; its links land on the list with the sheet they named.
   assert.deepEqual(legacyMonitoringRedirect({ view: "paths", path: "cd-hs-sh~gomami-hkg", window: "24h", "paths.q": "state:down" }), {
-    view: "network",
+    view: "topology",
     as: "list",
     path: "cd-hs-sh~gomami-hkg",
     window: "24h",
     "paths.q": "state:down",
   });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "paths" }), { view: "network", as: "list" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "topology", "topo.sources": "sh,hk", peek: "jp", topo: "chains" }), { view: "network", "topo.sources": "sh,hk", peek: "jp", topo: "chains" });
-  // An ?as= the old Topology link carried is kept as it was.
-  assert.deepEqual(legacyMonitoringRedirect({ view: "topology", as: "list" }), { view: "network", as: "list" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "paths", as: "graph", path: "a~@mon_1" }), { view: "network", as: "graph", path: "a~@mon_1" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "latency", pair: "sh~jp", window: "24h" }), { view: "network", as: "list", path: "sh~jp", window: "24h" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "latency" }), { view: "network", as: "list" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "paths" }), { view: "topology", as: "list" });
+  // R4: the view was called Network for one release; those links land on Topology with every parameter.
+  assert.deepEqual(legacyMonitoringRedirect({ view: "network", "topo.sources": "sh,hk", peek: "jp", topo: "chains" }), { view: "topology", "topo.sources": "sh,hk", peek: "jp", topo: "chains" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "network", as: "list", path: "a~b", "paths.q": "state:down", window: "24h" }), { view: "topology", as: "list", path: "a~b", "paths.q": "state:down", window: "24h" });
+  // The current spelling is left alone.
+  assert.equal(legacyMonitoringRedirect({ view: "topology", as: "list" }), null);
+  assert.deepEqual(legacyMonitoringRedirect({ view: "paths", as: "graph", path: "a~@mon_1" }), { view: "topology", as: "graph", path: "a~@mon_1" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "latency", pair: "sh~jp", window: "24h" }), { view: "topology", as: "list", path: "sh~jp", window: "24h" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "latency" }), { view: "topology", as: "list" });
   assert.deepEqual(legacyMonitoringRedirect({ view: "monitors", open: "mon_1" }), { view: "checks", open: "mon_1" });
   assert.deepEqual(legacyMonitoringRedirect({ view: "keepalive" }), { view: "incidents" });
   assert.deepEqual(legacyMonitoringRedirect({ tab: "keepalive" }), { view: "incidents" });
-  assert.deepEqual(legacyMonitoringRedirect({ tab: "latency", pair: "a~b" }), { view: "network", as: "list", path: "a~b" });
-  assert.deepEqual(legacyMonitoringRedirect({ tab: "paths" }), { view: "network", as: "list" });
+  assert.deepEqual(legacyMonitoringRedirect({ tab: "latency", pair: "a~b" }), { view: "topology", as: "list", path: "a~b" });
+  assert.deepEqual(legacyMonitoringRedirect({ tab: "paths" }), { view: "topology", as: "list" });
   // A pair without a layer is a path link; an explicit path wins over a pair.
-  assert.deepEqual(legacyMonitoringRedirect({ pair: "a~b" }), { view: "network", as: "list", path: "a~b" });
-  assert.deepEqual(legacyMonitoringRedirect({ view: "network", pair: "a~b", path: "c~d" }), { view: "network", path: "c~d" });
+  assert.deepEqual(legacyMonitoringRedirect({ pair: "a~b" }), { view: "topology", as: "list", path: "a~b" });
+  assert.deepEqual(legacyMonitoringRedirect({ view: "topology", pair: "a~b", path: "c~d" }), { view: "topology", path: "c~d" });
   // The current spelling is left alone.
-  assert.equal(legacyMonitoringRedirect({ view: "network", path: "a~b" }), null);
-  assert.equal(legacyMonitoringRedirect({ view: "network", as: "list" }), null);
+  assert.equal(legacyMonitoringRedirect({ view: "topology", path: "a~b" }), null);
   assert.equal(legacyMonitoringRedirect({}), null);
   // Applied once: the answer is already current.
   assert.equal(legacyMonitoringRedirect(legacyMonitoringRedirect({ view: "paths", pair: "a~b" })!), null);

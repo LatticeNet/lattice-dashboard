@@ -176,11 +176,12 @@ test("Overview, Network and Checks say up, degraded, down, paused or unknown, an
   }
 });
 
-test("the Network view's copy exists in both locales, and the Paths and Topology tabs are gone", () => {
+test("the Topology view's copy exists in both locales, and the Paths and Network tabs are gone", () => {
   for (const messages of [enFleet, zhFleet] as unknown as Messages[]) {
-    assert.equal(typeof at(messages, "fleet.monitoring.layers.network"), "string");
+    // Design 32 R4: the merged view is named Topology again.
+    assert.equal(typeof at(messages, "fleet.monitoring.layers.topology"), "string");
     assert.equal(at(messages, "fleet.monitoring.layers.paths"), undefined);
-    assert.equal(at(messages, "fleet.monitoring.layers.topology"), undefined);
+    assert.equal(at(messages, "fleet.monitoring.layers.network"), undefined);
     for (const key of ["editCheck", "pathSet", "pair.title", "list.last", "graph.undrawn", "graph.drawAll", "lens.reaches", "lens.reachedBy"]) {
       assert.equal(typeof at(messages, `fleet.monitoring.network.${key}`), "string", key);
     }

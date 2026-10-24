@@ -4,20 +4,20 @@
  * the bare URL.
  *
  *   Overview   what needs a look, and how far each source reaches
- *   Network    every path, as a graph or a list, with one query; an edge or a
+ *   Topology   every path, as a graph or a list, with one query; an edge or a
  *              row opens the path sheet in place, a node the node sheet
  *   Checks     every check in one list, the editor, the path set, history retention
  *   Incidents  the incidents the server holds
  *
  * One ?window= for the page (1h to 7d, and 14d when fine history is kept that
  * long). Old links keep working: ?view=paths and ?view=latency land on the
- * Network view's list (an old ?pair= on the path sheet), ?view=topology on
- * the Network view, ?view=monitors on Checks, the keepalive spelling on
+ * Topology list (an old ?pair= on the path sheet), ?view=topology (the view's
+ * name for one release) on Topology, ?view=monitors on Checks, the keepalive spelling on
  * Incidents, and a link that names a monitor or a node (?open=, ?node=, the
  * old /monitoring/:id) on Checks.
  *
  * Every count the page shows comes from the one matrix read (design 32 D1):
- * the proof line, Overview and the Network view say the same number.
+ * the proof line, Overview and the Topology view say the same number.
  *
  * The page owns the reads every layer shares (monitors, nodes, incidents and
  * the path reads in usePathsData) and the editors, so Overview and Network
@@ -323,10 +323,10 @@ const monitorsProof = useProof(monitorsQuery);
 const incidentsProof = useProof(incidentsQuery);
 const proof = computed(() => (layer.value === "incidents" ? incidentsProof.value : layer.value === "checks" ? monitorsProof.value : pathsProof.value));
 
-/** The Network view's list under a query: on the Network view already, the mode the operator chose stays. */
+/** The Topology view's list under a query: on the Topology view already, the mode the operator chose stays. */
 function pathsLink(q: string) {
   const query = owned.query();
-  return { name: "monitoring", query: { ...query, view: "network", as: layer.value === "network" ? query.as : "list", "paths.q": q, path: undefined, peek: undefined } };
+  return { name: "monitoring", query: { ...query, view: "topology", as: layer.value === "topology" ? query.as : "list", "paths.q": q, path: undefined, peek: undefined } };
 }
 
 const proofSegments = computed<ProofSegment[]>(() => {
@@ -351,7 +351,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const m = matrix.value;
   if (!m) return [];
   const out: ProofSegment[] = [{ key: "paths", tone: "strong", text: t("fleet.monitoring.paths.proof.paths", { n: m.counts.paths }, m.counts.paths) }];
-  // Nodes that run a path, as the Network view's source picker counts them: the control plane is not one.
+  // Nodes that run a path, as the Topology view's source picker counts them: the control plane is not one.
   const sources = reachBySource(m).filter((r) => r.source && r.total > 0).length;
   if (sources > 1) out.push({ key: "sources", text: t("fleet.monitoring.paths.proof.sources", { n: sources }, sources) });
   if (m.counts.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.paths.proof.down", { n: m.counts.down }), to: pathsLink("state:down") });
@@ -371,7 +371,7 @@ const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
     count: matrix.value?.counts.down || undefined,
     tone: matrix.value?.counts.down ? "destructive" : "default",
   },
-  { value: "network", label: t("fleet.monitoring.layers.network") },
+  { value: "topology", label: t("fleet.monitoring.layers.topology") },
   {
     value: "checks",
     label: t("fleet.monitoring.layers.checks"),
@@ -434,7 +434,7 @@ function fromSheet(then: () => void): void {
   const query = owned.query();
   const open = typeof query.open === "string" ? query.open : undefined;
   const path = typeof query.path === "string" ? query.path : undefined;
-  // The Network view's node sheet (?peek=) is one of them: "New check" sits in that view's header.
+  // The Topology view's node sheet (?peek=) is one of them: "New check" sits in that view's header.
   const peek = typeof query.peek === "string" ? query.peek : undefined;
   if (!open && !path && !peek) {
     returnTo = null;
@@ -545,7 +545,7 @@ const shortestIntervalSec = computed(() => {
   return list.length ? Math.min(...list) : undefined;
 });
 
-/** Counts the page's refreshes, so the Network view rereads its own chains read with the rest. */
+/** Counts the page's refreshes, so the Topology view rereads its own chains read with the rest. */
 const refreshTick = ref(0);
 function refreshAll(): void {
   refreshTick.value += 1;
@@ -575,7 +575,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
         </Button>
-        <Button v-if="canAdminMonitors && (layer === 'checks' || layer === 'network')" size="sm" type="button" data-testid="check-create" @click="openCreate()">
+        <Button v-if="canAdminMonitors && (layer === 'checks' || layer === 'topology')" size="sm" type="button" data-testid="check-create" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.create') }}
         </Button>
@@ -608,7 +608,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       />
 
       <NetworkLayer
-        v-if="layer === 'network'"
+        v-if="layer === 'topology'"
         :owned="owned"
         :data="data"
         :nodes-query="nodesQuery"

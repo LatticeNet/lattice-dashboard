@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * The Network view's drawing (topologyModel holds every rule; this file only
+ * The Topology view's drawing (topologyModel holds every rule; this file only
  * places and words what it says).
  *
  * Edges are one SVG under the boxes; every node, source, address and the

@@ -1,5 +1,5 @@
 /**
- * The graph mode of Monitoring's Network view (design 32 D2): the fleet's
+ * The graph mode of Monitoring's Topology view (design 32 D2): the fleet's
  * paths as one deterministic drawing, from the reads the page already makes.
  *
  *   control plane   every node's heartbeat freshness, counted (the relation

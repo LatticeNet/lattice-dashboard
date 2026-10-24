@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * One check definition (design 32 D1): what it measures now, its paths
- * worst first (each opens its path sheet on the Network view), and the
+ * worst first (each opens its path sheet on the Topology view), and the
  * targets that left its set, kept paused with their runs. Forgetting those
  * targets and deleting the definition both name the monitors and their runs
  * before they confirm, and the server refuses either when the list it was
@@ -137,7 +137,7 @@ function pairLabel(path: PathItem): string {
 }
 
 function openPath(path: PathItem): void {
-  props.owned.push({ ...props.owned.query(), view: "network", as: "list", path: path.key, open: undefined });
+  props.owned.push({ ...props.owned.query(), view: "topology", as: "list", path: path.key, open: undefined });
 }
 
 /* ---- Paused targets: forget, with the monitors and their runs named ---- */
