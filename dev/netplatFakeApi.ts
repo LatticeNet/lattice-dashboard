@@ -34,6 +34,8 @@ import { ApiError } from "@/lib/api/client";
 import type {
   DDNSUpsertRequest,
   DDNSView,
+  GroupPolicyUpsertRequest,
+  GroupPolicyView,
   NotifyChannelUpsertRequest,
   NotifyDeliveriesQuery,
   NotifyRuleUpsertRequest,
@@ -48,7 +50,7 @@ import type {
 } from "@/lib/api/index";
 
 import { DDNS, ddnsSaveWarnings, runDdns } from "./netplatDdnsFixture";
-import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
+import { GROUP_POLICIES, NODE_POLICIES, POLICY_GROUPS, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
 import { cataloguePage, sentPage, testStoredChannel } from "./netplatSentFixture";
@@ -68,6 +70,8 @@ const FAILING = new Set((flags.get("fail") ?? "").split(",").filter(Boolean));
 // The agent fixture documents ?release=fail; it is the same switch as ?fail=release.
 if (flags.get("release") === "fail") FAILING.add("release");
 const WRITE_MS = flags.has("slow") ? 1500 : 200;
+// ?conflict=1 plays the competing save once, so the operator's retry lands.
+let conflictPlayed = false;
 
 /** Reads by name, for a render to prove a read happened or did not (window.__harnessReads). */
 const READS: Record<string, number> = ((window as unknown as { __harnessReads?: Record<string, number> }).__harnessReads = {});
@@ -294,9 +298,30 @@ export const api = {
   },
   groupPolicy: {
     list: () => read("groupPolicy", () => ({ policies: GROUP_POLICIES.map((policy) => ({ ...policy })) })),
-    upsert: async (input: unknown) => {
+    // Design 32 R6: ?refuse=<path> answers every save 400 naming that request
+    // field, the way the server does; ?conflict=1 lets someone else save the
+    // policy first (its name and priority change), so the first edit answers
+    // 409 version_conflict and the reread shows what changed.
+    upsert: async (input: GroupPolicyUpsertRequest) => {
       await delay(undefined, WRITE_MS);
-      return input;
+      const refused = flags.get("refuse");
+      if (refused) throw new ApiError(400, "bad_request", `${refused}: the server refused this value`, undefined, { error: { code: "bad_request", message: `${refused}: the server refused this value`, field: refused } });
+      const held = GROUP_POLICIES.find((p) => p.id === input.id);
+      if (held && flags.get("conflict") === "1" && !conflictPlayed) {
+        conflictPlayed = true;
+        held.name = `${held.name ?? "policy"} (edited by ops-bot)`;
+        held.label = held.name;
+        held.priority += 5;
+        held.version = (held.version ?? 0) + 1;
+        held.updated_at = new Date().toISOString();
+      }
+      if (held && input.version !== undefined && input.version !== held.version) {
+        throw new ApiError(409, "version_conflict", "outbound policy changed since it was read", undefined, { error: { code: "version_conflict", message: "outbound policy changed since it was read" } });
+      }
+      const saved = { ...(held ?? {}), ...input, id: input.id ?? `gp_${Date.now().toString(36)}`, version: (held?.version ?? 0) + 1, target: input.scope ?? {}, label: input.name ?? "policy", target_node_ids: [], group_rule_count: input.rules.length, scope_group_id: "", updated_at: new Date().toISOString() } as GroupPolicyView;
+      if (held) Object.assign(held, saved);
+      else GROUP_POLICIES.push(saved);
+      return saved;
     },
     plan: async () => {
       await delay(undefined, WRITE_MS);
@@ -490,7 +515,7 @@ export const api = {
       read("approvals", () => ({ approvals: mirrorApprovals(params) ?? AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
   },
   groups: {
-    list: () => read("groups", () => ({ groups: MIRROR_GROUPS.map((group) => ({ ...group })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } })),
+    list: () => read("groups", () => ({ groups: [...MIRROR_GROUPS, ...POLICY_GROUPS].map((group) => ({ ...group })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } })),
   },
   /* The share list, read by the command palette (tokens included, as the server sends them). */
   subscriptionShares: {

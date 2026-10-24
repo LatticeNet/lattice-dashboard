@@ -222,6 +222,25 @@ export default {
       passkey: "Use passkey",
       rejected: "That passcode was not accepted. Enter the code your authenticator shows now.",
     },
+    // A save that did not go through (design 32 R6). The editor keeps the
+    // draft in both cases.
+    saveRefusal: {
+      refused: "Not saved: {reason}",
+      fieldRefused: "Not saved. {field}: {reason}",
+      conflictTitle: "This {noun} was saved by someone else while you were editing.",
+      nounDefault: "item",
+      savedBy: "Saved by {who}.",
+      savedAt: "Saved {when}.",
+      savedByAt: "Saved by {who} {when}.",
+      savedJustNow: "Saved just now.",
+      savedByJustNow: "Saved by {who} just now.",
+      changed: "Changed there: {fields}.",
+      changedNone: "None of the fields in this editor changed there.",
+      join: ", ",
+      keptDraft: "Your edits are still here. Reload theirs to start from the new version, or save yours over it.",
+      reload: "Reload theirs",
+      overwrite: "Save mine over it",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",

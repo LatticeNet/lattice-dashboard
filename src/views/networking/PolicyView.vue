@@ -94,6 +94,7 @@ import {
 } from "@/components/ui/select";
 import PolicyMatrix from "@/components/networking/PolicyMatrix.vue";
 import OutboundPolicyDialog from "@/components/networking/OutboundPolicyDialog.vue";
+import { isVersionConflict } from "@/lib/saveRefusal";
 import GroupChip from "@/components/networking/GroupChip.vue";
 import RenameNote from "@/components/common/RenameNote.vue";
 import PolicyCellEditor from "@/components/networking/PolicyCellEditor.vue";
@@ -207,7 +208,9 @@ async function saveCell(payload: GroupPolicyUpsertRequest) {
     cellEditorOpen.value = false;
     refreshMatrix();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("networking.matrix.toastSaveFailed"));
+    // The editor stays open with the draft either way.
+    if (isVersionConflict(error)) toast.error(t("networking.matrix.toastConflict"));
+    else toast.error(error instanceof Error ? error.message : t("networking.matrix.toastSaveFailed"));
   } finally {
     savingCell.value = false;
   }
@@ -339,6 +342,11 @@ function openOutboundEdit(p: GroupPolicyView): void {
   outboundDialogOpen.value = true;
 }
 
+/**
+ * The dialog's save. A refusal or a lost race is thrown back to the dialog,
+ * which keeps the draft and says what to fix (design 32 R6), instead of a
+ * toast over a dialog that has already lost the operator's place.
+ */
 async function saveOutbound(payload: GroupPolicyUpsertRequest): Promise<void> {
   savingOutbound.value = true;
   try {
@@ -348,8 +356,6 @@ async function saveOutbound(payload: GroupPolicyUpsertRequest): Promise<void> {
     // Read the list before opening the new policy, or its sheet flashes "gone".
     await Promise.all([groupPoliciesQuery.refresh(), matrixQuery.refresh()]);
     if (!payload.id) policySheet.open(saved.id);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("networking.outbound.toastSaveFailed"));
   } finally {
     savingOutbound.value = false;
   }
@@ -1481,8 +1487,8 @@ function closePlan(open: boolean) {
       :can-admin="canAdmin"
       :restricted="restricted"
       :firewall-to="netguardTo"
+      :save="saveOutbound"
       @update:open="(v) => (outboundDialogOpen = v)"
-      @save="saveOutbound"
     />
 
     <!-- Deleting a definition sends nothing to a node: its nodes keep what they applied until the next plan. -->

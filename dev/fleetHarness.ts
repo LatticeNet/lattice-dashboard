@@ -88,6 +88,7 @@ const router = createRouter({
       ["terminal", "/terminal"],
       ["network-ddns", "/network/ddns"],
       ["network-ssh-guard", "/network/ssh-guard"],
+      ["network-outbound-policy", "/network/outbound"],
       ["platform-evidence", "/platform/evidence"],
       ["platform-notifications", "/platform/notifications"],
       ["platform-agent-updates", "/platform/agent-updates"],

@@ -863,3 +863,17 @@ html[data-density="compact"] {
     padding-bottom: 0.375rem;
   }
 }
+
+/* -------------------------------------------------------------------------
+   A field a refused save named (design 32 R6, useSaveRefusal): the holder
+   carries data-invalid until the operator edits the draft. One outline in
+   the destructive tone around the whole control group, so a selector or a
+   list of rows reads as one marked field, not as a red input among others.
+   ------------------------------------------------------------------------- */
+@layer base {
+  [data-field][data-invalid="true"] {
+    outline: 2px solid var(--destructive);
+    outline-offset: 4px;
+    border-radius: 0.375rem;
+  }
+}

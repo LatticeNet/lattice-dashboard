@@ -89,6 +89,7 @@ import { M2B, REPLANS, beaconShape, runsBeaconClient } from "./beaconShapes";
 import { appliedBeaconApproval, beaconReplansFor, beaconViewFor, planBeacon, rotateBeacon } from "./beaconFixture";
 import { GOLDEN, PATHS_SHAPE, goldenMonitors, goldenNodes, goldenPaths, goldenPlan, goldenSeries, operatorChecks, pathsFor, resultsFor, saveSettings, seriesFor as pathSeriesFor, settingsFor } from "./pathsFixture";
 import { nodeHistory } from "./systemFixture";
+import { nodeNetworkFor } from "./nodeNetworkFixture";
 import { SEED_LEFT_TARGET, definitionView, fleetMeshOf, planDefinition, runsOf, seedDefinitions } from "./definitionsFixture";
 import type { MetricsRange } from "@/lib/api/systemTypes";
 
@@ -485,6 +486,13 @@ export const api = {
         if (!outcome.ok) throw new ApiError(409, "409", outcome.message);
         return { node_id: nodeId, epoch: outcome.epoch };
       },
+    },
+    // Design 32 D4, shaped by ?network= (dev/nodeNetworkFixture.ts); counted as "network" reads.
+    network: (nodeId: string, rules = false) => {
+      if (PARAMS.get("network") === "missing") return missingRoute("/api/nodes/network");
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return refuse(404, "not_found", "node not found");
+      return answer("network", () => nodeNetworkFor(node, GROUPS, PARAMS.get("network"), rules));
     },
     geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     // ?history=empty|disabled|unavailable|gaps shapes the node page's History card (dev/systemFixture.ts).

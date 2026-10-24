@@ -2258,6 +2258,8 @@ export interface GroupNetPolicy {
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
+  /** Counts the policy's saves; absent from a server before design 32 R6. */
+  version?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -2287,6 +2289,8 @@ export interface GroupPolicyUpsertRequest {
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
+  /** The version the editor read; a stale one answers 409 version_conflict. */
+  version?: number;
 }
 
 export interface NetPolicyConvertResult {
@@ -2346,11 +2350,176 @@ export interface MatrixCell {
   mixed: boolean;
 }
 
+/** The members one policy leaves out of a matrix row (design 32 S3b). */
+export interface MatrixExclusion {
+  /** The row's source group; absent in the fleet row. */
+  from?: string;
+  policy_id: string;
+  label: string;
+  nodes: { id: string; name?: string }[];
+  /** Excluded nodes this session may not read, counted. */
+  hidden?: number;
+}
+
+/** Policies that target the whole fleet: sent only when one exists. */
+export interface MatrixFleetRow {
+  cells: MatrixCell[];
+  external: number;
+  exclusions: MatrixExclusion[];
+}
+
 export interface NetPolicyMatrix {
   direction: "egress" | "ingress";
   groups: MatrixGroup[];
   cells: MatrixCell[];
   external: { from: string; rule_count: number }[];
+  /** Absent from a server before design 32 S3b. */
+  exclusions?: MatrixExclusion[];
+  fleet?: MatrixFleetRow;
+}
+
+// Design 32 D4: GET /api/nodes/network, what applies to one node.
+
+export type NodeNetworkSectionState = "ok" | "refused";
+
+export interface NodeNetworkSection {
+  state: NodeNetworkSectionState;
+  /** The scope this session lacks on the node, when refused. */
+  scope?: string;
+  reason?: string;
+}
+
+export interface NodeNetworkRef {
+  id: string;
+  name?: string;
+}
+
+export interface NodeNetworkSecurityGroup {
+  id: string;
+  name?: string;
+  rules: number;
+  /** The node group a derived binding comes through (S4). */
+  via?: NodeNetworkRef;
+}
+
+export interface NodeNetworkPort {
+  source: "selfdns" | "beacon";
+  label?: string;
+  protocols: string[];
+  port: number;
+  exposure?: string;
+  sources?: number;
+}
+
+export interface NodeNetworkInbound extends NodeNetworkSection {
+  firewall?: "netguard" | "legacy" | "none";
+  binding?: "managed" | "observe" | "none";
+  binding_version?: number;
+  zones?: NodeNetworkRef[];
+  security_groups?: NodeNetworkSecurityGroup[];
+  derived_security_groups?: NodeNetworkSecurityGroup[];
+  extra_ports?: NodeNetworkPort[];
+  legacy_ingress?: { rules: number; state: "applies_legacy" | "ignored_netguard" };
+  drift_state?: string;
+}
+
+export type NodeNetworkPolicyState = "applies" | "disabled" | "excluded" | "blocked" | "empty";
+
+export interface NodeNetworkPolicy {
+  id: string;
+  name?: string;
+  label: string;
+  priority: number;
+  enabled: boolean;
+  reach: "named" | "group" | "fleet" | "excluded";
+  via_groups?: NodeNetworkRef[];
+  state: NodeNetworkPolicyState;
+  rules: number;
+  allow: number;
+  deny: number;
+  hidden_target_nodes?: number;
+}
+
+export interface NodeNetworkNodePolicy {
+  enabled: boolean;
+  rules: number;
+  last_applied_at?: string;
+}
+
+export interface NodeNetworkOutbound extends NodeNetworkSection {
+  source?: "policies" | "manual" | "orphan" | "none";
+  default_drop?: boolean;
+  policies?: NodeNetworkPolicy[];
+  manual?: NodeNetworkNodePolicy;
+  orphan?: NodeNetworkNodePolicy;
+}
+
+export interface NodeNetworkAccess extends NodeNetworkSection {
+  enrolled?: boolean;
+  posture?: string;
+  knock_required?: boolean;
+  stage?: string;
+  stage_is_history?: boolean;
+  revert_armed?: boolean;
+}
+
+export interface NodeNetworkMesh extends NodeNetworkSection {
+  address?: string;
+  listen_port?: number;
+  endpoint?: string;
+  public_key?: boolean;
+  ready?: boolean;
+  missing?: string[];
+  peers?: number;
+  /** The scope the peer count needs on every mesh member, when it was refused. */
+  peers_refused?: string;
+  last_applied?: { approval_id?: string; applied_at: string };
+  not_reported?: string[];
+}
+
+export interface NodeNetworkGroups extends NodeNetworkSection {
+  items?: { id: string; name: string; slug?: string; color?: string }[];
+}
+
+export type NodeNetworkOwnerKind = "netguard" | "beacon" | "selfdns" | "legacy_firewall" | "outbound_policy" | "manual_policy" | "sshguard";
+
+export interface NodeNetworkOwner {
+  kind: NodeNetworkOwnerKind;
+  state: "writes" | "contributes" | "observes" | "refused" | "idle" | "orphan";
+}
+
+export interface NodeNetworkRuleset {
+  state: "ok" | "none" | "refused" | "error";
+  composer?: string;
+  sha256?: string;
+  /** Only when asked for with rules=1. */
+  ruleset?: string;
+  scope?: string;
+  reason?: string;
+}
+
+export interface NodeNetworkTable extends NodeNetworkSection {
+  table: string;
+  owners?: NodeNetworkOwner[];
+  last_writer?: { kind: string; approval_id?: string; applied_at: string };
+  compile_now?: NodeNetworkRuleset;
+  last_applied?: NodeNetworkRuleset;
+  replan_pending?: boolean;
+  drift_state?: string;
+  /** "knock": the SSH Guard table, whose rules are the knock sequence. */
+  rules_withheld?: string;
+}
+
+export interface NodeNetworkView {
+  node_id: string;
+  node_name?: string;
+  generated_at: string;
+  inbound: NodeNetworkInbound;
+  outbound: NodeNetworkOutbound;
+  access: NodeNetworkAccess;
+  mesh: NodeNetworkMesh;
+  groups: NodeNetworkGroups;
+  tables: NodeNetworkTable[];
 }
 
 export interface NetGraphNode {

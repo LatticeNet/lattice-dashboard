@@ -51,8 +51,15 @@ const props = withDefaults(
     emptyText: string;
     idPrefix: string;
     canEdit?: boolean;
+    /**
+     * The request path of the rules list (design 32 R6). When set, each rule
+     * and its controls carry data-field paths ("rules[1].ports") so a refused
+     * save marks the control it names; inbound lines follow the outbound
+     * rules, in the order the editor sends them.
+     */
+    fieldPath?: string;
   }>(),
-  { inbound: () => [], firewallTo: null, canEdit: true },
+  { inbound: () => [], firewallTo: null, canEdit: true, fieldPath: undefined },
 );
 
 const emit = defineEmits<{
@@ -112,7 +119,12 @@ function removeInbound(key: string) {
         {{ $t("networking.policy.openFirewall") }}
       </RouterLink>
       <ul class="divide-y divide-warning/20">
-        <li v-for="line in inbound" :key="line.key" class="flex items-center justify-between gap-2 py-1">
+        <li
+          v-for="(line, j) in inbound"
+          :key="line.key"
+          class="flex items-center justify-between gap-2 py-1"
+          :data-field="fieldPath ? `${fieldPath}[${rules.length + j}]` : undefined"
+        >
           <span class="min-w-0 break-words font-mono text-muted-foreground">{{ line.text }}</span>
           <Button
             type="button"
@@ -146,8 +158,10 @@ function removeInbound(key: string) {
         </Button>
       </div>
 
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div class="grid gap-1.5">
+      <!-- The rule's own path sits on its fields, so a refusal about the rule as
+           a whole focuses its first control rather than its remove button. -->
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3" :data-field="fieldPath ? `${fieldPath}[${index}]` : undefined">
+        <div class="grid gap-1.5" :data-field="fieldPath ? `${fieldPath}[${index}].action` : undefined">
           <Label class="text-xs" :for="`${idPrefix}-rule-${index}-action`">{{ $t("networking.policy.action") }}</Label>
           <Select v-model="rule.action">
             <SelectTrigger :id="`${idPrefix}-rule-${index}-action`" class="w-full"><SelectValue /></SelectTrigger>
@@ -157,7 +171,7 @@ function removeInbound(key: string) {
             </SelectContent>
           </Select>
         </div>
-        <div class="grid gap-1.5">
+        <div class="grid gap-1.5" :data-field="fieldPath ? `${fieldPath}[${index}].protocol` : undefined">
           <Label class="text-xs" :for="`${idPrefix}-rule-${index}-protocol`">{{ $t("networking.policy.protocol") }}</Label>
           <Select :model-value="rule.protocol" @update:model-value="(v) => setProtocol(rule, v)">
             <SelectTrigger :id="`${idPrefix}-rule-${index}-protocol`" class="w-full"><SelectValue /></SelectTrigger>
@@ -168,7 +182,7 @@ function removeInbound(key: string) {
             </SelectContent>
           </Select>
         </div>
-        <div class="grid gap-1.5">
+        <div class="grid gap-1.5" :data-field="fieldPath ? `${fieldPath}[${index}].ports` : undefined">
           <Label class="text-xs" :for="`${idPrefix}-rule-${index}-ports`">{{ $t("networking.policy.ports") }}</Label>
           <Input
             :id="`${idPrefix}-rule-${index}-ports`"
@@ -188,7 +202,7 @@ function removeInbound(key: string) {
       <slot name="remote" :rule="rule" :index="index" />
 
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div class="grid gap-1.5">
+        <div class="grid gap-1.5" :data-field="fieldPath ? `${fieldPath}[${index}].comment` : undefined">
           <Label class="text-xs" :for="`${idPrefix}-rule-${index}-comment`">{{ $t("networking.policy.comment") }}</Label>
           <Input :id="`${idPrefix}-rule-${index}-comment`" v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />
         </div>

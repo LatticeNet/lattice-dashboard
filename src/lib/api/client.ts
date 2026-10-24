@@ -5,11 +5,13 @@
 // and /api/me which must be echoed as `X-Lattice-CSRF` on every unsafe method.
 // All errors share the shape {error:{code, message, request_id}} with a stable
 // machine code; we surface that as a typed ApiError carrying the request id.
+// A refused save may also name the request field at fault ({error:{field}},
+// design 32 R6), a path into the request body such as "targets.exclude[1]".
 // ApiError.message is display-ready for toast-style call sites; serverMessage
 // keeps the raw text for views that render request_id separately.
 
 export interface ApiErrorBody {
-  error?: { code?: string; message?: string; request_id?: string };
+  error?: { code?: string; message?: string; request_id?: string; field?: string };
 }
 
 export class ApiError extends Error {
@@ -26,6 +28,13 @@ export class ApiError extends Error {
    * away and left the screen with nothing to show but "conflict".
    */
   readonly body?: unknown;
+  /**
+   * The request field a refused save is about, a path into the request body
+   * ("name", "targets.exclude[1]"); undefined when the refusal names none.
+   * Read from the body, so a fake that passes `{ error: { field } }` as the
+   * body exercises the same path as the server.
+   */
+  readonly field?: string;
 
   constructor(status: number, code: string, message: string, requestId?: string, body?: unknown) {
     super(messageWithRequestId(message, requestId));
@@ -35,6 +44,13 @@ export class ApiError extends Error {
     this.serverMessage = message;
     this.requestId = requestId;
     this.body = body;
+    const field = (body as ApiErrorBody | undefined)?.error?.field;
+    this.field = typeof field === "string" && field.trim() ? field.trim() : undefined;
+  }
+
+  /** True when a save named a version someone else already replaced. */
+  get isVersionConflict(): boolean {
+    return this.code === "version_conflict";
   }
 
   /** True for auth failures that should bounce the operator to login. */
