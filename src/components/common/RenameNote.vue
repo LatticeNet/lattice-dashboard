@@ -4,7 +4,7 @@
  * the new one, once per viewer, with a dismiss button. Quiet on purpose: it
  * explains a moved habit and gets out of the way.
  */
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Info, X } from "lucide-vue-next";
 
@@ -25,7 +25,23 @@ function storage() {
   }
 }
 
-const shown = ref(takeRenameNote(storage(), auth.principal?.actor_id, props.id));
+/**
+ * Taken once the signed-in operator is known, so the note is not marked seen
+ * for "anonymous" while the session is still loading. A caller keys the
+ * component by `id`, so a new page gets a new note.
+ */
+const shown = ref(false);
+let taken = false;
+watch(
+  () => auth.principal?.actor_id,
+  (owner) => {
+    if (owner && !taken) {
+      taken = true;
+      shown.value = takeRenameNote(storage(), owner, props.id);
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

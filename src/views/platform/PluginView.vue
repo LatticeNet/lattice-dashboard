@@ -377,7 +377,7 @@ function confirmAction() {
 
 <template>
   <div v-if="kind === 'sandbox' && hasAccess && plugin?.ui_runtime" class="absolute inset-0 flex flex-col">
-    <RenameNote v-if="renameNote" :id="renameNote" class="mx-4 mt-3 shrink-0 sm:mx-6" />
+    <RenameNote v-if="renameNote" :id="renameNote" :key="renameNote" class="mx-4 mt-3 shrink-0 sm:mx-6" />
     <div class="relative min-h-0 flex-1">
       <PluginFrameHost
         :key="`${plugin.id}:${plugin.ui_runtime.asset_digest}:${viewRoute}:${callableInterfaceFingerprint}`"

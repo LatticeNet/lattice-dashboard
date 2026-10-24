@@ -503,6 +503,7 @@ export default {
       goneDescription: "它已被删除，或者链接有误。",
       disabledExplain: "已停用：规划时不包含它，它针对的节点保留上次应用的规则。",
       reachesNow: "当前不覆盖任何节点 | 当前覆盖 {n} 个节点 | 当前覆盖 {n} 个节点",
+      hiddenTargetNodes: "以及 {n} 个你无权读取的节点 | 以及 {n} 个你无权读取的节点",
       reachesNone: "目标解析不到你能看到的任何节点。加入目标分组的节点会在下次规划时被覆盖。",
       planHint: "修改通过「规划出站策略」下发，它为每个受影响的节点生成一份待批准的计划。",
       delete: {

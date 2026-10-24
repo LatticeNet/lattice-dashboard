@@ -90,6 +90,35 @@ export function nodeCoverage(sel: TargetSelector, nodeId: string, groups: readon
   return { explicit, via, fleet, excluded, targeted: (explicit || via.length > 0 || fleet) && !excluded };
 }
 
+/**
+ * Coverage for every visible node at once, for a list that renders them all:
+ * the selector is normalized once and each named group's members become a
+ * Set, so a fleet of thousands of nodes and large groups stays linear per
+ * render instead of normalizing and scanning member arrays per node.
+ */
+export function coverageMap(
+  sel: TargetSelector,
+  nodes: readonly SelectorNode[],
+  groups: readonly SelectorGroup[],
+): Map<string, NodeCoverage> {
+  const n = normalizeSelector(sel);
+  const named = new Set(n.nodes ?? []);
+  const excluded = new Set(n.exclude ?? []);
+  const fleet = n.all === true;
+  const chosen = (n.groups ?? [])
+    .map((id) => groups.find((g) => g.id === id))
+    .filter((g): g is SelectorGroup => !!g)
+    .map((g) => ({ id: g.id, members: new Set(g.resolved_members) }));
+  const out = new Map<string, NodeCoverage>();
+  for (const node of nodes) {
+    const explicit = named.has(node.id);
+    const via = chosen.filter((g) => g.members.has(node.id)).map((g) => g.id);
+    const left = excluded.has(node.id);
+    out.set(node.id, { explicit, via, fleet, excluded: left, targeted: (explicit || via.length > 0 || fleet) && !left });
+  }
+  return out;
+}
+
 /** The visible nodes a selector resolves to, sorted by id. */
 export function resolveSelector(
   sel: TargetSelector,
@@ -123,6 +152,12 @@ export function toggleNode(sel: TargetSelector, nodeId: string, on: boolean): Ta
   return normalizeSelector({ ...n, nodes: [...nodes], exclude: [...exclude] });
 }
 
+/**
+ * Name a group, or stop naming it. Dropping the last group drops the
+ * exclusions that stood beside it (they mean nothing without a group or the
+ * whole fleet, and the server refuses them); naming a group again does not
+ * bring them back.
+ */
 export function toggleGroup(sel: TargetSelector, groupId: string, on: boolean): TargetSelector {
   const n = normalizeSelector(sel);
   const groups = new Set(n.groups ?? []);

@@ -180,6 +180,8 @@ function submit() {
   }));
   emit("save", {
     id: props.existing?.id,
+    // The server replaces the whole record, so the name rides along.
+    name: props.existing?.name,
     scope: { groups: [props.source.id] },
     rules: [...otherRules.value, ...destRules, ...inboundRules.value],
     enabled: meta.enabled,

@@ -674,6 +674,7 @@ export default {
           netPolicies: "网络策略",
           netPeerRulesStripped: "已清理对端防火墙规则",
           groupPolicyRulesStripped: "已清理分组策略规则",
+          groupPolicyScopesStripped: "已清理出站策略目标",
           geoRoutingStripped: "已更新地理路由",
           geoRoutingDeleted: "已删除地理路由",
           agentUpdatePolicies: "Agent 更新策略",

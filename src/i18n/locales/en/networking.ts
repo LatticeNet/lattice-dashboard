@@ -528,6 +528,7 @@ export default {
       goneDescription: "It was deleted, or the link is wrong.",
       disabledExplain: "Disabled: planning leaves it out, and the nodes it targets keep what they last applied.",
       reachesNow: "Reaches no nodes now | Reaches {n} node now | Reaches {n} nodes now",
+      hiddenTargetNodes: "and {n} node you cannot read | and {n} nodes you cannot read",
       reachesNone: "The target resolves to no node you can see. A node that joins a targeted group is covered at the next plan.",
       planHint: "Edits reach nodes through Plan outbound policies, which makes one plan per affected node for approval.",
       delete: {

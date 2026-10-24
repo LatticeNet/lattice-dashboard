@@ -463,6 +463,7 @@ export interface NodeDeletePlanView {
   net_policies: number;
   net_peer_rules_stripped: number;
   group_policy_rules_stripped: number;
+  group_policy_scopes_stripped?: number;
   geo_routing_stripped: number;
   geo_routing_deleted: number;
   agent_update_policies: number;
@@ -2146,6 +2147,8 @@ export interface GroupPolicyView extends GroupNetPolicy {
   target_node_ids: string[];
   /** The name, or a description of the target. */
   label: string;
+  /** For a session confined to some nodes: named or excluded nodes left out of target, scope and label. */
+  hidden_target_nodes?: number;
 }
 
 /**

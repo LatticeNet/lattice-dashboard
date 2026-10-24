@@ -32,7 +32,7 @@ import { Input } from "@/components/ui/input";
 import GroupChip from "@/components/networking/GroupChip.vue";
 
 import {
-  nodeCoverage,
+  coverageMap,
   normalizeSelector,
   resolveSelector,
   selectorParts,
@@ -113,13 +113,14 @@ const regions = computed(() => {
 });
 
 /** Chosen ids this session cannot see (deleted, or outside its reach): still listed, by id. */
-const unseen = computed(() => {
-  const seen = new Set(props.nodes.map((n) => n.id));
-  return [...(value.value.nodes ?? []), ...(value.value.exclude ?? [])].filter((id) => !seen.has(id));
-});
+const visibleIds = computed(() => new Set(props.nodes.map((n) => n.id)));
+const unseen = computed(() => [...(value.value.nodes ?? []), ...(value.value.exclude ?? [])].filter((id) => !visibleIds.value.has(id)));
 
+/** Every visible node's coverage, computed once per change rather than per row and per read. */
+const coverage = computed(() => coverageMap(value.value, props.nodes, props.groups));
+const NO_COVERAGE = { explicit: false, via: [], fleet: false, excluded: false, targeted: false };
 function coverageOf(node: Node) {
-  return nodeCoverage(value.value, node.id, props.groups);
+  return coverage.value.get(node.id) ?? NO_COVERAGE;
 }
 
 /** A node a group or the fleet already covers is ticked by that, not by itself. */
@@ -169,8 +170,7 @@ function nodeName(id: string): string {
 }
 
 function groupMemberCount(group: PickerGroup): number {
-  const seen = new Set(props.nodes.map((n) => n.id));
-  return group.resolved_members.filter((id) => seen.has(id)).length;
+  return group.resolved_members.filter((id) => visibleIds.value.has(id)).length;
 }
 
 const resolvedId = computed(() => `${props.idPrefix}-resolved`);

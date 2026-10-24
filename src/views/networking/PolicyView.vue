@@ -114,6 +114,8 @@ const router = useRouter();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("netpolicy:read"));
 const canAdmin = computed(() => auth.can("netpolicy:admin"));
+/** A session confined to some nodes may target only nodes it administers (design 32 D1 rule). */
+const restricted = computed(() => isNodeRestricted(auth.serverAllowlist));
 
 type Layer = OutboundLayer;
 const layer = useLayer<Layer>(() => OUTBOUND_LAYERS, () => "policies");
@@ -180,8 +182,11 @@ const cellAlsoFrom = computed<string[]>(() => {
     .map((p) => policyTitle(p));
 });
 
+/** A cell writes a group-targeted policy, which a token confined to some nodes may not. */
+const canEditCells = computed(() => canAdmin.value && !restricted.value);
+
 function openCellEditor(source: MatrixGroup, dest: MatrixGroup) {
-  if (!canAdmin.value) return;
+  if (!canEditCells.value) return;
   cellSource.value = source;
   cellDest.value = dest;
   cellEditorOpen.value = true;
@@ -254,8 +259,6 @@ function openPlanApprovals() {
 }
 
 // ── Outbound policies (the default layer) ─────────────────────────────────
-/** A session confined to some nodes may target only nodes it administers (design 32 D1 rule). */
-const restricted = computed(() => isNodeRestricted(auth.serverAllowlist));
 const policySheet = useRouteOpen(POLICY_PARAM);
 
 const sortedGroupPolicies = computed(() =>
@@ -333,7 +336,8 @@ async function saveOutbound(payload: GroupPolicyUpsertRequest): Promise<void> {
     const saved = await api.groupPolicy.upsert(payload);
     toast.success(payload.id ? t("networking.outbound.toastUpdated") : t("networking.outbound.toastCreated"));
     outboundDialogOpen.value = false;
-    refreshMatrix();
+    // Read the list before opening the new policy, or its sheet flashes "gone".
+    await Promise.all([groupPoliciesQuery.refresh(), matrixQuery.refresh()]);
     if (!payload.id) policySheet.open(saved.id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.outbound.toastSaveFailed"));
@@ -396,16 +400,27 @@ async function confirmConvert(): Promise<void> {
     const result = await api.netpolicy.convert(target.target_node_id, { name: convertName.value.trim() || undefined, priority: Math.trunc(convertPriority.value || 0) });
     convertTarget.value = undefined;
     toast.success(t("networking.outbound.toastConverted", { node: policyNodeLabel(target) }));
-    refreshAll();
+    // Read the lists before opening the new policy, or its sheet flashes "gone".
+    await Promise.all([groupPoliciesQuery.refresh(), policiesQuery.refresh(), matrixQuery.refresh()]);
     owned.push({ ...owned.query(), view: undefined, open: undefined, [POLICY_PARAM]: result.group_policy.id });
-    if (result.approval) {
-      planApproval.value = result.approval;
-      planSha.value = await planDigest.digestFor(result.approval);
-    }
+    if (result.approval) await showPlan(result.approval);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.outbound.toastConvertFailed"));
   } finally {
     converting.value = false;
+  }
+}
+
+/**
+ * Show a plan the server already created. The digest is a separate step: a
+ * failure to compute it must not read as a failure of what made the plan.
+ */
+async function showPlan(approval: ApprovalView): Promise<void> {
+  planApproval.value = approval;
+  try {
+    planSha.value = await planDigest.digestFor(approval);
+  } catch {
+    planSha.value = "";
   }
 }
 
@@ -1109,7 +1124,7 @@ function closePlan(open: boolean) {
       <div class="space-y-0.5">
         <h2 id="policy-matrix-heading" class="text-sm font-medium">{{ $t('networking.matrix.title') }}</h2>
         <p class="text-xs text-muted-foreground">
-          {{ canAdmin && hasGroups ? $t('networking.policyPage.matrixHintAdmin') : $t('networking.matrix.description') }}
+          {{ canEditCells && hasGroups ? $t('networking.policyPage.matrixHintAdmin') : $t('networking.matrix.description') }}
           {{ $t('networking.outbound.matrixScope') }}
         </p>
       </div>
@@ -1138,7 +1153,7 @@ function closePlan(open: boolean) {
           <PolicyMatrix
             v-if="matrix"
             :matrix="matrix"
-            :can-admin="canAdmin"
+            :can-admin="canEditCells"
             @edit="openCellEditor"
           />
           <p v-if="matrix && !hasGroupPolicies" class="text-xs text-muted-foreground">
@@ -1357,6 +1372,9 @@ function closePlan(open: boolean) {
                 {{ part.kind === 'fleet' ? $t('selector.wholeFleet') : part.kind === 'exclude' ? $t('selector.except', { name: part.name }) : part.name }}
               </span>
             </template>
+            <span v-if="openOutbound.hidden_target_nodes" class="text-xs text-muted-foreground">
+              {{ $t('networking.outbound.hiddenTargetNodes', { n: openOutbound.hidden_target_nodes }, openOutbound.hidden_target_nodes) }}
+            </span>
           </p>
         </section>
         <section class="space-y-1.5">

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  coverageMap,
   isEmptySelector,
   nodeCoverage,
   normalizeSelector,
@@ -63,6 +64,14 @@ test("coverage says why a node is targeted", () => {
   assert.deepEqual(nodeCoverage(sel, "b", groups), { explicit: false, via: ["g-web"], fleet: false, excluded: true, targeted: false });
   assert.deepEqual(nodeCoverage(sel, "d", groups), { explicit: true, via: [], fleet: false, excluded: false, targeted: true });
   assert.equal(nodeCoverage({ all: true }, "c", groups).targeted, true);
+});
+
+test("the coverage map agrees with per-node coverage for every node", () => {
+  for (const sel of [{ nodes: ["d"], groups: ["g-web"], exclude: ["b"] }, { all: true, exclude: ["c"] }, { groups: ["g-db", "g-missing"] }, {}]) {
+    const map = coverageMap(sel, nodes, groups);
+    assert.equal(map.size, nodes.length);
+    for (const node of nodes) assert.deepEqual(map.get(node.id), nodeCoverage(sel, node.id, groups), `${JSON.stringify(sel)} ${node.id}`);
+  }
 });
 
 test("naming a node brings it back from the exclusions, and leaving it out stops naming it", () => {

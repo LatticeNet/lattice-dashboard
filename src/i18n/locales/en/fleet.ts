@@ -685,6 +685,7 @@ export default {
           netPolicies: "Network policies",
           netPeerRulesStripped: "Peer firewall rules pruned",
           groupPolicyRulesStripped: "Group-policy rules pruned",
+          groupPolicyScopesStripped: "Outbound policy targets pruned",
           geoRoutingStripped: "Geo routings updated",
           geoRoutingDeleted: "Geo routings deleted",
           agentUpdatePolicies: "Agent-update policies",
