@@ -37,9 +37,12 @@ import {
   layoutTopology,
   missingReads,
   neighbourhood,
+  placeCard,
   readState,
   readsFor,
   regionOf,
+  rovingMove,
+  rovingStop,
   rowPath,
   rowSummary,
   type TopoReadStatus,
@@ -640,21 +643,87 @@ test("a certificate check's line leaves the control plane over the top of the no
   assert.ok(Number(run[1]) <= a.rowsX && Number(run[2]) >= a.rowsX + a.rowsW, line.d);
 });
 
-test("the keyboard reaches a source's paths right after the source, the tall column top to bottom before the addresses", () => {
+test("the arrow keys walk the lines source by source, each source's the tall column top to bottom before the addresses", () => {
   const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "bj", name: "cd-bj-iplc" }];
   const two = plan({ config: { ...plan().config, sources: ["sh", "bj"] } });
   const paths = [...PATHS, ADDRESS_CHECK("sh"), probe("bj", "hk", { state: "up", p50_ms: 30 })];
   const a = layoutTopology(buildTopology(input({ plan: two, matrix: matrixOf(paths, sources), chains: [] })), { width: 1200 });
   const order = keyboardOrder(a);
-  assert.deepEqual([...order.keys()], ["source:sh", "source:bj"], "in the order the boxes are drawn");
   assert.deepEqual(
-    order.get("source:sh")!.map((le) => le.edge.to),
-    ["hk", "jp", "us4", "us1", "us2", "de", addressEndpoint("https://status.example.net/healthz")],
-    "by where they end: the rows top to bottom, then the addresses",
+    order.map((le) => `${le.edge.from}>${le.edge.to}`),
+    [...["hk", "jp", "us4", "us1", "us2", "de", addressEndpoint("https://status.example.net/healthz")].map((to) => `sh>${to}`), "bj>hk"],
+    "in the order the boxes are drawn, then by where they end: the rows top to bottom, then the addresses",
   );
-  assert.deepEqual(order.get("source:bj")!.map((le) => le.edge.to), ["hk"]);
   // Every drawn line is reachable exactly once.
-  assert.equal([...order.values()].flat().length, a.edges.length);
+  assert.equal(new Set(order.map((le) => le.key)).size, a.edges.length);
+});
+
+test("the lines are one tab stop: the line the keyboard was last on, else the open path's, else the first", () => {
+  const walk = ["a", "b", "c", "d"];
+  assert.equal(rovingStop(walk, [undefined, undefined]), "a");
+  assert.equal(rovingStop(walk, ["c", "b"]), "c", "Tab comes back to the line the keyboard left");
+  assert.equal(rovingStop(walk, [null, "b"]), "b", "else the open path's line");
+  // A line the query faded is out of the walk: the stop moves to one it keeps.
+  assert.equal(rovingStop(["b", "d"], ["c", "a"]), "b");
+  assert.equal(rovingStop([], ["a"]), undefined, "nothing to stop on");
+});
+
+test("the arrow keys, Home and End move along the walk and stop at its ends; other keys do nothing", () => {
+  const walk = ["a", "b", "c"];
+  assert.equal(rovingMove(walk, "a", "ArrowDown"), "b");
+  assert.equal(rovingMove(walk, "a", "ArrowRight"), "b");
+  assert.equal(rovingMove(walk, "c", "ArrowDown"), "c", "no wrap past the last line");
+  assert.equal(rovingMove(walk, "b", "ArrowUp"), "a");
+  assert.equal(rovingMove(walk, "b", "ArrowLeft"), "a");
+  assert.equal(rovingMove(walk, "a", "ArrowUp"), "a", "no wrap before the first");
+  assert.equal(rovingMove(walk, "b", "Home"), "a");
+  assert.equal(rovingMove(walk, "a", "End"), "c");
+  // From a faded line the pointer opened: the nearest kept line that way, in the order every line has.
+  const order = ["a", "f1", "b", "f2", "c"];
+  assert.equal(rovingMove(walk, "f2", "ArrowDown", order), "c");
+  assert.equal(rovingMove(walk, "f2", "ArrowUp", order), "b");
+  assert.equal(rovingMove(walk, "f1", "ArrowLeft", order), "a");
+  assert.equal(rovingMove(["a", "b"], "f2", "ArrowDown", order), "b", "nothing kept that way: the walk's end on that side");
+  assert.equal(rovingMove(walk, "a", "Tab"), undefined);
+  assert.equal(rovingMove(walk, "a", "Enter"), undefined);
+  assert.equal(rovingMove([], "a", "ArrowDown"), undefined);
+});
+
+test("with a query the walk holds only the lines it keeps, in the same order", () => {
+  const m = buildTopology({ ...nineSources(), drawnSources: ["s1", "s2", "s3", "s4"], matching: new Set(ninePaths().filter((p) => p.target_node === "hk").map((p) => `${p.source}~hk`)) });
+  const a = layoutTopology(m, { width: 1200 });
+  const walk = keyboardOrder(a).filter((le) => le.bundle.some((e) => e.matched));
+  assert.ok(walk.length > 0 && walk.length < a.edges.length, `${walk.length} of ${a.edges.length}`);
+  assert.ok(walk.every((le) => le.edge.to === "hk"));
+});
+
+test("a card stays inside the window: below the point, or above it when below would leave the screen", () => {
+  const room = { hostW: 1200, hostH: 2000, visibleTop: 0, visibleBottom: 900, cardW: 288, cardH: 120, margin: 4 };
+  // Room below: the card sits under the point.
+  assert.deepEqual(placeCard({ x: 300, y: 400 }, room), { x: 314, y: 414 });
+  // Near the window's bottom, though the drawing runs on below it: above the point.
+  assert.deepEqual(placeCard({ x: 300, y: 850 }, room), { x: 314, y: 850 - 14 - 120 });
+  // The drawing scrolled up by 600 px: the window shows host rows 600 to 1500.
+  const scrolled = { ...room, visibleTop: 600, visibleBottom: 1500 };
+  assert.equal(placeCard({ x: 300, y: 1450 }, scrolled).y, 1450 - 14 - 120);
+  // Never above the window's top edge either.
+  assert.equal(placeCard({ x: 300, y: 620 }, { ...scrolled, cardH: 400, visibleBottom: 1000 }).y, 604);
+  // The point itself below the window (a long line focused from its source): the card still ends on screen.
+  assert.equal(placeCard({ x: 300, y: 1176 }, { ...room, visibleTop: 129, visibleBottom: 1129, hostH: 1210, cardH: 229 }).y, 1129 - 4 - 229);
+  // Near the right edge: to the left of the point.
+  assert.equal(placeCard({ x: 1100, y: 400 }, room).x, 1100 - 288 - 14);
+});
+
+test("a box's card sits beside it and moves up, or flips above the box, to stay on screen", () => {
+  const room = { hostW: 1200, hostH: 2000, visibleTop: 0, visibleBottom: 900, cardW: 288, cardH: 120, margin: 4 };
+  // Beside the box, level with its top.
+  assert.deepEqual(placeCard({ x: 500, y: 300, w: 200, h: 32, anchored: true }, room), { x: 508, y: 300 });
+  // The box's top near the window's bottom: the card moves up to end on screen.
+  assert.equal(placeCard({ x: 500, y: 860, w: 200, h: 32, anchored: true }, room).y, 900 - 4 - 120);
+  // No room on either side: under the box, or above it when under would leave the screen.
+  const narrow = { ...room, hostW: 400 };
+  assert.equal(placeCard({ x: 380, y: 300, w: 360, h: 32, anchored: true }, narrow).y, 300 + 32 + 4);
+  assert.equal(placeCard({ x: 380, y: 800, w: 360, h: 32, anchored: true }, narrow).y, 800 - 4 - 120);
 });
 
 test("past the fold each country becomes one row and its edges one bundle, coloured by the worst", () => {
