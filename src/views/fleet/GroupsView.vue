@@ -26,6 +26,7 @@ import {
 import { describeNodeStatus, nodeStatus } from "@/lib/nodeStatus";
 import { splitNamePrefix } from "@/lib/fleet";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useRefreshOnReturn } from "@/composables/useRefreshOnReturn";
 import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
@@ -155,6 +156,13 @@ watch(
   },
   { immediate: true },
 );
+// Read again when the operator returns to the page and after their own save
+// or delete of a check or an outbound policy, the objects that name a group
+// (design 32 S3b); there is no poll while the sheet is open.
+useRefreshOnReturn(() => void usedByQuery.refresh(), {
+  kinds: ["check", "outbound_policy"],
+  active: () => !!selectedGroup.value,
+});
 /** The answer for the open group; a stale one for the previous group reads as loading. */
 const usedBy = computed(() => {
   const data = usedByQuery.data.value;
