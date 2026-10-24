@@ -41,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 import NodeNetworkRules from "./NodeNetworkRules.vue";
-import { attentionTables, tableAttention } from "./nodeNetworkModel";
+import { attentionTables, guardAttention, tableAttention } from "./nodeNetworkModel";
 import { useNodeNetwork, useNodeNetworkText } from "./useNodeNetwork";
 
 const props = defineProps<{ node: Node }>();
@@ -71,7 +71,7 @@ function inboundHead(): string {
   if (!section || section.state !== "ok") return section ? text.refused(section) : "";
   const head =
     section.firewall === "netguard"
-      ? t("fleet.nodeNetwork.inbound.netguard")
+      ? t(view.value && guardAttention(view.value)?.kind === "overridden" ? "fleet.nodeNetwork.inbound.netguardManages" : "fleet.nodeNetwork.inbound.netguard")
       : section.firewall === "legacy"
         ? section.binding === "observe"
           ? t("fleet.nodeNetwork.inbound.observe")

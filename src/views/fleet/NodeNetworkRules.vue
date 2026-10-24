@@ -151,7 +151,7 @@ function shortSha(sha?: string): string {
             <template v-else>
               <p v-if="entry.compare.changed > 0" class="text-xs text-warning-text">{{ compareLine(entry.compare) }}</p>
               <component :is="entry.inSync ? 'details' : 'div'" class="group">
-                <summary v-if="entry.inSync" class="cursor-pointer text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:min-h-11">
+                <summary v-if="entry.inSync" :aria-label="$t('fleet.nodeNetwork.rules.showInSyncFor', { table: entry.table.table })" class="cursor-pointer text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:min-h-11">
                   {{ $t('fleet.nodeNetwork.rules.showInSync') }}
                 </summary>
                 <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2" :class="entry.inSync ? 'mt-3' : undefined">
@@ -165,8 +165,9 @@ function shortSha(sha?: string): string {
                         {{ $t('fleet.nodeNetwork.rules.digest', { sha: shortSha((side === 'now' ? entry.table.compile_now : entry.table.last_applied)?.sha256) }) }}
                       </span>
                     </h4>
-                    <!-- Wrapped with a hanging indent so a long rule stays whole at 375; the gutter
-                         says + (a re-plan adds it) or - (a re-plan removes it) without colour. -->
+                    <!-- A rule's nesting is a margin and a long rule wraps with a hanging indent
+                         under itself, so it stays whole and in place at 375; the gutter says +
+                         (a re-plan adds it) or - (a re-plan removes it) without colour. -->
                     <pre
                       v-if="(side === 'now' ? entry.compare.now : entry.compare.applied).length"
                       class="max-h-[60vh] min-w-0 overflow-auto rounded-md border border-border bg-muted/30 py-2 font-mono text-xs leading-5"
@@ -175,9 +176,9 @@ function shortSha(sha?: string): string {
                     ><span
                       v-for="(line, i) in (side === 'now' ? entry.compare.now : entry.compare.applied)"
                       :key="i"
-                      class="block whitespace-pre-wrap break-words ps-8 pe-3 -indent-5"
-                      :class="line.changed ? 'border-s-2 border-warning-text bg-warning/15 ps-7.5' : undefined"
-                    ><span class="inline-block w-5 indent-0 text-muted-foreground" aria-hidden="true">{{ line.changed ? (side === 'now' ? '+' : '-') : '' }}</span><span v-if="line.changed" class="sr-only">{{ side === 'now' ? $t('fleet.nodeNetwork.rules.lineAdded') : $t('fleet.nodeNetwork.rules.lineRemoved') }}</span>{{ line.text || ' ' }}</span></pre>
+                      class="flex pe-3"
+                      :class="line.changed ? 'border-s-2 border-warning-text bg-warning/15 ps-2.5' : 'ps-3'"
+                    ><span class="w-5 shrink-0 text-muted-foreground" aria-hidden="true">{{ line.changed ? (side === 'now' ? '+' : '-') : '' }}</span><span class="min-w-0 flex-1 whitespace-pre-wrap break-words ps-[2ch] -indent-[2ch]" :style="{ marginInlineStart: `${line.indent}ch` }"><span v-if="line.changed" class="sr-only">{{ side === 'now' ? $t('fleet.nodeNetwork.rules.lineAdded') : $t('fleet.nodeNetwork.rules.lineRemoved') }}</span>{{ line.text || ' ' }}</span></span></pre>
                     <p v-else class="rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
                       {{ columnNote(side === 'now' ? entry.table.compile_now : entry.table.last_applied, side) }}
                     </p>

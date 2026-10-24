@@ -22,7 +22,7 @@ import { AlertTriangle } from "lucide-vue-next";
 import { RouterLink } from "vue-router";
 
 import { proofReason } from "@/components/common/proofModel";
-import { attentionTables, tableAttention } from "@/views/fleet/nodeNetworkModel";
+import { attentionTables, guardAttention, tableAttention } from "@/views/fleet/nodeNetworkModel";
 import { useNodeNetwork, useNodeNetworkText } from "@/views/fleet/useNodeNetwork";
 
 const props = defineProps<{ nodeId: string }>();
@@ -34,7 +34,7 @@ const rows = computed(() => {
   const v = view.value;
   if (!v) return [];
   return [
-    { key: "inbound", value: text.inbound(v.inbound), refused: v.inbound.state === "refused" },
+    { key: "inbound", value: text.inbound(v.inbound, guardAttention(v)?.kind === "overridden"), refused: v.inbound.state === "refused" },
     { key: "outbound", value: text.outbound(v.outbound), refused: v.outbound.state === "refused" },
     { key: "access", value: text.access(v.access), refused: v.access.state === "refused" },
     { key: "mesh", value: text.mesh(v.mesh), refused: v.mesh.state === "refused" },

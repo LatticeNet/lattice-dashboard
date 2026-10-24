@@ -81,7 +81,13 @@ test("the rules compare marks, in order, what a re-plan adds and removes", () =>
   assert.equal(compareRulesets(now, now).changed, 0);
   const empty = compareRulesets(undefined, "x");
   assert.equal(empty.now.length, 0);
-  assert.deepEqual(empty.applied, [{ text: "x", changed: true }]);
+  assert.deepEqual(empty.applied, [{ text: "x", indent: 0, changed: true }]);
+  // The nesting is kept apart from the text, so a wrapped rule stays under its chain.
+  assert.deepEqual(compareRulesets("table t {\n\tchain c {\n    counter drop", undefined).now.map((l) => [l.indent, l.text]), [
+    [0, "table t {"],
+    [4, "chain c {"],
+    [4, "counter drop"],
+  ]);
 });
 
 test("a closing brace is matched to its own block, not the table's", () => {

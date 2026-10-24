@@ -54,12 +54,13 @@ export function useNodeNetworkText() {
     return t("fleet.nodeNetwork.refused", { scope: section.scope ?? "" });
   }
 
-  function inbound(section: NodeNetworkInbound): string {
+  /** overridden: another composer rebuilt lattice_guard, so NetGuard manages inbound but does not enforce it now. */
+  function inbound(section: NodeNetworkInbound, overridden = false): string {
     if (section.state === "refused") return refused(section);
     const parts: string[] = [];
     switch (section.firewall) {
       case "netguard":
-        parts.push(t("fleet.nodeNetwork.inbound.netguard"));
+        parts.push(t(overridden ? "fleet.nodeNetwork.inbound.netguardManages" : "fleet.nodeNetwork.inbound.netguard"));
         break;
       case "legacy":
         parts.push(section.binding === "observe" ? t("fleet.nodeNetwork.inbound.observe") : t("fleet.nodeNetwork.inbound.legacy"));

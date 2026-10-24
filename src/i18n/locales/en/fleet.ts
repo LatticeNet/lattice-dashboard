@@ -2920,6 +2920,8 @@ export default {
       },
       inbound: {
         netguard: "NetGuard enforces",
+        // Under the note that another composer rebuilt the table, so the head claims no enforcement.
+        netguardManages: "Managed by NetGuard",
         observe: "NetGuard observes; the legacy firewall route writes this node's table",
         legacy: "Legacy firewall route",
         none: "No Lattice inbound firewall",
@@ -3019,6 +3021,7 @@ export default {
         orphan: "In force, nothing produces it",
         inSync: "Matches what was applied",
         showInSync: "Show the rules",
+        showInSyncFor: "Show the rules of {table}",
         added: "{n} line to add on re-plan | {n} lines to add on re-plan",
         removed: "{n} line to remove | {n} lines to remove",
         reordered: "Same rules in a different order, and nftables applies them in order",

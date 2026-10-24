@@ -91,7 +91,10 @@ export function portLabel(port: NodeNetworkPort): string {
 }
 
 export interface RulesLine {
+  /** The line without its leading whitespace. */
   text: string;
+  /** The leading whitespace in character widths (a tab counts four), so a wrapped rule keeps its nesting. */
+  indent: number;
   /** Outside the longest run of lines both columns share, in order. */
   changed: boolean;
 }
@@ -167,7 +170,17 @@ export function compareRulesets(now: string | undefined, applied: string | undef
       }
     });
   }
-  const marked = (lines: string[], keys: string[], kept: boolean[]): RulesLine[] => lines.map((text, i) => ({ text, changed: !kept[i] && keys[i] !== "" }));
+  const indentOf = (line: string) => {
+    let width = 0;
+    for (const char of line) {
+      if (char === " ") width += 1;
+      else if (char === "\t") width += 4;
+      else break;
+    }
+    return width;
+  };
+  const marked = (lines: string[], keys: string[], kept: boolean[]): RulesLine[] =>
+    lines.map((line, i) => ({ text: line.trimStart(), indent: indentOf(line), changed: !kept[i] && keys[i] !== "" }));
   const nowMarked = marked(nowLines, a, keptA);
   const appliedMarked = marked(appliedLines, b, keptB);
   const added = nowMarked.filter((line) => line.changed).length;
