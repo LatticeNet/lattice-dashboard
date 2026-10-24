@@ -487,8 +487,6 @@ interface DnsForm {
   enable_udp: boolean;
   enable_tcp: boolean;
   exposure: "mesh" | "public";
-  /** Comma or space separated prefixes; the server canonicalizes them. */
-  allowed_client_networks: string;
   zones: ZoneDraft[];
   hostname: string;
   publish_ipv4: boolean;
@@ -557,7 +555,6 @@ function emptyForm(): DnsForm {
     enable_udp: true,
     enable_tcp: true,
     exposure: "mesh",
-    allowed_client_networks: "",
     zones: [emptyZone()],
     hostname: "",
     publish_ipv4: true,
@@ -592,7 +589,6 @@ function openEdit(dep: DNSDeploymentView) {
     enable_udp: dep.enable_udp,
     enable_tcp: dep.enable_tcp,
     exposure: (dep.exposure as "mesh" | "public") || "mesh",
-    allowed_client_networks: (dep.allowed_client_networks ?? []).join(", "),
     zones: dep.zones.length ? dep.zones.map(zoneToDraft) : [emptyZone()],
     hostname: dep.hostname ?? "",
     publish_ipv4: dep.publish_ipv4,
@@ -701,16 +697,6 @@ function zoneError(zone: ZoneDraft): string | undefined {
 }
 
 const zoneErrors = computed(() => form.zones.map(zoneError));
-
-const allowedClientNetworks = computed(() => form.allowed_client_networks.split(/[\s,]+/).filter(Boolean));
-/**
- * A public listener with a forward zone recurses for anyone who reaches it,
- * which makes the node an open resolver; the server refuses it unless the
- * deployment names the client networks it serves (design 32 D7).
- */
-const openResolver = computed(
-  () => form.exposure === "public" && allowedClientNetworks.value.length === 0 && form.zones.some((zone) => zone.mode === "forward"),
-);
 const hasZoneErrors = computed(() => zoneErrors.value.some((e) => e !== undefined));
 
 const canSubmit = computed(() => {
@@ -718,7 +704,7 @@ const canSubmit = computed(() => {
   if (isExternalForm.value) {
     return externalHostnameValid.value && form.listeners.length > 0 && !hasListenerErrors.value;
   }
-  return form.zones.length > 0 && !hasZoneErrors.value && !hostnameNeedsCredential.value && !openResolver.value;
+  return form.zones.length > 0 && !hasZoneErrors.value && !hostnameNeedsCredential.value;
 });
 
 function buildBody(): DNSDeploymentBody {
@@ -746,7 +732,6 @@ function buildBody(): DNSDeploymentBody {
     enable_udp: form.enable_udp,
     enable_tcp: form.enable_tcp,
     exposure: form.exposure,
-    ...(allowedClientNetworks.value.length ? { allowed_client_networks: allowedClientNetworks.value } : {}),
     zones,
   };
 
@@ -1304,20 +1289,6 @@ function closePlan(open: boolean) {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div v-if="!isExternalForm" class="grid gap-2">
-            <Label for="dns-allowed-clients">{{ $t('networking.dns.allowedClients') }}</Label>
-            <Input
-              id="dns-allowed-clients"
-              v-model="form.allowed_client_networks"
-              placeholder="198.51.100.0/24, 2001:db8::/32"
-              :aria-invalid="openResolver ? 'true' : undefined"
-              aria-describedby="dns-allowed-clients-hint"
-            />
-            <p id="dns-allowed-clients-hint" :class="cn('text-xs', openResolver ? 'text-destructive' : 'text-muted-foreground')">
-              {{ openResolver ? $t('networking.dns.openResolver') : $t('networking.dns.allowedClientsHint') }}
-            </p>
           </div>
 
           <!-- Zones editor -->

@@ -698,10 +698,6 @@ export default {
       listenPort: "Listen port",
       protocols: "Protocols",
       exposure: "Exposure",
-      allowedClients: "Allowed client networks",
-      allowedClientsHint: "CIDRs or addresses, separated by commas. The resolver refuses every other client. Empty answers every client that reaches the listener.",
-      openResolver:
-        "Public exposure with a forward zone answers recursive queries from anyone, an open resolver. Name the networks that should use it.",
       zones: "Zones",
       addZone: "Add zone",
       zoneLabel: "Zone {index}",
