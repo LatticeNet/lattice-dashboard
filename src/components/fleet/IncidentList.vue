@@ -56,7 +56,7 @@ const props = withDefaults(
     nodeNames?: ReadonlyMap<string, string>;
     /** Monitor names by id, so a failing monitor's claim is worded here rather than in the server's English. */
     monitorNames?: ReadonlyMap<string, string>;
-    /** The node a generated check reaches, by check id: a path.degraded row names and opens its path (design 29 D13). */
+    /** The node a check reaches, by check id: a path.degraded row names and opens its path (design 29 D13, design 32 R1). */
     monitorTargets?: ReadonlyMap<string, { generated: boolean; targetNode?: string }>;
     /** A row control to focus once the row has re-rendered (useIncidentActions). */
     focusRequest?: IncidentFocusRequest | null;
@@ -305,7 +305,7 @@ function ageLine(incident: Incident): string {
 
 function openTarget(incident: Incident): RouteLocationRaw | undefined {
   if (incident.kind === "monitor.down" && incident.monitor_id) return { name: "monitoring", query: { view: "checks", open: incident.monitor_id } };
-  // A degraded path opens its path sheet: by target node when the path set generated it, by check otherwise (D13).
+  // A degraded path opens its path sheet: by its pair when its check reaches a node (design 32 R1), by the check otherwise.
   if (incident.kind === "path.degraded" && incident.monitor_id) {
     const targetNode = props.monitorTargets.get(incident.monitor_id)?.targetNode;
     const path = encodePathKey(targetNode ? { source: incident.node_id ?? "", targetNode } : { source: incident.node_id ?? "", monitorId: incident.monitor_id });

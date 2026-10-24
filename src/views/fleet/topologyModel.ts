@@ -187,7 +187,11 @@ export interface TopologyInput {
   matrix?: Pick<PathsMatrix, "sources" | "paths">;
   /** The sources the picker drew (`?topo.sources=`); undefined draws the default. */
   drawnSources?: readonly string[];
-  /** The path keys the page's query keeps; undefined when there is no query. */
+  /**
+   * The paths the page's query keeps, by PathItem.id: one per check, so a
+   * query that keeps one of two checks on a pair counts one (design 32 R1);
+   * undefined when there is no query.
+   */
   matching?: ReadonlySet<string>;
   /** Undefined when not read or not readable. */
   chains?: readonly LineChainView[];
@@ -424,7 +428,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   /* ---- Paths ---- */
   const sources: TopoNode[] = [];
   const order = sourceOrder(plan, matrix);
-  const withMatches = new Set(matching ? (matrix?.paths ?? []).filter((p) => p.source && matching.has(p.key)).map((p) => p.source) : []);
+  const withMatches = new Set(matching ? (matrix?.paths ?? []).filter((p) => p.source && matching.has(p.id)).map((p) => p.source) : []);
   const drawn = drawnSources(order, input.drawnSources, withMatches);
   const picked = new Set(pickedSources(order, input.drawnSources));
   const reachOf = new Map(matrix ? reachBySource(matrix).map((r) => [r.source, r]) : []);
@@ -471,7 +475,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
           target.region = regionOf(lead.country);
         }
       }
-      const kept = matching ? ordered.filter((p) => matching.has(p.key)) : ordered;
+      const kept = matching ? ordered.filter((p) => matching.has(p.id)) : ordered;
       const state = displayState(lead);
       const edge: TopoEdge = {
         id: `path:${from}>${to}`,
@@ -665,7 +669,7 @@ export function rowSummary(model: Pick<TopologyModel, "inbound" | "drawnSourceId
   const lead = worstLive(into);
   const state = lead.state as EdgePathState;
   const summary: RowSummary = { state, n: into.filter((e) => e.state === state).length, of: into.length };
-  if (state === "unknown" && lead.reason) summary.reason = lead.reason;
+  if ((state === "unknown" || state === "skipped") && lead.reason) summary.reason = lead.reason;
   return summary;
 }
 
@@ -759,6 +763,7 @@ export const PATH_TONE: Record<EdgePathState, string> = {
   down: "--destructive",
   unknown: "--muted-foreground",
   paused: "--muted-foreground",
+  skipped: "--muted-foreground",
 };
 
 /**
@@ -778,7 +783,9 @@ export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state">): EdgeStyle {
         case "down":
           return { color: PATH_TONE.down, stroke: "solid", width: 2.5 };
         case "paused":
-          return { color: PATH_TONE.paused, stroke: "dotted", width: 1.25 };
+        case "skipped":
+          // Shown only on request (design 32 R2): not measured, drawn as the pause is.
+          return { color: PATH_TONE[edge.state], stroke: "dotted", width: 1.25 };
         default:
           return { color: PATH_TONE.unknown, stroke: "dashed", width: 1.25 };
       }

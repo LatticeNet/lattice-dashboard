@@ -1,7 +1,10 @@
 <script setup lang="ts">
 /**
  * One check definition (design 32 D1): what it measures now, its paths
- * worst first (each opens its path sheet on the Topology view), and the
+ * worst first (each opens its path sheet on the Topology view), the pairs it
+ * skips grouped by reason, each reason with its fix (design 32 R2: switch to
+ * Auto, leave the targets out, or approve the beacon plan; the first two open
+ * the editor with the change made, for the operator to save), and the
  * targets that left its set, kept paused with their runs. Forgetting those
  * targets and deleting the definition both name the monitors and their runs
  * before they confirm, and the server refuses either when the list it was
@@ -9,6 +12,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { Pencil, Trash2 } from "lucide-vue-next";
 
 import { api, type CheckDefinitionView, type GroupView, type Node } from "@/lib/api";
@@ -21,10 +25,13 @@ import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import { Button } from "@/components/ui/button";
 
 import { formatCount } from "@/lib/format";
+import BeaconReplanNote from "./BeaconReplanNote.vue";
+import { replanNames } from "./beaconModel";
 import { formatMs } from "./latencyModel";
 import { stateRank, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
-import { describeSelector, type SelectorWords } from "./definitionsModel";
+import { describeSelector, skippedByReason, type DefinitionFix, type SelectorWords } from "./definitionsModel";
+import { useBeaconReplan } from "./useBeaconReplan";
 
 const props = defineProps<{
   open: boolean;
@@ -37,6 +44,8 @@ const props = defineProps<{
   listError?: string | null;
   /** The matrix paths of this definition's monitors. */
   paths: PathItem[];
+  /** The pairs it skips (design 32 R2): not paths, so the matrix keeps them apart. */
+  skipped: PathItem[];
   nodes: Node[];
   groups: GroupView[];
   canAdmin: boolean;
@@ -44,7 +53,7 @@ const props = defineProps<{
   returnFocus?: () => HTMLElement | null;
 }>();
 
-const emit = defineEmits<{ close: []; edit: [definition: CheckDefinitionView]; changed: []; retry: [] }>();
+const emit = defineEmits<{ close: []; edit: [definition: CheckDefinitionView, fix?: DefinitionFix]; changed: []; retry: [] }>();
 
 const { t } = useI18n();
 const { displayLabel, whyText, methodName } = usePathsCopy();
@@ -137,7 +146,22 @@ function pairLabel(path: PathItem): string {
 }
 
 function openPath(path: PathItem): void {
-  props.owned.push({ ...props.owned.query(), view: "topology", as: "list", path: path.key, open: undefined });
+  // A skipped pair is not in the default list: the reveal shows it under the sheet.
+  const reveal = path.measure === "measured" ? {} : { "paths.unmeasured": "1" };
+  props.owned.push({ ...props.owned.query(), view: "topology", as: "list", path: path.key, open: undefined, ...reveal });
+}
+
+/* ---- Skipped pairs, by reason, each with its fix (design 32 R2) ---- */
+
+const skippedGroups = computed(() => (def.value ? skippedByReason(props.skipped, def.value.type).map((g) => ({ ...g, why: whyText(g.paths[0]!), targets: [...new Set(g.paths.map((p) => p.targetNode).filter((id): id is string => !!id))] })) : []));
+const replans = useBeaconReplan();
+/** The beacon plan each waiting target needs, as the page's paths read names it; a target without one links to its Beacon card. */
+function replanOf(targetNode: string) {
+  const item = replans?.replanFor(targetNode);
+  return item && replans ? { item, names: replanNames(item, undefined, replans.nameOf), canPlan: replans.missing(item).length === 0 } : undefined;
+}
+function fix(fixed: DefinitionFix): void {
+  if (def.value) emit("edit", def.value, fixed);
 }
 
 /* ---- Paused targets: forget, with the monitors and their runs named ---- */
@@ -238,7 +262,7 @@ async function remove(): Promise<void> {
           </span>
         </h3>
         <ul v-if="sortedPaths.length" class="divide-y divide-border rounded-md border border-border" data-testid="definition-paths">
-          <li v-for="path in measuredPaths.slice(0, PATHS_SHOWN)" :key="path.key">
+          <li v-for="path in measuredPaths.slice(0, PATHS_SHOWN)" :key="path.id">
             <button
               type="button"
               class="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -258,7 +282,7 @@ async function remove(): Promise<void> {
               <span class="font-mono tabular text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.unknownPaths', { n: group.paths.length }, group.paths.length) }}</span>
             </p>
             <ul class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
-              <li v-for="path in group.paths.slice(0, UNKNOWN_SHOWN)" :key="path.key">
+              <li v-for="path in group.paths.slice(0, UNKNOWN_SHOWN)" :key="path.id">
                 <button type="button" class="text-start underline-offset-2 outline-none hover:underline focus-visible:underline pointer-coarse:min-h-11" @click="openPath(path)">{{ pairLabel(path) }}</button>
               </li>
               <li v-if="group.paths.length > UNKNOWN_SHOWN" class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.morePaths', { n: group.paths.length - UNKNOWN_SHOWN }) }}</li>
@@ -266,6 +290,58 @@ async function remove(): Promise<void> {
           </li>
         </ul>
         <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.noPaths') }}</p>
+      </section>
+
+      <!-- The pairs it skips, by reason, each with its fix (design 32 R2). -->
+      <section v-if="skippedGroups.length" class="space-y-1.5" data-testid="definition-skipped" :aria-label="$t('fleet.monitoring.checkDefs.sheet.skipped')">
+        <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.skippedTitle', { n: skipped.length }, skipped.length) }}</h3>
+        <ul class="divide-y divide-border rounded-md border border-border">
+          <li v-for="group in skippedGroups" :key="group.reason" class="space-y-2 px-3 py-2.5" :data-reason="group.reason" data-testid="definition-skipped-group">
+            <p class="flex flex-wrap items-baseline justify-between gap-x-3 text-xs">
+              <span class="min-w-0 break-words">{{ group.why }}</span>
+              <span class="font-mono tabular text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.skippedPairs', { n: group.paths.length }, group.paths.length) }}</span>
+            </p>
+            <ul class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+              <li v-for="path in group.paths.slice(0, UNKNOWN_SHOWN)" :key="path.id">
+                <button type="button" class="text-start text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:underline pointer-coarse:min-h-11" @click="openPath(path)">{{ pairLabel(path) }}</button>
+              </li>
+              <li v-if="group.paths.length > UNKNOWN_SHOWN" class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.morePaths', { n: group.paths.length - UNKNOWN_SHOWN }) }}</li>
+            </ul>
+            <div v-if="canAdmin" class="flex flex-wrap items-center gap-2">
+              <template v-for="kind in group.fixes" :key="kind">
+                <Button v-if="kind === 'auto'" variant="outline" size="sm" type="button" data-testid="definition-fix-auto" @click="fix({ kind: 'auto' })">
+                  {{ $t('fleet.monitoring.checkDefs.sheet.fixAuto') }}
+                </Button>
+                <Button v-else-if="kind === 'exclude' && group.targets.length" variant="outline" size="sm" type="button" data-testid="definition-fix-exclude" @click="fix({ kind: 'exclude', targets: group.targets })">
+                  {{ $t('fleet.monitoring.checkDefs.sheet.fixExclude', { n: group.targets.length }, group.targets.length) }}
+                </Button>
+                <template v-else-if="kind === 'approve'">
+                  <template v-for="target in group.targets" :key="target">
+                    <BeaconReplanNote
+                      v-if="replans && replanOf(target)"
+                      class="w-full"
+                      :item="replanOf(target)!.item"
+                      :target="nodeName(target)"
+                      :names="replanOf(target)!.names"
+                      :sentences="false"
+                      :can-plan="replanOf(target)!.canPlan"
+                      :opening="replans.opening.value === target"
+                      beacon-link
+                      @plan="replans.open(replanOf(target)!.item)"
+                    />
+                    <RouterLink
+                      v-else
+                      :to="{ name: 'node-detail', params: { id: target }, hash: '#node-beacon' }"
+                      class="text-xs font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+                      data-testid="definition-fix-approve"
+                    >{{ $t('fleet.monitoring.checkDefs.sheet.fixApprove', { target: nodeName(target) }) }}</RouterLink>
+                  </template>
+                </template>
+              </template>
+            </div>
+          </li>
+        </ul>
+        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.skippedHint') }}</p>
       </section>
 
       <!-- Targets that left the set: kept paused with their history until forgotten. -->

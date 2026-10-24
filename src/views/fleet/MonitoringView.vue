@@ -59,12 +59,13 @@ import RetentionSheet from "./RetentionSheet.vue";
 import WindowControl from "./WindowControl.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
-import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
+import { DEFAULT_WINDOW, MONITORING_LAYERS, everyPath, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
 import { isReachabilityCheck, replanMissingScopes, replanStep, replanSurface, type BeaconReplanItem } from "./beaconModel";
 import { BEACON_REPLAN } from "./useBeaconReplan";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
+import type { DefinitionFix } from "./definitionsModel";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -172,6 +173,7 @@ const data = usePathsData({
   requested: windowParam,
   canRead: canReadMonitors,
   checkName: (id) => monitorNames.value.get(id),
+  definitionName: (id) => definitions.value.find((d) => d.id === id)?.name,
   nodeName: (id) => nodesQuery.data.value?.find((n) => n.id === id)?.name,
   controlPlane: () => t("fleet.monitoring.result.controlPlane"),
 });
@@ -280,23 +282,30 @@ provide(BEACON_REPLAN, {
   opening: replanOpening,
 });
 
-/** The path set exists and has no source: nothing is measured, and the empty state says why. */
+/** The path set is read and not migrated into check definitions (design 32 R1): only then is its editor offered. */
+const canEditPathSet = computed(() => {
+  const plan = data.planQuery.data.value;
+  return !!plan && !plan.config.migrated;
+});
+
+/** The path set exists, is not migrated, and has no source: nothing is measured, and the empty state says why. */
 const noSources = computed(() => {
   const plan = data.planQuery.data.value;
-  return !!plan && plan.stored && (plan.config.sources ?? []).length === 0;
+  return !!plan && plan.stored && !plan.config.migrated && (plan.config.sources ?? []).length === 0;
 });
 
 /**
- * The node a generated check reaches, by check id, so a path.degraded
- * incident names and opens its path (design 29 D13): the check's own
- * target_node, else the node its generated paths in the matrix reach.
+ * The node a check reaches, by check id, so a path.degraded incident names
+ * and opens its path (design 29 D13): a path to a node is the pair whichever
+ * check measures it (design 32 R1), so any check's own target_node, else the
+ * node its paths in the matrix reach.
  */
 const monitorTargets = computed(() => {
   const fromPaths = new Map<string, string>();
-  for (const p of matrix.value?.paths ?? []) if (p.managed && p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
+  for (const p of matrix.value ? everyPath(matrix.value) : []) if (p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
   return new Map((monitorsQuery.data.value ?? []).map((m) => {
     const generated = m.managed_by === "latency";
-    return [m.id, { generated, targetNode: generated ? (m.target_node ?? fromPaths.get(m.id)) : undefined }];
+    return [m.id, { generated, targetNode: m.target_node ?? fromPaths.get(m.id) }];
   }));
 });
 
@@ -359,7 +368,6 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (m.judgesDegraded && m.counts.degraded) out.push({ key: "degraded", tone: "warning", text: t("fleet.monitoring.paths.proof.degraded", { n: m.counts.degraded }), to: pathsLink("state:degraded") });
   // Amber means degraded wherever a path state is shown: unknown is muted.
   if (m.counts.unknown) out.push({ key: "unknown", tone: "muted", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
-  if (m.counts.paused) out.push({ key: "paused", tone: "muted", text: t("fleet.monitoring.paths.proof.paused", { n: m.counts.paused }), to: pathsLink("state:paused") });
   if (data.source.value === "legacy") out.push({ key: "legacy", tone: "muted", text: t("fleet.monitoring.paths.proof.legacy") });
   return out;
 });
@@ -418,6 +426,8 @@ const editorType = ref<MonitorType | undefined>();
 const definitionEditorOpen = ref(false);
 const definitionEditing = ref<CheckDefinitionView | undefined>();
 const definitionType = ref<MonitorType | undefined>();
+/** The change a check sheet's fix asked for (design 32 R2): the edit opens with it made. */
+const definitionFix = shallowRef<DefinitionFix>();
 const pathSetOpen = ref(false);
 const retentionOpen = ref(false);
 
@@ -456,14 +466,16 @@ function backToSheet(): void {
 function openCreate(type?: MonitorType): void {
   fromSheet(() => {
     definitionEditing.value = undefined;
+    definitionFix.value = undefined;
     definitionType.value = type === "http" || type === "tls" || type === "tcp" || type === "icmp" || type === "beacon" ? type : undefined;
     definitionEditorOpen.value = true;
   });
 }
 
-function openEditDefinition(definition: CheckDefinitionView): void {
+function openEditDefinition(definition: CheckDefinitionView, fix?: DefinitionFix): void {
   fromSheet(() => {
     definitionEditing.value = definition;
+    definitionFix.value = fix;
     definitionType.value = undefined;
     definitionEditorOpen.value = true;
   });
@@ -603,6 +615,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :failure-of="failureOf"
         :node-seen="nodeSeen"
         :no-sources="noSources"
+        :can-edit-path-set="canEditPathSet"
         @path-set="openPathSet"
         @create-check="openCreate()"
       />
@@ -619,6 +632,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :offered="data.offered.value"
         :failure-of="failureOf"
         :no-sources="noSources"
+        :can-edit-path-set="canEditPathSet"
         :agent-of="agentOf"
         :refresh-tick="refreshTick"
         @path-set="openPathSet"
@@ -643,6 +657,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :definitions-loading="definitionsQuery.loading.value && definitionsQuery.data.value === undefined"
         :definitions-error="definitionsQuery.error.value?.message ?? null"
         :groups="groups"
+        :can-edit-path-set="canEditPathSet"
         @window="(w) => (windowParam = w)"
         @create="openCreate"
         @edit="openEdit"
@@ -689,6 +704,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       v-if="canAdminMonitors"
       :open="definitionEditorOpen"
       :definition="definitionEditing"
+      :fix="definitionFix"
       :initial-type="definitionType"
       :nodes="nodes"
       :groups="groups"
@@ -699,7 +715,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       @reload="refreshAll"
     />
     <PathSetSheet
-      v-if="canAdminMonitors && plan"
+      v-if="canAdminMonitors && plan && canEditPathSet"
       :open="pathSetOpen"
       :plan="plan"
       :nodes="nodes"

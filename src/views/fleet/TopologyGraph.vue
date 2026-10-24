@@ -468,7 +468,7 @@ function edgeCard(le: LayoutEdge): Card {
       card.paths = edge.paths!.map((p) => {
         const state = displayState(p);
         const value = state === "up" || state === "degraded" ? formatMs(p.p50Ms) || t(`fleet.monitoring.paths.state.${state}`) : state === "unknown" ? t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, p.reason) }) : t(`fleet.monitoring.paths.state.${state}`);
-        return { key: p.key, text: `${methodName(p.method)} · ${p.managed ? t("fleet.monitoring.network.pathSet") : p.checkName || p.monitorId}`, value, tone: PATH_INK[state] };
+        return { key: p.id, text: `${methodName(p.method)} · ${p.checkName || p.checkId}`, value, tone: PATH_INK[state] };
       });
     }
     return card;

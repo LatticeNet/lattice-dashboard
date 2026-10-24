@@ -2,36 +2,42 @@
 /**
  * The path sheet (design 29 D7, design 32 D2): one path, opened in place on
  * the Topology view from an edge, a list row or the node sheet's lens, at
- * `?path=`. It carries the path's chart and runs (PathDetail), pausing it,
- * and the way to its check: "Edit check" for an operator check and "Edit
- * path set" for a generated path, which the page opens as a second sheet so
- * cancelling comes back here.
+ * `?path=`. A path to a node is the pair, whichever checks measure it
+ * (design 32 R1), so the sheet opens with "Checks on this path" (R3): each
+ * check's name, method, state, p50 and last run, the name opening that
+ * check's sheet, and for a check definition "Stop measuring this pair",
+ * which adds the pair to its excluded pairs through the check's normal save
+ * after a confirmation. Below it, the chart and runs of one check, the one
+ * that speaks for the pair unless another is chosen.
  *
- * When several checks measure the same pair (a path set path and an ICMP
- * check from the same source to the same node), the graph draws one edge and
- * this sheet opens on the one that speaks for it; the others are listed at
- * the top, each one step away, so no check on the pair is hidden.
+ * A link that named a check to a node by its monitor (`<source>~@<monitor
+ * id>`) opens the pair with that check chosen. Pausing a source of a single
+ * check stays here; "Edit check" opens the editor as a second sheet, so
+ * cancelling comes back here.
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { ArrowUpRight, Pause, Pencil, Play, Settings2 } from "lucide-vue-next";
+import { ArrowUpRight, LineChart, Pause, Pencil, Play, Settings2 } from "lucide-vue-next";
 
-import { api, type MonitorView, type MonitorWindow } from "@/lib/api";
+import { api, ApiError, type MonitorView, type MonitorWindow } from "@/lib/api";
+import { formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
 import type { RouteOpen } from "@/composables/useRouteOpen";
 
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
 import { buildSourcePause, canEditCheck, sourcePaused } from "./checksModel";
+import { stopMeasuringSave } from "./definitionsModel";
 import { draftFromConfig, draftToConfig, formatMs, pairEnabledIn, setPairEnabled } from "./latencyModel";
-import { decodePathKey, displayState, targetLabel, type PathItem } from "./pathsModel";
+import { currentPathKey, decodePathKey, displayState, everyPath, measuresNow, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
-import { pairOrder, pathEnd } from "./topologyModel";
+import { pairOrder } from "./topologyModel";
 import { verdictFor } from "./triangulationModel";
 import type { PathsData } from "./usePathsData";
 
@@ -42,6 +48,8 @@ const props = defineProps<{
   sheet: RouteOpen;
   monitors: MonitorView[];
   canAdmin: boolean;
+  /** The path set is not migrated into checks (design 32 R1): only then are its pause and editor offered. */
+  canEditPathSet: boolean;
   window: MonitorWindow;
   offered: MonitorWindow[];
   compact: boolean;
@@ -53,7 +61,7 @@ const emit = defineEmits<{
   pathSet: [];
   editCheck: [monitor: MonitorView];
   openCheck: [id: string];
-  /** A check changed (a source paused or resumed): the page rereads the monitors with the paths. */
+  /** A check changed (a source paused or resumed, a pair no longer measured): the page rereads the monitors with the paths. */
   changed: [];
   window: [window: MonitorWindow];
 }>();
@@ -63,41 +71,102 @@ const { displayLabel, reasonShort, methodName } = usePathsCopy();
 
 const matrix = computed(() => props.data.matrix.value);
 const query = props.data.pathsQuery;
-const openAddress = computed(() => decodePathKey(props.sheet.openId.value));
-const openPath = computed(() => (props.sheet.openId.value ? matrix.value?.paths.find((p) => p.key === props.sheet.openId.value) : undefined));
+const openKey = computed(() => props.sheet.openId.value);
+const openAddress = computed(() => decodePathKey(openKey.value));
+
+/**
+ * Every check on the open path, in the order they speak for it (the live
+ * ones, worst first). The pairs a check skips or the operator paused are read
+ * too: a revealed or linked one opens like any other path.
+ */
+const pairPaths = computed<PathItem[]>(() => {
+  const key = openKey.value;
+  const m = matrix.value;
+  return key && m ? pairOrder(everyPath(m).filter((p) => p.key === key)) : [];
+});
+
+/** The check whose chart and runs show: the one chosen, else the one that speaks for the pair. */
+const chosen = ref<string>();
+let chooseNext: string | undefined;
+watch(openKey, () => {
+  chosen.value = chooseNext;
+  chooseNext = undefined;
+});
+const openPath = computed(() => pairPaths.value.find((p) => p.checkId === chosen.value) ?? pairPaths.value[0]);
+
+// An old link named a check to a node by its monitor: open the pair, with that check chosen (design 32 R1).
+watch(
+  [openKey, matrix],
+  ([key, m]) => {
+    if (!key || !m) return;
+    const current = currentPathKey(m, key);
+    if (current === key) return;
+    const monitorId = decodePathKey(key)?.monitorId;
+    chooseNext = everyPath(m).find((p) => p.monitorId === monitorId)?.checkId;
+    props.sheet.swap(current);
+  },
+  { immediate: true },
+);
+
 const openTitle = computed(() => {
   const p = openPath.value;
   if (p) return t("fleet.monitoring.paths.sheet.title", { source: p.sourceName, target: targetLabel(p) });
-  return props.sheet.openId.value ?? "";
+  return openKey.value ?? "";
 });
 const sheetState = computed(() => {
-  if (!props.sheet.openId.value) return "loading" as const;
+  if (!openKey.value) return "loading" as const;
   if (!matrix.value) return query.error.value && !query.loading.value ? ("failed" as const) : ("loading" as const);
   if (!openPath.value || !openAddress.value) return "gone" as const;
   return query.error.value ? ("stale" as const) : ("ready" as const);
 });
 
-/** Every check on the open path's pair, in the order the edge speaks: listed only when there is more than one. */
-const pairPaths = computed<PathItem[]>(() => {
-  const p = openPath.value;
-  if (!p || !matrix.value) return [];
-  const end = pathEnd(p);
-  const same = matrix.value.paths.filter((q) => q.source === p.source && pathEnd(q) === end);
-  return same.length > 1 ? pairOrder(same) : [];
-});
 const DOT: Record<string, string> = {
   up: "bg-success",
   degraded: "bg-warning",
   down: "bg-destructive",
   unknown: "border border-muted-foreground bg-transparent",
   paused: "bg-muted-foreground/50",
+  skipped: "border border-dashed border-muted-foreground bg-transparent",
 };
-const checkLabel = (p: PathItem) => (p.managed ? t("fleet.monitoring.network.pathSet") : p.checkName || p.monitorId);
-function pairValue(p: PathItem): string {
+const STATE_INK: Record<string, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground", skipped: "text-muted-foreground" };
+const checkLabel = (p: PathItem) => p.checkName || p.checkId;
+function stateText(p: PathItem): string {
   const state = displayState(p);
-  if (state === "up" || state === "degraded") return p.p50Ms !== undefined ? formatMs(p.p50Ms) : displayLabel(p);
-  if (state === "unknown") return t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonShort(p.reason) });
-  return displayLabel(p);
+  if (state === "up") return displayLabel(p);
+  return p.reason ? `${displayLabel(p)}: ${reasonShort(p.reason)}` : displayLabel(p);
+}
+const lastRun = (p: PathItem) => (p.lastAt !== undefined ? formatRelativeTime(p.lastAt) : t("fleet.monitoring.paths.sheet.noRun"));
+
+/* ---- Stop measuring this pair (design 32 R3) ---- */
+
+/** A check definition's pair between two nodes: its excluded pairs can hold it. */
+const canStop = (p: PathItem) => props.canAdmin && !!p.definitionId && !!p.targetNode && !!p.source;
+const stopTarget = ref<PathItem>();
+const stopOpen = ref(false);
+const stopPending = ref(false);
+function askStop(p: PathItem): void {
+  stopTarget.value = p;
+  stopOpen.value = true;
+}
+async function stop(): Promise<void> {
+  const p = stopTarget.value;
+  if (!p?.definitionId || !p.targetNode) return;
+  stopPending.value = true;
+  try {
+    // The definition as stored now, so the save names the version it adds the pair to.
+    const current = await api.monitors.definitions.get(p.definitionId);
+    const body = stopMeasuringSave(current, p.source, p.targetNode);
+    if (body) await api.monitors.definitions.update(body);
+    toast.success(t("fleet.monitoring.paths.sheet.stop.done", { check: checkLabel(p), source: p.sourceName, target: targetLabel(p) }));
+    stopOpen.value = false;
+    chosen.value = undefined;
+  } catch (error) {
+    if (error instanceof ApiError && error.isVersionConflict) toast.error(t("fleet.monitoring.paths.sheet.stop.conflict", { check: checkLabel(p) }));
+    else toast.error(error instanceof Error ? error.message : t("fleet.monitoring.paths.toast.failed"));
+  } finally {
+    emit("changed");
+    stopPending.value = false;
+  }
 }
 
 /* ---- Actions ---- */
@@ -105,19 +174,22 @@ function pairValue(p: PathItem): string {
 const openMonitor = computed(() => (openPath.value ? props.monitors.find((m) => m.id === openPath.value!.monitorId) : undefined));
 const plan = computed(() => props.data.planQuery.data.value);
 const serverEdits = computed(() => props.data.source.value === "paths");
-const editable = computed(() => !!openMonitor.value && props.canAdmin && canEditCheck(openMonitor.value, serverEdits.value));
+/** A single check this session may edit; a definition's path is edited through its definition's sheet. */
+const editable = computed(() => !!openMonitor.value && !openPath.value?.definitionId && props.canAdmin && canEditCheck(openMonitor.value, serverEdits.value));
+/** A path of the unmigrated path set (design 32 R1 leaves it only on a server that could not migrate it). */
+const pathSetPath = computed(() => !!openPath.value?.managed && !openPath.value.definitionId && props.canEditPathSet);
 const pending = ref(false);
 
-/** Pause through the path set (generated paths) or the check (operator paths), and whether it is paused now. */
+/** Pause through the unmigrated path set, or a single check's source, and whether it is paused now. */
 const pauseAction = computed<{ kind: "pathset" | "check"; paused: boolean } | undefined>(() => {
   const p = openPath.value;
   if (!p || !props.canAdmin) return undefined;
-  if (p.managed && p.targetNode && plan.value) {
+  if (pathSetPath.value && p.targetNode && plan.value) {
     const draft = draftFromConfig(plan.value.config);
     return { kind: "pathset", paused: !pairEnabledIn(draft, p.source, p.targetNode) };
   }
   const monitor = openMonitor.value;
-  if (!p.managed && monitor && canEditCheck(monitor, serverEdits.value) && p.source) return { kind: "check", paused: sourcePaused(monitor, p.source) };
+  if (!p.managed && !p.definitionId && monitor && canEditCheck(monitor, serverEdits.value) && p.source) return { kind: "check", paused: sourcePaused(monitor, p.source) };
   return undefined;
 });
 
@@ -159,24 +231,59 @@ async function togglePause(): Promise<void> {
     @close="sheet.close"
     @retry="data.refresh"
   >
-    <section v-if="pairPaths.length" class="mb-4 space-y-1.5" data-testid="path-pair-checks" :aria-label="$t('fleet.monitoring.network.pair.label')">
-      <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.network.pair.title', { n: pairPaths.length }, pairPaths.length) }}</h3>
+    <!-- Checks on this path (design 32 R3): every check on the pair, the name opening its sheet. -->
+    <section v-if="pairPaths.length" class="mb-4 space-y-1.5" data-testid="path-checks" :aria-labelledby="'path-checks-title'">
+      <h3 id="path-checks-title" class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.paths.sheet.checks.title') }}</h3>
       <ul class="divide-y divide-border rounded-md border border-border text-xs">
-        <li v-for="p in pairPaths" :key="p.key">
-          <button
-            type="button"
-            :class="cn('grid w-full grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-x-2.5 px-2.5 py-1.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11', p.key === sheet.openId.value && 'bg-muted/50')"
-            :aria-current="p.key === sheet.openId.value ? 'true' : undefined"
-            :data-pair-path="p.key"
-            @click="sheet.swap(p.key)"
-          >
+        <li
+          v-for="p in pairPaths"
+          :key="p.id"
+          :class="cn('space-y-1 px-2.5 py-2', pairPaths.length > 1 && p.id === openPath?.id && 'bg-muted/40')"
+          :data-check="p.checkId"
+          :data-state="displayState(p)"
+        >
+          <div class="grid grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-x-2.5">
             <span :class="cn('size-2 rounded-full', DOT[displayState(p)])" aria-hidden="true" />
-            <span class="min-w-0 truncate">
-              <span class="font-mono text-[10px] uppercase text-muted-foreground">{{ methodName(p.method) }}</span>
+            <button
+              type="button"
+              class="min-w-0 truncate text-start font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:underline pointer-coarse:min-h-11"
+              :title="$t('fleet.monitoring.paths.sheet.checks.open', { check: checkLabel(p) })"
+              data-testid="path-check-name"
+              @click="emit('openCheck', p.checkId)"
+            >
               {{ checkLabel(p) }}
-            </span>
-            <span class="font-mono tabular text-muted-foreground">{{ pairValue(p) }}</span>
-          </button>
+            </button>
+            <span :class="cn('font-mono tabular', STATE_INK[displayState(p)])">{{ measuresNow(p) && p.p50Ms !== undefined ? formatMs(p.p50Ms) : '' }}</span>
+          </div>
+          <p class="flex flex-wrap items-baseline gap-x-1.5 ps-4.5 text-muted-foreground">
+            <span class="font-mono text-[10px] uppercase">{{ methodName(p.method) }}</span>
+            <span aria-hidden="true">·</span>
+            <span :class="cn('min-w-0 break-words', STATE_INK[displayState(p)])">{{ stateText(p) }}</span>
+            <span aria-hidden="true">·</span>
+            <span class="font-mono tabular" :title="p.lastAt ? new Date(p.lastAt).toISOString() : undefined">{{ lastRun(p) }}</span>
+          </p>
+          <div v-if="pairPaths.length > 1 || canStop(p)" class="flex flex-wrap gap-x-3 gap-y-1 ps-4.5">
+            <button
+              v-if="pairPaths.length > 1"
+              type="button"
+              class="inline-flex items-center gap-1 text-muted-foreground outline-none hover:text-foreground focus-visible:underline aria-pressed:font-medium aria-pressed:text-foreground pointer-coarse:min-h-11"
+              :aria-pressed="p.id === openPath?.id"
+              data-testid="path-check-chart"
+              @click="chosen = p.checkId"
+            >
+              <LineChart class="size-3.5" aria-hidden="true" />
+              {{ p.id === openPath?.id ? $t('fleet.monitoring.paths.sheet.checks.charted') : $t('fleet.monitoring.paths.sheet.checks.chart') }}
+            </button>
+            <button
+              v-if="canStop(p)"
+              type="button"
+              class="text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:underline pointer-coarse:min-h-11"
+              data-testid="path-check-stop"
+              @click="askStop(p)"
+            >
+              {{ $t('fleet.monitoring.paths.sheet.stop.action') }}
+            </button>
+          </div>
         </li>
       </ul>
     </section>
@@ -202,17 +309,11 @@ async function togglePause(): Promise<void> {
         <component :is="pauseAction.paused ? Play : Pause" class="size-4" aria-hidden="true" />
         {{ pauseAction.paused ? $t('fleet.monitoring.paths.sheet.resume') : $t('fleet.monitoring.paths.sheet.pause') }}
       </Button>
-      <template v-if="!openPath.managed">
-        <Button v-if="editable && openMonitor" variant="outline" size="sm" type="button" data-testid="path-edit-check" @click="emit('editCheck', openMonitor)">
-          <Pencil class="size-4" aria-hidden="true" />
-          {{ $t('fleet.monitoring.network.editCheck') }}
-        </Button>
-        <Button v-else variant="outline" size="sm" type="button" @click="emit('openCheck', openPath.monitorId)">
-          <Pencil class="size-4" aria-hidden="true" />
-          {{ $t('fleet.monitoring.paths.sheet.openCheck') }}
-        </Button>
-      </template>
-      <Button v-else-if="canAdmin" variant="outline" size="sm" type="button" data-testid="path-edit-pathset" @click="emit('pathSet')">
+      <Button v-if="editable && openMonitor" variant="outline" size="sm" type="button" data-testid="path-edit-check" @click="emit('editCheck', openMonitor)">
+        <Pencil class="size-4" aria-hidden="true" />
+        {{ $t('fleet.monitoring.network.editCheck') }}
+      </Button>
+      <Button v-else-if="pathSetPath && canAdmin" variant="outline" size="sm" type="button" data-testid="path-edit-pathset" @click="emit('pathSet')">
         <Settings2 class="size-4" aria-hidden="true" />
         {{ $t('fleet.monitoring.paths.sheet.editPathSet') }}
       </Button>
@@ -230,4 +331,14 @@ async function togglePause(): Promise<void> {
       </Button>
     </template>
   </ObjectSheet>
+
+  <ConfirmDialog
+    v-model:open="stopOpen"
+    :title="$t('fleet.monitoring.paths.sheet.stop.title')"
+    :description="stopTarget ? $t('fleet.monitoring.paths.sheet.stop.description', { check: checkLabel(stopTarget), source: stopTarget.sourceName, target: targetLabel(stopTarget) }) : ''"
+    :confirm-label="$t('fleet.monitoring.paths.sheet.stop.confirm')"
+    :cancel-label="$t('common.actions.cancel')"
+    :pending="stopPending"
+    @confirm="stop"
+  />
 </template>

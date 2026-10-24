@@ -42,6 +42,10 @@ import {
   reachBySource,
   reachQuery,
   reasonCode,
+  currentPathKey,
+  everyPath,
+  pathMeasure,
+  queryNamesUnmeasured,
   runEchoes,
   runRows,
   UNKNOWN_REASONS,
@@ -167,7 +171,9 @@ test("matrix: node targets as rows by region, operator checks as rows of their o
   const m = buildPathsMatrix(response(), { checkName: (id) => (id === "mon_http" ? "Status page" : undefined) });
   assert.deepEqual(m.sources, [{ nodeId: "sh", name: "cd-hs-sh" }]);
   assert.equal(m.rows.length, 7);
-  assert.deepEqual(m.counts, { paths: 7, up: 3, degraded: 0, down: 1, unknown: 2, paused: 1 }, "a pause is counted apart from unknown");
+  // Design 32 R2: the two pairs with nothing to dial and the paused one are not measured, so no count holds them.
+  assert.deepEqual(m.counts, { paths: 4, up: 3, degraded: 0, down: 1, unknown: 0, paused: 0, skipped: 0 });
+  assert.deepEqual(m.unmeasured.map((p) => `${p.key}:${p.measure}`), ["sh~kix:skipped", "sh~la:paused", "sh~nat:skipped"]);
   assert.equal(m.judgesDegraded, false, "an M2 server sends no degraded_at");
   const check = m.rows.find((r) => r.kind === "check")!;
   assert.equal(check.key, "@mon_http");
@@ -219,37 +225,41 @@ test("attention: downs one per target first, then unknowns grouped by reason, pa
   const items = pathAttention(buildPathsMatrix(extra));
   assert.deepEqual(
     items.map((i) => `${i.kind}:${i.kind === "down" ? `${i.rowKey}:${i.paths.length}/${i.measuredBy}` : i.kind === "unknown" ? `${i.reason}:${i.paths.length}` : i.paths.length}`),
-    ["down:jp:2/2", "down:fsn:1/2", "unknown:udp_only:2", "unknown:no_public_address:1", "paused:1"],
+    ["down:jp:2/2", "down:fsn:1/2"],
+    "skipped and paused pairs are configuration, not something to look at (design 32 R2)",
   );
   const jp = items[0]!;
   assert.equal(jp.kind === "down" && jp.paths[0]!.sourceName, "cd-hs-sh", "the worse loss leads");
   // Exact path keys, never a name (design 32 D1): a check to the node would match its name too.
   assert.equal(attentionQuery(items[0]!), `state:down path:=${jp.paths.map((p) => p.key).join(",")}`);
-  assert.equal(attentionQuery(items[2]!), "state:unknown reason:=udp_only");
-  assert.equal(attentionQuery(items[4]!), "state:paused");
+  assert.equal(attentionQuery({ kind: "unknown", reason: "udp_only", paths: [] }), "state:unknown reason:=udp_only");
+  assert.equal(attentionQuery({ kind: "paused", paths: [] }), "state:paused");
 });
 
-test("target: finds a check definition's path by the node it reaches, and path: finds one path by its key", () => {
-  // Design 32 D1: a definition's monitor is an operator check, keyed <source>~@<monitor id>, never managed.
+test("target: finds a check definition's path by the node it reaches, and path: finds the pair by its key", () => {
+  // Design 32 R1: a definition's path to a node is keyed by the pair, like every other check's on it.
   const r = response();
-  r.paths.push({ source: "sh", target_node: "jp", target: "203.0.113.9", monitor_id: "mon_chk_def1_7f3a", managed: false, method: "icmp", state: "up", p50_ms: 52, samples: 60, expected: 60 });
-  const m = buildPathsMatrix(r, { checkName: (id) => (id === "mon_chk_def1_7f3a" ? "Ping APAC" : undefined) });
+  r.paths.push({ source: "sh", target_node: "jp", target: "203.0.113.9", monitor_id: "mon_chk_def1_7f3a", check_definition_id: "chk_def1", managed: false, method: "icmp", state: "up", p50_ms: 52, samples: 60, expected: 60 });
+  const m = buildPathsMatrix(r, { definitionName: (id) => (id === "chk_def1" ? "Ping APAC" : undefined) });
   const schema = pathsQuerySchema({ reasonText: (x) => x ?? "" });
   const keys = (q: string) => {
     const compiled = compileQuery(q, schema);
     assert.ok(compiled.ok, q);
     return applyQuery(m.paths, compiled.query).map((p) => p.key).sort();
   };
-  assert.deepEqual(keys("target:=xuezhang-jp-nat"), ["sh~@mon_chk_def1_7f3a", "sh~jp"], "the node's own name finds the definition's path too");
-  assert.deepEqual(keys('target:="Ping APAC"'), ["sh~@mon_chk_def1_7f3a"], "and the check's name still finds its row");
-  assert.deepEqual(keys("path:=sh~@mon_chk_def1_7f3a"), ["sh~@mon_chk_def1_7f3a"]);
-  assert.equal(m.paths.find((p) => p.key === "sh~@mon_chk_def1_7f3a")?.managed, false, "a definition's path is never Fleet mesh");
+  assert.deepEqual(keys("target:=xuezhang-jp-nat"), ["sh~jp", "sh~jp"], "the node's name finds both checks on the pair");
+  assert.deepEqual(keys('check:="Ping APAC"'), ["sh~jp"], "and the check's name finds its own");
+  assert.deepEqual(keys("path:=sh~jp"), ["sh~jp", "sh~jp"]);
+  const ping = m.paths.find((p) => p.checkId === "chk_def1")!;
+  assert.equal(ping.rowKey, "jp", "it sits in the node's row");
+  assert.equal(ping.checkName, "Ping APAC");
 });
 
 test("attention: an offline agent is one line for its source, not one per path", () => {
   const r = response();
   r.sources.push({ node_id: "hr", name: "mkcloud hr" });
   for (const target of ["hk", "fsn", "la"]) r.paths.push({ source: "hr", target_node: target, target: "", monitor_id: `mon_lat_${target}`, managed: true, method: "tcp", state: "unknown", reason: "agent_offline", samples: 0, expected: 60 });
+  r.paths.push({ source: "sh", target: "https://quiet.example.com", monitor_id: "mon_quiet", managed: false, method: "http", state: "unknown", reason: "results_stopped", samples: 0, expected: 60 });
   const items = pathAttention(buildPathsMatrix(r));
   const offline = items.find((i) => i.kind === "offline")!;
   assert.equal(offline.kind === "offline" && offline.sourceName, "mkcloud hr");
@@ -262,7 +272,7 @@ test("reach: each source's paths by state", () => {
   const reach = reachBySource(buildPathsMatrix(response()));
   const matrix = buildPathsMatrix(response());
   // Every path the source runs, the operator check to a URL included (design 32 D1), so the lines add up to the page's count.
-  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 3, degraded: 0, down: 1, unknown: 2, paused: 1, total: 7 }], "a pause is not unknown");
+  assert.deepEqual(reach, [{ source: "sh", name: "cd-hs-sh", up: 3, degraded: 0, down: 1, unknown: 0, paused: 0, total: 4 }], "skipped and paused pairs are not counted (design 32 R2)");
   assert.equal(reach.reduce((n, r) => n + r.total, 0), matrix.counts.paths);
   assert.equal(reachQuery(reach[0]!, "down"), "source:=cd-hs-sh state:down");
 });
@@ -291,12 +301,14 @@ test("query: state, source, target, reason words, loss in percent and p50 in ms"
   const run = (text: string) => {
     const compiled = compileQuery(text, schema);
     assert.ok(compiled.ok, `${text} should compile`);
-    return applyQuery(m.paths, compiled.query).map((p) => p.key);
+    // Over every pair, as a query that names a state of an unmeasured pair reads them (design 32 R2).
+    return applyQuery(everyPath(m), compiled.query).map((p) => p.key);
   };
   assert.deepEqual(run("state:down"), ["sh~jp"]);
   assert.deepEqual(run("state:failing"), ["sh~jp"]);
   assert.deepEqual(run("state:paused"), ["sh~la"]);
-  assert.deepEqual(run("state:unknown").sort(), ["sh~kix", "sh~nat"], "a pause is not unknown in the query either");
+  assert.deepEqual(run("state:skipped").sort(), ["sh~kix", "sh~nat"]);
+  assert.deepEqual(run("state:unknown"), [], "neither a pause nor a skip is unknown in the query");
   assert.deepEqual(run("target:jp source:cd-hs-sh state:down"), ["sh~jp"]);
   assert.deepEqual(run("reason:udp"), ["sh~kix"]);
   assert.deepEqual(run("reason:\"UDP only\""), ["sh~kix"]);
@@ -304,7 +316,8 @@ test("query: state, source, target, reason words, loss in percent and p50 in ms"
   assert.deepEqual(run("p50>200"), ["sh~fsn"]);
   assert.deepEqual(run("method:http"), ["sh~@mon_http"]);
   assert.deepEqual(run("check:status"), ["sh~@mon_http"]);
-  assert.deepEqual(run("-is:managed"), ["sh~@mon_http"]);
+  // "path set" left the interface (design 32 R3), and so did the term that found its paths.
+  assert.equal(compileQuery("is:managed", schema).ok, false);
   assert.deepEqual(run("region:europe"), ["sh~fsn"]);
   const bad = compileQuery("state:sideways", schema);
   assert.equal(bad.ok, false);
@@ -505,7 +518,7 @@ test("degraded: read from an M3 server with its evidence, counted, ranked betwee
   assert.equal(m.counts.degraded, 1);
   assert.equal(m.counts.up, 2);
   assert.deepEqual(["up", "unknown", "degraded", "down"].map((s) => stateRank(s as "up")), [3, 2, 1, 0]);
-  assert.deepEqual(PATH_STATES, ["down", "degraded", "unknown", "paused", "up"]);
+  assert.deepEqual(PATH_STATES, ["down", "degraded", "unknown", "paused", "skipped", "up"]);
   assert.ok(PATHS_QUERY_EXAMPLES.some((e) => e.query === "state:degraded"));
 });
 
@@ -589,7 +602,7 @@ function threeSources(): PathsResponse {
   };
 }
 
-test("attention with triangulation: down by target, down by source, degraded by target, then unknown and paused", () => {
+test("attention with triangulation: down by target, down by source, degraded by target, then unknown; a pause is no line", () => {
   const items = pathAttention(buildPathsMatrix(threeSources()));
   const shape = items.map((i) => {
     switch (i.kind) {
@@ -605,7 +618,7 @@ test("attention with triangulation: down by target, down by source, degraded by 
         return i.kind;
     }
   });
-  assert.deepEqual(shape, ["down:dmit4:3:target", "downSource:volc:4:source", "degraded:lon:2:target", "degraded:tyo:1:path", "unknown:results_stopped", "paused"]);
+  assert.deepEqual(shape, ["down:dmit4:3:target", "downSource:volc:4:source", "degraded:lon:2:target", "degraded:tyo:1:path", "unknown:results_stopped"]);
   const source = items[1]!;
   assert.equal(attentionQuery(source), `state:down path:=${source.paths.map((p) => p.key).join(",")}`);
   // Show lists exactly the item's paths: volc-sh's down path to dmit4 carries the target verdict and is not in it.
@@ -737,7 +750,7 @@ test("attention: a target whose beacon needs a change plan is one line with its 
       // By target, then source name: cd-hs-sh before hk-edge.
       ["replan", ["sh~jp", "hk~jp"]],
       ["replan", []],
-      ["unknown", ["hk~sg"]],
+      // A pair waiting on a plan the server does not list is skipped like any other (design 32 R2): not a line here.
     ],
   );
   const [, jp, hel] = items;
@@ -749,7 +762,10 @@ test("attention: a target whose beacon needs a change plan is one line with its 
   const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
   const compiled = compileQuery(attentionQuery(jp), schema);
   assert.ok(compiled.ok);
-  assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.key).sort(), ["hk~jp", "sh~jp"]);
+  // The waiting pairs are skipped, so the query reads them where a reveal does.
+  assert.equal(attentionQuery(jp), "state:skipped path:=sh~jp,hk~jp");
+  assert.deepEqual(applyQuery(everyPath(m), compiled.query).map((p) => p.key).sort(), ["hk~jp", "sh~jp"]);
+  assert.equal(attentionQuery(hel), "state:skipped target:=hetzner-hel reason:=firewall_pending");
   // A server that sends no list, and one that sends an empty list, offer no plan.
   assert.equal(buildPathsMatrix({ ...response, beacon_replans: undefined }).replans.size, 0);
   assert.equal(pathAttention(buildPathsMatrix({ ...response, beacon_replans: [] })).filter((i) => i.kind === "replan").length, 0);
@@ -757,4 +773,77 @@ test("attention: a target whose beacon needs a change plan is one line with its 
   assert.equal(m.replansKnown, true);
   assert.equal(buildPathsMatrix({ ...response, beacon_replans: [] }).replansKnown, true);
   assert.equal(buildPathsMatrix({ ...response, beacon_replans: undefined }).replansKnown, false);
+});
+
+/* ---- Design 32 R1 and R2 ---- */
+
+test("R1: a node pair is one key whichever check measures it, and each check keeps its own identity", () => {
+  const r = response({
+    paths: [
+      { source: "sh", target_node: "jp", target: "203.0.113.9:443", monitor_id: "mon_lat_jp", check_definition_id: "chk_fleet_mesh", managed: true, method: "tcp", state: "up", p50_ms: 40, samples: 60, expected: 60 },
+      { source: "sh", target_node: "jp", target: "203.0.113.9", monitor_id: "mon_icmp", managed: false, method: "icmp", state: "down", loss: 1, samples: 60, expected: 60 },
+      { source: "sh", target: "https://status.example.com/health", monitor_id: "mon_http", managed: false, method: "http", state: "up", samples: 60, expected: 60 },
+    ],
+  });
+  const m = buildPathsMatrix(r, { definitionName: (id) => (id === "chk_fleet_mesh" ? "Fleet mesh" : undefined), checkName: (id) => ({ mon_icmp: "Ping Tokyo", mon_http: "Status page" })[id] });
+  const [mesh, ping, http] = m.paths;
+  assert.equal(mesh!.key, "sh~jp");
+  assert.equal(ping!.key, "sh~jp", "a single check to the node is the same path");
+  assert.deepEqual([mesh!.checkId, mesh!.checkName, mesh!.definitionId], ["chk_fleet_mesh", "Fleet mesh", "chk_fleet_mesh"]);
+  assert.deepEqual([ping!.checkId, ping!.checkName, ping!.definitionId], ["mon_icmp", "Ping Tokyo", undefined]);
+  assert.notEqual(mesh!.id, ping!.id, "each check on the pair is its own list row");
+  assert.equal(m.rows.filter((row) => row.kind === "check").length, 1, "only the address has a row of its own");
+  assert.equal(http!.key, "sh~@mon_http", "an external target keeps its monitor key");
+  assert.equal(m.cells.get(cellKey("jp", "sh"))!.checkId, "mon_icmp", "the cell shows the worse check");
+});
+
+test("R1: an old link to a check's path by its monitor finds the pair", () => {
+  const r = response();
+  r.paths.push({ source: "sh", target_node: "jp", target: "203.0.113.9", monitor_id: "mon_chk_def1_7f3a", check_definition_id: "chk_def1", managed: false, method: "icmp", state: "up", samples: 60, expected: 60 });
+  const m = buildPathsMatrix(r);
+  assert.equal(currentPathKey(m, "sh~@mon_chk_def1_7f3a"), "sh~jp");
+  assert.equal(currentPathKey(m, "sh~@mon_lat_jp"), "sh~jp");
+  assert.equal(currentPathKey(m, "sh~jp"), "sh~jp");
+  assert.equal(currentPathKey(m, "sh~@mon_http"), "sh~@mon_http", "a check to an address keeps its key");
+  assert.equal(currentPathKey(m, "sh~@mon_gone"), "sh~@mon_gone", "a key nothing holds is left as it is");
+  // A skipped pair's old link resolves too, from the pairs the default views leave out.
+  assert.equal(currentPathKey(m, "sh~kix"), "sh~kix");
+});
+
+test("R2: skipped and paused pairs are not paths; unknown stays only for a measured path without a fresh result", () => {
+  const cell = (reason: string, state = "unknown") => ({ source: "sh", target_node: "jp", target: "", monitor_id: "mon_x", managed: false, method: "tcp", state, reason, samples: 0, expected: 0 });
+  for (const reason of ["not_probeable", "agent_too_old", "icmp_not_permitted", "packet_budget", "beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node", "no_inventory", "udp_only", "no_public_address", "no_tcp_line"]) {
+    assert.equal(pathMeasure({ state: "unknown", reason }), "skipped", reason);
+  }
+  for (const reason of ["source_paused", "path_paused", "check_paused", "path_set_paused"]) assert.equal(pathMeasure({ state: "unknown", reason }), "paused", reason);
+  for (const reason of ["no_data", "agent_offline", "icmp_filtered", "destination_refused", ""]) assert.equal(pathMeasure({ state: "unknown", reason }), "measured", reason);
+  assert.equal(pathMeasure({ state: "down", reason: "not_probeable" }), "measured", "a state other than unknown is measured");
+
+  const m = buildPathsMatrix(response({ paths: [cell("no_data"), { ...cell("not_probeable"), target_node: "hk" }, { ...cell("source_paused"), target_node: "fsn" }] }));
+  assert.deepEqual(m.paths.map((p) => p.key), ["sh~jp"]);
+  assert.deepEqual(m.counts, { paths: 1, up: 0, degraded: 0, down: 0, unknown: 1, paused: 0, skipped: 0 });
+  assert.deepEqual(m.unmeasured.map((p) => [p.key, p.measure]), [["sh~hk", "skipped"], ["sh~fsn", "paused"]]);
+  assert.deepEqual(everyPath(m).map((p) => p.key), ["sh~jp", "sh~hk", "sh~fsn"]);
+  assert.equal(m.cells.size, 1, "an unmeasured pair has no cell");
+});
+
+test("R2: state:skipped and state:paused find the pairs that are not measured", () => {
+  const m = buildPathsMatrix(response());
+  const schema = pathsQuerySchema({ reasonText: (x) => x ?? "" });
+  const find = (q: string) => {
+    const compiled = compileQuery(q, schema);
+    assert.ok(compiled.ok, q);
+    return applyQuery(everyPath(m), compiled.query).map((p) => p.key).sort();
+  };
+  assert.deepEqual(find("state:skipped"), ["sh~kix", "sh~nat"]);
+  assert.deepEqual(find("state:paused"), ["sh~la"]);
+  assert.ok(PATH_STATES.includes("skipped"));
+  assert.equal(queryNamesUnmeasured("state:skipped"), true);
+  assert.equal(queryNamesUnmeasured("region:asia status:stopped"), true, "an alias of paused counts");
+  assert.equal(queryNamesUnmeasured("state:down,paused"), true);
+  assert.equal(queryNamesUnmeasured("(state:skipped or state:down) source:sh"), true);
+  assert.equal(queryNamesUnmeasured("state:down"), false);
+  assert.equal(queryNamesUnmeasured("skipped"), false, "a bare word is text, not the state");
+  assert.equal(queryNamesUnmeasured(""), false);
+  assert.equal(queryNamesUnmeasured("state:("), false, "an invalid query names nothing");
 });

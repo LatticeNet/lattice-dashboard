@@ -12,7 +12,7 @@ import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
-import { api, type CheckDefinitionPreview, type CheckDefinitionView, type GroupView, type MonitorType, type Node } from "@/lib/api";
+import { api, type CheckDefinitionPreview, type CheckDefinitionView, type CheckMethod, type GroupView, type MonitorType, type Node } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,7 @@ import { headerProblems } from "./checkHeadersModel";
 import {
   DEFINITION_KINDS,
   addressesOf,
+  applyDefinitionFix,
   buildDefinitionSave,
   definitionDirty,
   definitionProblems,
@@ -51,6 +52,7 @@ import {
   takesTargetNodes,
   withKind,
   type DefinitionDraft,
+  type DefinitionFix,
   type DefinitionProblem,
 } from "./definitionsModel";
 import { TLS_MAX_THRESHOLD_DAYS } from "./monitorTypeModel";
@@ -60,6 +62,8 @@ const props = defineProps<{
   open: boolean;
   /** The definition being edited; a create when absent. */
   definition?: CheckDefinitionView;
+  /** A change the check sheet asked for (design 32 R2): the edit opens with it made, for the operator to review and save. */
+  fix?: DefinitionFix;
   initialType?: MonitorType;
   nodes: Node[];
   groups: GroupView[];
@@ -93,7 +97,7 @@ let previewTimer: ReturnType<typeof setTimeout> | undefined;
 let previewAbort: AbortController | undefined;
 
 function copyDraft(d: DefinitionDraft): DefinitionDraft {
-  return { ...d, sources: { ...d.sources }, targets: { ...d.targets }, headers: d.headers.map((h) => ({ ...h })), degraded: { ...d.degraded } };
+  return { ...d, sources: { ...d.sources }, targets: { ...d.targets }, headers: d.headers.map((h) => ({ ...h })), degraded: { ...d.degraded }, excludedPairs: d.excludedPairs.map((p) => ({ ...p })) };
 }
 
 watch(
@@ -109,7 +113,8 @@ watch(
       return;
     }
     base.value = props.definition;
-    draft.value = copyDraft(props.definition ? draftFromDefinition(props.definition) : emptyDefinitionDraft(props.initialType ?? "tcp"));
+    const opened = props.definition ? draftFromDefinition(props.definition) : emptyDefinitionDraft(props.initialType ?? "tcp");
+    draft.value = copyDraft(props.definition && props.fix ? applyDefinitionFix(opened, props.fix) : opened);
   },
   { immediate: true },
 );
@@ -129,7 +134,10 @@ watch(
   { immediate: true },
 );
 
-function setKind(kind: MonitorType): void {
+/** Auto's icmp and beacon pairs send the definition's packets (design 32 R1). */
+const sendsPackets = computed(() => multiPacket(draft.value.type) || draft.value.type === "auto");
+
+function setKind(kind: CheckMethod): void {
   draft.value = withKind(draft.value, kind);
 }
 
@@ -150,7 +158,8 @@ const sourceNotes = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {};
   if (!takesSources(draft.value.type)) return out;
   for (const node of props.nodes) {
-    const support = sourceSupport(node, draft.value.type, true, false);
+    // Auto falls back to tcp, which every agent runs: no source is flagged for it.
+    const support = sourceSupport(node, draft.value.type === "auto" ? "tcp" : draft.value.type, true, false);
     if (!support.ok && support.reason) out[node.id] = refusalText(support.reason, draft.value.type);
   }
   return out;
@@ -563,7 +572,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.thresholdHint', { days: draft.thresholdDays }) }}</p>
           <p v-if="problems.includes('threshold')" role="alert" class="text-xs text-destructive">{{ problemOf('threshold') }}</p>
         </template>
-        <template v-else-if="multiPacket(draft.type)">
+        <template v-else-if="sendsPackets">
           <div class="grid max-w-48 gap-1.5" data-field="packets">
             <Label for="definition-packets">{{ draft.type === 'beacon' ? $t('fleet.monitoring.checks.editor.packetsBeacon') : $t('fleet.monitoring.checks.editor.packets') }}</Label>
             <Input id="definition-packets" v-model.number="draft.packets" type="number" min="1" :max="PACKETS_MAX" :aria-invalid="problems.includes('packets') || undefined" />
@@ -598,7 +607,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           </div>
         </div>
         <p v-for="p in (['interval', 'timeout', 'timeoutVsInterval', 'runLength'] as const).filter((x) => problems.includes(x))" :key="p" role="alert" class="text-xs text-destructive">{{ problemOf(p) }}</p>
-        <p v-if="multiPacket(draft.type)" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.budgetNote') }}</p>
+        <p v-if="sendsPackets" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.budgetNote') }}</p>
       </fieldset>
 
       <!-- 6. On failure -->

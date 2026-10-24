@@ -23,6 +23,11 @@
  *
  * ?as= picks the mode: absent, the graph with a mouse from 768 px up and the
  * list on a phone or a touch screen; the other is one tap away.
+ *
+ * A pair a check skips or the operator paused is not a path (design 32 R2):
+ * both modes and every count leave it out, and one quiet line under them
+ * says how many there are and shows them (?paths.unmeasured=1). A query that
+ * names the skipped or paused state reads them too.
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -54,7 +59,7 @@ import TopologyGraph from "./TopologyGraph.vue";
 import TopologySourcePicker from "./TopologySourcePicker.vue";
 import { formatPresentation, listOrder, parsePresentation, presentation as presentationFor, roomy, type Presentation } from "./networkModel";
 import { NODE_PATHS_SHOWN, monitoringQuery, nodePaths } from "./nodePathsModel";
-import { PATHS_QUERY_EXAMPLES, pathsQuerySchema, type PathItem } from "./pathsModel";
+import { PATHS_QUERY_EXAMPLES, everyPath, pathsQuerySchema, queryNamesUnmeasured, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 import type { PathsData } from "./usePathsData";
 import {
@@ -91,6 +96,8 @@ const props = defineProps<{
   failureOf: (monitorId: string, source: string) => string | undefined;
   /** The path set exists with no source. */
   noSources: boolean;
+  /** The path set is stored and not migrated into checks (design 32 R1): only then is its editor offered. */
+  canEditPathSet: boolean;
   /** A source's agent version, for a path whose agent is too old. */
   agentOf?: (source: string) => string | undefined;
   /** The page's refreshes: each one rereads the chains too. */
@@ -155,13 +162,29 @@ const storedQuery = bindQueryParam<string>(props.owned, "paths.q", {
   format: (value) => (value.trim() ? value : undefined),
 });
 const queryText = useQueryText(storedQuery);
+/** The pairs not measured, shown on request (design 32 R2). */
+const revealParam = bindQueryParam<boolean>(props.owned, "paths.unmeasured", {
+  parse: (raw) => raw === "1",
+  format: (value) => (value ? "1" : undefined),
+});
+const unmeasured = computed(() => matrix.value?.unmeasured ?? []);
+const unmeasuredCounts = computed(() => ({
+  skipped: unmeasured.value.filter((p) => p.measure === "skipped").length,
+  paused: unmeasured.value.filter((p) => p.measure === "paused").length,
+}));
+/** The view reads the unmeasured pairs too: the reveal is on, or the query names their state. */
+const withUnmeasured = computed(() => revealParam.value || queryNamesUnmeasured(queryText.value));
+/** The matrix as the view reads it: its measured paths, and the unmeasured pairs when asked for. */
+const shown = computed(() => (matrix.value && withUnmeasured.value ? { ...matrix.value, paths: everyPath(matrix.value) } : matrix.value));
 /** The list's own order, worst first; a `sort:` term or a column replaces it. */
-const allPaths = computed(() => listOrder(matrix.value?.paths ?? []));
+const allPaths = computed(() => listOrder(shown.value?.paths ?? []));
 const listQuery = useListQuery(allPaths, schema, queryText);
 // Only a query that leaves paths out reshapes the graph: a sort, or a filter every path passes, keeps the drawing as it is.
-const matching = computed(() => (listQuery.filtering.value && listQuery.rows.value.length < allPaths.value.length ? new Set(listQuery.rows.value.map((p) => p.key)) : undefined));
+const matching = computed(() => (listQuery.filtering.value && listQuery.rows.value.length < allPaths.value.length ? new Set(listQuery.rows.value.map((p) => p.id)) : undefined));
 const queryExamples = computed(() => PATHS_QUERY_EXAMPLES.map((e) => ({ query: e.query, note: t(`fleet.monitoring.paths.query.examples.${e.key}`) })));
-const isEmpty = computed(() => !!matrix.value && matrix.value.paths.length === 0);
+const isEmpty = computed(() => !!matrix.value && matrix.value.paths.length === 0 && unmeasured.value.length === 0);
+/** Every pair is skipped or paused: nothing is measured, and the line under says so. */
+const noneMeasured = computed(() => !isEmpty.value && allPaths.value.length === 0);
 
 /* ---- The graph ---- */
 
@@ -182,7 +205,7 @@ const model = computed(() =>
   buildTopology({
     nodes: nodes.value,
     plan: planQuery.data.value,
-    matrix: matrix.value,
+    matrix: shown.value,
     drawnSources: sourcesParam.value,
     matching: matching.value,
     chains: chains.value,
@@ -262,7 +285,12 @@ const legend = computed<LegendItem[]>(() => [
         ...(matrix.value?.judgesDegraded ? [{ key: "degraded", color: PATH_TONE.degraded, width: 2, label: t("fleet.monitoring.paths.state.degraded") }] : []),
         { key: "down", color: PATH_TONE.down, width: 2.5, label: t("fleet.monitoring.paths.state.down") },
         { key: "unknown", color: PATH_TONE.unknown, dash: "5 4", width: 1.5, label: t("fleet.monitoring.paths.state.unknown") },
-        { key: "paused", color: PATH_TONE.paused, dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.paths.state.paused") },
+        ...(withUnmeasured.value
+          ? [
+              { key: "paused", color: PATH_TONE.paused, dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.paths.state.paused") },
+              { key: "skipped", color: PATH_TONE.skipped, dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.paths.state.skipped") },
+            ]
+          : []),
       ]
     : []),
   ...((layerParam.value === "all" || layerParam.value === "chains") && model.value.counts.chains > 0
@@ -378,16 +406,24 @@ const STEP = "text-xs font-medium text-muted-foreground";
           v-if="isEmpty"
           :icon="RouteIcon"
           :title="noSources ? $t('fleet.monitoring.paths.empty.noSourceTitle') : $t('fleet.monitoring.paths.empty.title')"
-          :description="!canAdmin ? $t('fleet.monitoring.paths.empty.readOnly') : noSources ? $t('fleet.monitoring.paths.empty.noSourceDescription') : $t('fleet.monitoring.paths.empty.description')"
+          :description="!canAdmin ? $t(canEditPathSet ? 'fleet.monitoring.paths.empty.readOnly' : 'fleet.monitoring.paths.empty.readOnlyChecks') : noSources ? $t('fleet.monitoring.paths.empty.noSourceDescription') : $t(canEditPathSet ? 'fleet.monitoring.paths.empty.description' : 'fleet.monitoring.paths.empty.descriptionChecks')"
         >
           <div v-if="canAdmin" class="flex flex-wrap justify-center gap-2">
-            <Button size="sm" type="button" @click="emit('pathSet')">
+            <!-- The path set's editor, only while it is not migrated into checks (design 32 R1). -->
+            <Button v-if="canEditPathSet" size="sm" type="button" @click="emit('pathSet')">
               <Settings2 class="size-4" aria-hidden="true" />
               {{ noSources ? $t('fleet.monitoring.paths.empty.noSourceAction') : $t('fleet.monitoring.paths.empty.pathSet') }}
             </Button>
-            <Button size="sm" variant="outline" type="button" @click="emit('createCheck')">{{ $t('fleet.monitoring.paths.empty.check') }}</Button>
+            <Button size="sm" :variant="canEditPathSet ? 'outline' : 'default'" type="button" @click="emit('createCheck')">{{ $t('fleet.monitoring.paths.empty.check') }}</Button>
           </div>
         </EmptyState>
+
+        <EmptyState
+          v-else-if="noneMeasured"
+          :icon="RouteIcon"
+          :title="$t('fleet.monitoring.network.unmeasured.noneTitle')"
+          :description="$t('fleet.monitoring.network.unmeasured.noneDescription')"
+        />
 
         <EmptyState
           v-else-if="listQuery.filtering.value && listQuery.rows.value.length === 0"
@@ -480,6 +516,22 @@ const STEP = "text-xs font-medium text-muted-foreground";
             </div>
           </div>
         </template>
+        <!-- The pairs that are not measured: one quiet line, and a way to see them (design 32 R2). -->
+        <p v-if="unmeasured.length && (revealParam || !withUnmeasured)" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="network-unmeasured">
+          <span>
+            {{ revealParam ? $t('fleet.monitoring.network.unmeasured.shown', { n: unmeasured.length }, unmeasured.length) : $t('fleet.monitoring.network.unmeasured.line', { n: unmeasured.length }, unmeasured.length) }}
+            <template v-if="unmeasuredCounts.skipped && unmeasuredCounts.paused">{{ $t('fleet.monitoring.network.unmeasured.split', { skipped: unmeasuredCounts.skipped, paused: unmeasuredCounts.paused }) }}</template>
+          </span>
+          <button
+            type="button"
+            class="inline-flex h-6 items-center rounded-sm border border-border px-2 text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3"
+            :aria-pressed="revealParam"
+            data-testid="network-unmeasured-toggle"
+            @click="revealParam = !revealParam"
+          >
+            {{ revealParam ? $t('fleet.monitoring.network.unmeasured.hide') : $t('fleet.monitoring.network.unmeasured.show') }}
+          </button>
+        </p>
       </template>
     </DataState>
 
@@ -489,6 +541,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
       :sheet="pathSheet"
       :monitors="monitors"
       :can-admin="canAdmin"
+      :can-edit-path-set="canEditPathSet"
       :window="window"
       :offered="offered"
       :compact="!wide"
