@@ -232,6 +232,8 @@ export default {
       savedBy: "Saved by {who}.",
       savedAt: "Saved {when}.",
       savedByAt: "Saved by {who} {when}.",
+      savedJustNow: "Saved just now.",
+      savedByJustNow: "Saved by {who} just now.",
       changed: "Changed there: {fields}.",
       changedNone: "None of the fields in this editor changed there.",
       join: ", ",
