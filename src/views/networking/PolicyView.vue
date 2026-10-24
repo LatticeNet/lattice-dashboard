@@ -285,6 +285,11 @@ function holdsInbound(p: NetPolicyView): boolean {
   return p.rules.some((r) => r.direction === "ingress");
 }
 
+/** An enabled policy its inbound rules keep from being planned, whatever else is wrong with it. */
+function heldByInbound(p: NetPolicyView): boolean {
+  return p.enabled && holdsInbound(p);
+}
+
 /**
  * What a node's policy amounts to on the node. A failed apply is the only
  * red; an enabled policy holding inbound rules cannot be planned at all; an
@@ -320,7 +325,13 @@ function ago(value?: string): string {
 
 const counts = computed(() => {
   const out = { failing: 0, blocked: 0, unapplied: 0, applied: 0, disabled: 0 };
-  for (const p of policies.value) out[policyState(p)] += 1;
+  for (const p of policies.value) {
+    const state = policyState(p);
+    out[state] += 1;
+    // A failed policy that also holds inbound rules is held up by them too;
+    // its state shows the failure, the count shows both.
+    if (state === "failing" && heldByInbound(p)) out.blocked += 1;
+  }
   return out;
 });
 
@@ -392,7 +403,8 @@ const attention = computed<AttentionItem[]>(() => {
         proof: firstLine(p.last_error ?? ""),
         action,
       });
-    } else if (state === "blocked") {
+    }
+    if (state === "blocked" || (state === "failing" && heldByInbound(p))) {
       items.push({
         key: `blocked:${p.target_node_id}`,
         tone: "warning",
@@ -918,6 +930,9 @@ function closePlan(open: boolean) {
       <template #cell-state="{ row: p }">
         <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[policyState(p)])">
           {{ $t(`networking.policyPage.state.${policyState(p)}`) }}
+        </span>
+        <span v-if="policyState(p) === 'failing' && heldByInbound(p)" class="ml-1 whitespace-nowrap text-xs text-warning-text">
+          · {{ $t('networking.policyPage.state.blocked') }}
         </span>
       </template>
       <template #cell-rules="{ row: p }">

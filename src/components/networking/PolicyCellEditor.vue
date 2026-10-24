@@ -150,7 +150,9 @@ const canSubmit = computed(
  * do not allow, so one allow rule for this cell cuts the group off from
  * everything else, the internet included; the dialog says so before save.
  */
-const turnsPolicyOn = computed(() => meta.enabled && (!props.existing || !props.existing.enabled));
+const turnsPolicyOn = computed(
+  () => meta.enabled && drafts.value.length > 0 && (!props.existing || !props.existing.enabled),
+);
 
 function onOpenChange(value: boolean) {
   emit("update:open", value);
