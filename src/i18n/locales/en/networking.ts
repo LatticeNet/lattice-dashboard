@@ -496,7 +496,7 @@ export default {
       searchPlaceholder: "Search policies and targets",
       emptyTitle: "No outbound policies",
       emptyDescription: "Create one to control which outbound connections its target nodes may open. Until a node has a planned and approved policy, its outbound traffic is not filtered.",
-      matrixScope: "Policies that target only nodes or the whole fleet have no row here; they are on the Policies layer.",
+      matrixScope: "Policies that target only nodes have no row here; they are on the Policies layer. Whole-fleet policies are the last row, read here and edited on the Policies layer.",
       sourceDerived: "From outbound policies",
       sourceManual: "Manual",
       builtFrom: "Built from these outbound policies, in merge order",

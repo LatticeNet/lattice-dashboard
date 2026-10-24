@@ -17,7 +17,7 @@
  * with the draft, names what changed on the server, and offers to reload
  * theirs or to save the draft over the newer version (useSaveRefusal).
  */
-import { computed, reactive, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, reactive, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 import { RefreshCw } from "lucide-vue-next";
@@ -116,6 +116,18 @@ const saveState = useSaveRefusal<GroupPolicyView>({
   compared: COMPARED,
   draft: () => [form.name, form.target, form.enabled, form.priority, form.rules, inbound.value],
 });
+// The shared helper focuses the first control inside a refused holder, which
+// in the target is the first chip's remove button: one more Enter would take
+// that group out of the target. A refused target moves focus to the picker's
+// search field instead (the helper's owner has the general fix).
+watch(
+  () => saveState.marked.value,
+  async (path) => {
+    if (path !== "scope") return;
+    await nextTick();
+    formEl.value?.querySelector<HTMLInputElement>('[data-field="scope"] input:not([type="hidden"])')?.focus();
+  },
+);
 
 watch(
   () => [props.open, props.existing?.id] as const,
