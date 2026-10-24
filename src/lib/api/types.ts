@@ -2265,6 +2265,8 @@ export interface DNSDeploymentView {
   enable_udp: boolean;
   enable_tcp: boolean;
   exposure: DNSExposure | string;
+  /** Client prefixes the resolver answers; empty answers every client that reaches it. */
+  allowed_client_networks?: string[];
   zones: DNSZone[];
   hostname?: string;
   /** `external` only: the daemon's sockets, each stamped with the process reality reported. */
@@ -2300,6 +2302,7 @@ export interface DNSDeploymentBody {
   enable_udp?: boolean;
   enable_tcp?: boolean;
   exposure?: DNSExposure | string;
+  allowed_client_networks?: string[];
   zones: DNSZone[];
   hostname?: string;
   /** `external` only: the sockets the observed daemon owns. At least one is required. */
