@@ -18,7 +18,7 @@ import type {
   MonitorView,
   TargetSelector,
 } from "@/lib/api/types";
-import { normalizeSelector, selectorIsBroad, selectorIsEmpty } from "@/lib/targetSelector";
+import { isEmptySelector, normalizeSelector, selectorParts, type SelectorGroup, type SelectorNode } from "@/components/selector/selectorModel";
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderRow } from "@/views/fleet/checkHeadersModel";
 import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseStatusSet } from "@/views/fleet/checkRulesModel";
 import { CHECK_MAX_INTERVAL_SEC, CHECK_MAX_TIMEOUT_SEC, CHECK_MIN_INTERVAL_SEC, PACKETS_DEFAULT, PACKETS_MAX, icmpRunSeconds, multiPacket } from "@/views/fleet/checksModel";
@@ -26,6 +26,30 @@ import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, defaultDegradedDraft, degradedDra
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { AGENT_DEFAULT_INTERVAL_SEC, AGENT_DEFAULT_TIMEOUT_SEC, TLS_DEFAULT_INTERVAL_SEC, TLS_DEFAULT_THRESHOLD_DAYS, TLS_DEFAULT_TIMEOUT_SEC, TLS_MAX_THRESHOLD_DAYS, targetError } from "@/views/fleet/monitorTypeModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
+
+/** A selector that names a group or the whole fleet: it needs an unrestricted principal, and secrets refuse it. */
+export function selectorIsBroad(sel: TargetSelector | undefined): boolean {
+  return !!sel && (sel.all === true || (sel.groups?.length ?? 0) > 0);
+}
+
+/** The words a selector reads as: the whole fleet, groups, nodes, then what it leaves out. */
+export interface SelectorWords {
+  fleet: string;
+  group: (name: string) => string;
+  except: (base: string, names: string) => string;
+}
+
+/** A selector in words: "the whole fleet except hk-2", "group asia, jp-1". */
+export function describeSelector(sel: TargetSelector | undefined, nodes: readonly SelectorNode[], groups: readonly SelectorGroup[], words: SelectorWords): string {
+  if (!sel) return "";
+  const parts = selectorParts(sel, nodes, groups);
+  const base = parts
+    .filter((p) => p.kind !== "exclude")
+    .map((p) => (p.kind === "fleet" ? words.fleet : p.kind === "group" ? words.group(p.name) : p.name))
+    .join(", ");
+  const left = parts.filter((p) => p.kind === "exclude").map((p) => p.name);
+  return left.length ? words.except(base, left.join(", ")) : base;
+}
 
 /** The methods a definition offers, node-to-node first. */
 export const DEFINITION_KINDS: readonly MonitorType[] = ["tcp", "icmp", "beacon", "http", "tls"];
@@ -154,8 +178,8 @@ export type DefinitionProblem =
 export function definitionProblems(draft: DefinitionDraft, options: { newDefinition: boolean; m3?: boolean }): DefinitionProblem[] {
   const out: DefinitionProblem[] = [];
   const addresses = takesAddresses(draft.type) ? addressesOf(draft.addressText) : [];
-  if (takesSources(draft.type) && selectorIsEmpty(draft.sources)) out.push("sources");
-  const nodeTargets = takesTargetNodes(draft.type) && !selectorIsEmpty(draft.targets);
+  if (takesSources(draft.type) && isEmptySelector(draft.sources)) out.push("sources");
+  const nodeTargets = takesTargetNodes(draft.type) && !isEmptySelector(draft.targets);
   if (!nodeTargets && addresses.length === 0) out.push("target");
   if (addresses.some((a) => targetError(draft.type, a))) out.push("address");
   else if (addresses.some((a) => destinationProblem(draft.type, a))) out.push("destination");

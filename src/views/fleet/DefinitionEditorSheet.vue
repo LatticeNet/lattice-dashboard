@@ -13,13 +13,12 @@ import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
 import { api, type CheckDefinitionPreview, type CheckDefinitionView, type GroupView, type MonitorType, type Node } from "@/lib/api";
-import { selectorIsBroad } from "@/lib/targetSelector";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
-import TargetSelectorField from "@/components/common/TargetSelectorField.vue";
+import SelectorPicker from "@/components/selector/SelectorPicker.vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -40,6 +39,7 @@ import {
   draftFromDefinition,
   emptyDefinitionDraft,
   missingParts,
+  selectorIsBroad,
   suggestDefinitionName,
   summarizePreview,
   takesAddresses,
@@ -392,31 +392,37 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checkDefs.editor.from') }}</legend>
         <p v-if="isTls" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.controlPlane') }}</p>
-        <TargetSelectorField
-          v-else
-          v-model="draft.sources"
-          :nodes="nodes"
-          :groups="groups"
-          :allow-broad="allowBroad"
-          :notes="sourceNotes"
-          :label="$t('fleet.monitoring.checkDefs.editor.from')"
-          data-testid="definition-sources"
-        />
+        <div v-else data-testid="definition-sources">
+          <SelectorPicker
+            v-model="draft.sources"
+            :nodes="nodes"
+            :groups="groups"
+            :allow-groups="allowBroad"
+            :allow-fleet="allowBroad"
+            :restricted-reason="allowBroad ? '' : $t('fleet.monitoring.checkDefs.editor.nodesOnly')"
+            :notes="sourceNotes"
+            :label="$t('fleet.monitoring.checkDefs.editor.from')"
+            id-prefix="definition-sources"
+          />
+        </div>
         <p v-if="secretWithBroad" role="alert" class="text-xs text-destructive">{{ problemOf('secretSources') }}</p>
       </fieldset>
 
       <!-- 3. To -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checkDefs.editor.to') }}</legend>
-        <TargetSelectorField
-          v-if="nodeTargets"
-          v-model="draft.targets"
-          :nodes="nodes"
-          :groups="groups"
-          :allow-broad="allowBroad"
-          :label="$t('fleet.monitoring.checkDefs.editor.to')"
-          data-testid="definition-targets"
-        />
+        <div v-if="nodeTargets" data-testid="definition-targets">
+          <SelectorPicker
+            v-model="draft.targets"
+            :nodes="nodes"
+            :groups="groups"
+            :allow-groups="allowBroad"
+            :allow-fleet="allowBroad"
+            :restricted-reason="allowBroad ? '' : $t('fleet.monitoring.checkDefs.editor.nodesOnly')"
+            :label="$t('fleet.monitoring.checkDefs.editor.to')"
+            id-prefix="definition-targets"
+          />
+        </div>
         <button
           v-if="addressesOptional && !showAddresses"
           type="button"

@@ -26,7 +26,7 @@ import type {
   MonitorView,
   TargetSelector,
 } from "@/lib/api/types";
-import { resolveTargetSelector, type SelectorGroup } from "@/lib/targetSelector";
+import { resolveSelector, type SelectorGroup } from "@/components/selector/selectorModel";
 import { takesSources, takesTargetNodes } from "@/views/fleet/definitionsModel";
 import { effectiveProbeMethods } from "@/views/fleet/checkRulesModel";
 
@@ -84,7 +84,7 @@ function entriesOf(def: CheckDefinition, nodes: readonly DefinitionNode[], group
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const out: Entry[] = [];
   if (takesTargetNodes(def.type)) {
-    for (const id of resolveTargetSelector(def.targets, nodes, groups)) {
+    for (const id of resolveSelector(def.targets, nodes, groups)) {
       const node = byId.get(id)!;
       if (!node.public_ip) {
         out.push({ key: id, targetNode: id, target: "", reason: def.type === "beacon" ? "beacon_not_enabled" : "not_probeable", note: "no_public_address" });
@@ -114,7 +114,7 @@ export interface DefinitionPlan {
  */
 export function planDefinition(def: CheckDefinition, held: readonly MonitorView[], nodes: readonly DefinitionNode[], groups: readonly SelectorGroup[], now: string): DefinitionPlan {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const sources = takesSources(def.type) ? resolveTargetSelector(def.sources, nodes, groups) : [""];
+  const sources = takesSources(def.type) ? resolveSelector(def.sources, nodes, groups) : [""];
   const heldById = new Map(held.map((m) => [m.id, m]));
   const rate = packetsPerSecond(def);
   const targets: CheckPreviewTarget[] = [];

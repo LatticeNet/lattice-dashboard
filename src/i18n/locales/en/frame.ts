@@ -4,30 +4,6 @@
 
 export default {
   common: {
-    // Design 32 D5: the target selector.
-    selector: {
-      wholeFleet: "Whole fleet",
-      wholeFleetHint: "Every node, including nodes that join later",
-      nodesOnly: "This session can name nodes only: a group or the whole fleet needs a token without a node allowlist.",
-      groupChip: "{name} ({n} node) | {name} ({n} nodes)",
-      exceptChip: "except {name}",
-      remove: "Remove {name}",
-      chosen: "Chosen for {field}",
-      search: "Search groups and nodes",
-      searchNodes: "Search nodes",
-      searchLabel: "Search {field}",
-      groups: "Node groups",
-      groupMembers: "{n} node | {n} nodes",
-      groupFollows: "follows its selector",
-      excluded: "excluded",
-      viaFleet: "in the whole fleet",
-      viaGroup: "via {name}",
-      unknownNode: "not a node this session can read",
-      noMatch: "Nothing matches.",
-      resolves: "Resolves to {n} node | Resolves to {n} nodes",
-      showNames: "show",
-      hideNames: "hide",
-    },
     regions: {
       AS: "Asia",
       EU: "Europe",
@@ -384,6 +360,31 @@ export default {
       noNodes: "No nodes are enrolled yet. Enter the node id instead.",
       unknownNode: "This id is not in the node list, so it is shown as stored.",
     },
+  },
+
+  // The shared target selector (design 32 D5): nodes, node groups, the whole
+  // fleet and nodes to leave out, for every target field.
+  selector: {
+    chosenLabel: "Chosen for {field}",
+    nothingChosen: "Nothing chosen yet",
+    wholeFleet: "Whole fleet",
+    wholeFleetInline: "the whole fleet",
+    except: "except {name}",
+    remove: "Remove {name}",
+    searchGroupsAndNodes: "Search node groups and nodes",
+    searchNodes: "Search nodes",
+    groupsHeading: "Node groups",
+    groupNodes: "{n} node | {n} nodes",
+    via: "via {groups}",
+    viaFleet: "via the whole fleet",
+    leftOut: "left out",
+    leaveOut: "Leave out",
+    leaveOutNode: "Leave {name} out",
+    unseen: "not in your node list",
+    noMatch: "No node group or node matches.",
+    resolves: "Resolves to no nodes | Resolves to {n} node | Resolves to {n} nodes",
+    showNodes: "Show them",
+    hideNodes: "Hide",
   },
 
   nav: {

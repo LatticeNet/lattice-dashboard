@@ -1643,6 +1643,7 @@ export default {
           },
         },
         editor: {
+          nodesOnly: "当前会话只能点名节点：节点组或全网需要没有节点白名单的令牌。",
           createTitle: "新建检查",
           editTitle: "编辑 {name}",
           from: "源",

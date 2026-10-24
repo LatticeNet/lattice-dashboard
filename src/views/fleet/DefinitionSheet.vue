@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { formatMs } from "./latencyModel";
 import { stateRank, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
+import { describeSelector, type SelectorWords } from "./definitionsModel";
 
 const props = defineProps<{
   open: boolean;
@@ -79,20 +80,15 @@ const sheetState = computed(() => {
 function nodeName(id: string): string {
   return props.nodes.find((n) => n.id === id)?.name || id;
 }
-function groupName(id: string): string {
-  return props.groups.find((g) => g.id === id)?.name || id;
-}
+const selectorWords = computed<SelectorWords>(() => ({
+  fleet: t("selector.wholeFleetInline"),
+  group: (name) => t("fleet.monitoring.checkDefs.sheet.group", { name }),
+  except: (base, names) => t("fleet.monitoring.checkDefs.sheet.except", { base, names }),
+}));
 
-/** A selector in words: "the whole fleet except hk-2", "group asia and jp-1". */
+/** A selector in words: "the whole fleet except hk-2", "group asia, jp-1". */
 function selectorText(sel: { nodes?: string[]; groups?: string[]; all?: boolean; exclude?: string[] } | undefined): string {
-  if (!sel) return "";
-  const parts: string[] = [];
-  if (sel.all) parts.push(t("common.selector.wholeFleet"));
-  for (const id of sel.groups ?? []) parts.push(t("fleet.monitoring.checkDefs.sheet.group", { name: groupName(id) }));
-  for (const id of sel.nodes ?? []) parts.push(nodeName(id));
-  const base = parts.join(", ");
-  if (!sel.exclude?.length) return base;
-  return t("fleet.monitoring.checkDefs.sheet.except", { base, names: sel.exclude.map(nodeName).join(", ") });
+  return describeSelector(sel, props.nodes, props.groups, selectorWords.value);
 }
 
 const fromText = computed(() => (def.value?.type === "tls" ? t("fleet.monitoring.assignment.controlPlane") : selectorText(def.value?.sources)));

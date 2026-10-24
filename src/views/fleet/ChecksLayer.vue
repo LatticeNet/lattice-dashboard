@@ -44,7 +44,7 @@ import { Button } from "@/components/ui/button";
 import DefinitionSheet from "./DefinitionSheet.vue";
 import PathDetail from "./PathDetail.vue";
 import { PACKETS_DEFAULT, canEditCheck, checkSourceSummary, latestCertExpiry, multiPacket, sheetSource, withPathVerdict, type PickedSource } from "./checksModel";
-import { CHECK_ROW_GROUP_ORDER, checkRowGroup, checkRowMethod, checkRowName, checkRows, pathsHealth, type CheckRow } from "./definitionsModel";
+import { CHECK_ROW_GROUP_ORDER, checkRowGroup, checkRowMethod, checkRowName, checkRows, describeSelector, pathsHealth, type CheckRow, type SelectorWords } from "./definitionsModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
@@ -140,15 +140,16 @@ function nameOfGroup(id: string): string {
   return props.groups.find((g) => g.id === id)?.name || id;
 }
 
-/** A selector as the row's From and To read it: "whole fleet", "edge, jp-1", "whole fleet except hk-2". */
+/** A selector as the row's From and To read it: "the whole fleet", "group edge, jp-1", "the whole fleet except hk-2". */
 function selectorLabel(sel: CheckDefinitionView["sources"]): string {
-  const parts: string[] = [];
-  if (sel.all) parts.push(t("common.selector.wholeFleet"));
-  for (const id of sel.groups ?? []) parts.push(nameOfGroup(id));
-  for (const id of sel.nodes ?? []) parts.push(nodeName(id));
-  const base = parts.join(", ");
-  return sel.exclude?.length ? t("fleet.monitoring.checkDefs.sheet.except", { base, names: sel.exclude.map(nodeName).join(", ") }) : base;
+  return describeSelector(sel, props.nodes, props.groups, selectorWords.value);
 }
+
+const selectorWords = computed<SelectorWords>(() => ({
+  fleet: t("selector.wholeFleetInline"),
+  group: (name) => t("fleet.monitoring.checkDefs.sheet.group", { name }),
+  except: (base, names) => t("fleet.monitoring.checkDefs.sheet.except", { base, names }),
+}));
 
 function definitionTargets(def: CheckDefinitionView): string {
   const nodes = selectorLabel(def.targets);

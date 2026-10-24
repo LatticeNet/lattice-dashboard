@@ -1666,6 +1666,7 @@ export default {
           },
         },
         editor: {
+          nodesOnly: "This session can name nodes only: a group or the whole fleet needs a token without a node allowlist.",
           createTitle: "New check",
           editTitle: "Edit {name}",
           from: "From",
