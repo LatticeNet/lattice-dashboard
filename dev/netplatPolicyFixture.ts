@@ -3,21 +3,22 @@
  *
  * Production on 2026-09-30: 3 groups, 0 group policies, 0 node policies. That
  * is the default here. The group names and colours are invented (FACTS gives
- * only the count). `?policy=dense` adds an invented working set: two group
+ * only the count). `?policies=dense` adds an invented working set: two group
  * policies, five node policies (one failing, one planned and never applied,
  * one disabled) and the node-to-node edges the server would draw for them.
  * `?groups=0` gives a fleet with no groups, so the matrix has nothing to draw.
  *
- * Design 32 S3b, under `?policy=dense`: the cd group's policy excludes two of
+ * Design 32 S3b, under `?policies=dense`: the cd group's policy excludes two of
  * its members, and a whole-fleet policy excludes a third, so the matrix
  * draws row exclusions and the fleet row. The group policies carry versions,
  * so the editor's conflict can be drawn (see netplatFakeApi's groupPolicy).
  */
-import type { GroupPolicyView, NetPolicyGraph, NetPolicyMatrix, NetPolicyView } from "@/lib/api/index";
+import type { GroupPolicyView, GroupView, NetPolicyGraph, NetPolicyMatrix, NetPolicyView } from "@/lib/api/index";
 
 import { DAY, HOUR, NODES, flags, iso, nodeByName } from "./netplatFixture";
 
-const DENSE = flags.get("policy") === "dense";
+// Not ?policy=: that is the page's own sheet parameter, and a fixture name there opens a "no such policy" sheet.
+const DENSE = flags.get("policies") === "dense";
 const NO_GROUPS = flags.get("groups") === "0";
 
 const GROUPS = NO_GROUPS
@@ -27,6 +28,18 @@ const GROUPS = NO_GROUPS
       { id: "grp_metix", name: "Metix", slug: "metix", color: "#7a5cc4" },
       { id: "grp_home", name: "HOME", slug: "home", color: "#b9772b" },
     ];
+
+/**
+ * The matrix groups as /api/groups lists them under ?policies=dense, members
+ * by tag, so the policy editor's selector names the group a dense policy
+ * targets and resolves it to nodes.
+ */
+export const POLICY_GROUPS: GroupView[] = DENSE
+  ? GROUPS.map((group, order) => {
+      const members = NODES.filter((node) => (node.tags ?? []).includes(group.name)).map((node) => node.id);
+      return { ...group, order: 10 + order, members, resolved_members: members, rollup: { total: members.length, online: members.length, offline: 0, disabled: 0 } } as GroupView;
+    })
+  : [];
 
 export function policyMatrix(direction: "egress" | "ingress"): NetPolicyMatrix {
   return {

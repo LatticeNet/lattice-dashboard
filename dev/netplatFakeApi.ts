@@ -50,7 +50,7 @@ import type {
 } from "@/lib/api/index";
 
 import { DDNS, ddnsSaveWarnings, runDdns } from "./netplatDdnsFixture";
-import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
+import { GROUP_POLICIES, NODE_POLICIES, POLICY_GROUPS, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
 import { cataloguePage, sentPage, testStoredChannel } from "./netplatSentFixture";
@@ -515,7 +515,7 @@ export const api = {
       read("approvals", () => ({ approvals: mirrorApprovals(params) ?? AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
   },
   groups: {
-    list: () => read("groups", () => ({ groups: MIRROR_GROUPS.map((group) => ({ ...group })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } })),
+    list: () => read("groups", () => ({ groups: [...MIRROR_GROUPS, ...POLICY_GROUPS].map((group) => ({ ...group })), ungrouped: { resolved_members: [], rollup: { total: 0, online: 0, offline: 0, disabled: 0 } } })),
   },
   /* The share list, read by the command palette (tokens included, as the server sends them). */
   subscriptionShares: {
