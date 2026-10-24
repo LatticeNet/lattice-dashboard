@@ -20,7 +20,7 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   terminal: () => import("@/views/operations/TerminalView.vue"),
   audit: () => import("@/views/operations/AuditView.vue"),
   // Networking
-  "network-policy": () => import("@/views/networking/PolicyView.vue"),
+  "network-outbound-policy": () => import("@/views/networking/PolicyView.vue"),
   "network-dns": () => import("@/views/networking/DnsView.vue"),
   "network-geo-routing": () => import("@/views/networking/GeoRoutingView.vue"),
   "network-ddns": () => import("@/views/networking/DdnsView.vue"),

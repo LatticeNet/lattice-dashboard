@@ -48,6 +48,52 @@ export function consoleSectionForPlugin(pluginId: string, publisher: string | un
   return OFFICIAL_PLUGIN_SECTIONS[pluginId] ?? null;
 }
 
+/**
+ * The console's name for an official plugin page, as a `nav.items` key, by
+ * `<plugin id>/<route>` (design 32 D3). NetGuard and WireGuard keep their
+ * plugin pages, but the console names them by what they do, so the
+ * Networking section reads by layer; the row's plugin mark still says which
+ * plugin serves the page, so the sidebar reads "Inbound firewall (NetGuard)".
+ * Only applied to a page of a plugin the console places, which is a signed
+ * official one.
+ */
+export const OFFICIAL_PLUGIN_PAGE_TITLES: Readonly<Record<string, string>> = {
+  "latticenet.netguard/firewall": "inbound-firewall",
+  "latticenet.wireguard/networks": "wireguard-mesh",
+};
+
+/** The `nav.items` key the console names an official plugin page by, or null. */
+export function officialPageTitleKey(pluginId: string, route: string, publisher: string | undefined): string | null {
+  if (consoleSectionForPlugin(pluginId, publisher) === null) return null;
+  return OFFICIAL_PLUGIN_PAGE_TITLES[`${pluginId}/${route}`] ?? null;
+}
+
+/** The nav item name a plugin page gets in the console (useConsoleNavigation). */
+export function pluginNavItemName(pluginId: string, route: string): string {
+  return `plugin:${pluginId}:${route}`;
+}
+
+/**
+ * The order of a section's rows when it is not simply its own destinations
+ * followed by the placed plugin pages. Networking reads by layer (design 32
+ * D3): Inbound firewall, Outbound policy, WireGuard mesh, then naming
+ * services (Self-host DNS, DDNS, Geo-Routing), then access (Tunnels, SSH
+ * Guard). The design's Overview entry joins at the top when it ships. A row
+ * not named here keeps its place after the named ones.
+ */
+export const SECTION_ITEM_ORDER: Readonly<Record<string, readonly string[]>> = {
+  networking: [
+    pluginNavItemName("latticenet.netguard", "firewall"),
+    "network-outbound-policy",
+    pluginNavItemName("latticenet.wireguard", "networks"),
+    "network-dns",
+    "network-ddns",
+    "network-geo-routing",
+    "network-tunnels",
+    "network-ssh-guard",
+  ],
+};
+
 export interface PluginNavCandidate {
   pluginId: string;
   publisher?: string;
@@ -82,13 +128,16 @@ export function partitionPluginNav<T extends PluginNavCandidate>(
  * the section's own destinations. A section the operator could not see
  * before (VPN always, Networking for a principal holding only a plugin's
  * scope) is created from `makeSection` and placed by `order`; sections not
- * named in `order` keep their place after the named ones.
+ * named in `order` keep their place after the named ones. With `itemOrder`,
+ * a section it names has its rows sorted by that list (by `nameOf`), rows
+ * it does not name keeping their order after the named ones.
  */
 export function placeHoistedItems<I, S extends { id: string; items: I[] }>(
   sections: readonly S[],
   hoisted: readonly { sectionId: string; item: I }[],
   makeSection: (id: string) => S | undefined,
   order: readonly string[],
+  itemOrder?: { order: Readonly<Record<string, readonly string[]>>; nameOf: (item: I) => string },
 ): S[] {
   const byId = new Map<string, S>();
   for (const section of sections) byId.set(section.id, { ...section, items: [...section.items] });
@@ -101,6 +150,18 @@ export function placeHoistedItems<I, S extends { id: string; items: I[] }>(
       byId.set(sectionId, section);
     }
     section.items.push(item);
+  }
+  if (itemOrder) {
+    for (const section of byId.values()) {
+      const wanted = itemOrder.order[section.id];
+      if (!wanted) continue;
+      const itemRank = (item: I) => {
+        const at = wanted.indexOf(itemOrder.nameOf(item));
+        return at === -1 ? wanted.length : at;
+      };
+      const before = [...section.items];
+      section.items.sort((a, b) => itemRank(a) - itemRank(b) || before.indexOf(a) - before.indexOf(b));
+    }
   }
   const rank = (id: string) => {
     const at = order.indexOf(id);

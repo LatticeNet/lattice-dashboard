@@ -38,6 +38,7 @@ import { bindQueryParam } from "@/composables/useQueryParam";
 import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import { withoutSorts } from "@/lib/query/syntax";
 import { GROUPS_QUERY_EXAMPLES, groupsQuerySchema } from "./groupsQuery";
+import RenameNote from "@/components/common/RenameNote.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
@@ -664,6 +665,8 @@ const deleteImpact = computed(() => {
         </Button>
       </template>
     </PageHeader>
+
+    <RenameNote id="nodeGroups" />
 
     <EmptyState v-if="!canRead" :icon="FolderTree" :title="$t('fleet.groups.title')" :description="$t('fleet.groups.needRead')" />
 

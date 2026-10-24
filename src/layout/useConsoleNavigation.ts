@@ -8,11 +8,19 @@
  * open.
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { useAuthStore } from "@/stores/auth";
 import { CONSOLE_SECTION_ORDER, NAV, PLUGIN_HOST_SECTIONS, type NavItem, type NavSection } from "@/router/nav";
 import { resolvePluginNavIcon, usePluginContributions } from "@/composables/usePluginContributions";
-import { OFFICIAL_PLUGIN_SECTIONS, partitionPluginNav, placeHoistedItems } from "./navigationModel";
+import {
+  OFFICIAL_PLUGIN_SECTIONS,
+  SECTION_ITEM_ORDER,
+  officialPageTitleKey,
+  partitionPluginNav,
+  placeHoistedItems,
+  pluginNavItemName,
+} from "./navigationModel";
 
 /** A plugin's page as a sidebar destination. */
 export type PluginSidebarItem = NavItem & {
@@ -31,6 +39,7 @@ function hostSection(id: string): NavSection | undefined {
 
 export function useConsoleNavigation() {
   const auth = useAuthStore();
+  const { t } = useI18n();
   const { ready, navContributions } = usePluginContributions();
 
   const navSections = computed<NavSection[]>(() =>
@@ -42,9 +51,12 @@ export function useConsoleNavigation() {
 
   /** Every plugin page this principal may open, already scope-filtered by the contributions read. */
   const pluginItems = computed<PluginSidebarItem[]>(() =>
-    navContributions.value.map((entry) => ({
-      name: `plugin:${entry.pluginId}:${entry.route}`,
-      title: entry.title,
+    navContributions.value.map((entry) => {
+      // An official page the console names by what it does (design 32 D3).
+      const titleKey = officialPageTitleKey(entry.pluginId, entry.route, entry.publisher);
+      return {
+      name: pluginNavItemName(entry.pluginId, entry.route),
+      title: titleKey ? t(`nav.items.${titleKey}`) : entry.title,
       path: entry.to,
       icon: resolvePluginNavIcon(entry.icon),
       scopes: entry.scopes,
@@ -54,7 +66,8 @@ export function useConsoleNavigation() {
       publisher: entry.publisher,
       route: entry.route,
       to: entry.to,
-    })),
+      };
+    }),
   );
 
   const partition = computed(() => partitionPluginNav(pluginItems.value));
@@ -66,6 +79,7 @@ export function useConsoleNavigation() {
       partition.value.hoisted.map(({ sectionId, entry }) => ({ sectionId, item: entry })),
       hostSection,
       CONSOLE_SECTION_ORDER,
+      { order: SECTION_ITEM_ORDER, nameOf: (item) => item.name },
     ),
   );
 

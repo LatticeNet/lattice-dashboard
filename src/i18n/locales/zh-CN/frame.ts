@@ -381,6 +381,15 @@ export default {
     hideNodes: "收起",
   },
 
+  // 设计 32 改名的页面在首次访问时显示的说明（RenameNote）。
+  renames: {
+    outboundPolicy: "网络策略已改名为出站策略。它管节点主动发起的连接；入站流量由入站防火墙负责。",
+    nodeGroups: "分组已改名为节点分组，即检查和出站策略所针对的机群分组。",
+    inboundFirewall: "NetGuard 防火墙已改名为入站防火墙，位于网络分区。",
+    wireguardMesh: "WireGuard 网络已改名为 WireGuard 网状网络，位于网络分区。",
+    dismiss: "关闭",
+  },
+
   nav: {
     sections: {
       overview: "概览",
@@ -396,7 +405,7 @@ export default {
       overview: "概览",
       nodes: "节点",
       "node-detail": "节点详情",
-      groups: "分组",
+      groups: "节点分组",
       map: "地图",
       inventory: "资产",
       upcoming: "即将到期",
@@ -405,7 +414,10 @@ export default {
       tasks: "任务",
       terminal: "终端",
       audit: "审计",
-      "network-policy": "网络策略",
+      "network-outbound-policy": "出站策略",
+      // 控制台为官方插件页取的名字（navigationModel.OFFICIAL_PLUGIN_PAGES）。
+      "inbound-firewall": "入站防火墙",
+      "wireguard-mesh": "WireGuard 网状网络",
       "network-dns": "自建 DNS",
       "network-geo-routing": "地理路由",
       "network-ddns": "动态 DNS",
@@ -525,7 +537,7 @@ export default {
         tasks: "任务 作业 运行 失败 队列",
         terminal: "终端 命令行",
         audit: "审计 日志 历史 变更",
-        networkPolicy: "防火墙 规则 允许 拒绝",
+        networkPolicy: "网络策略 出站 防火墙 规则 允许 拒绝",
         sshGuard: "端口敲门 封禁 端口",
         publishing: "分享 订阅 链接 发布",
         notifications: "通知 告警 渠道",

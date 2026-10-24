@@ -2025,6 +2025,8 @@ export interface NetPolicyView {
   target_node_name?: string;
   rules: NetRule[];
   enabled: boolean;
+  /** Built from outbound policies by the group plan rather than authored on its own. */
+  group_derived?: boolean;
   last_plan_sha?: string;
   last_applied_at?: string;
   last_error?: string;
@@ -2122,7 +2124,12 @@ export interface TargetSelector {
 
 export interface GroupNetPolicy {
   id: string;
+  /** The operator's label; a policy without one is named by its target. */
+  name?: string;
+  /** Older form of the target, kept as an alias: read as {groups: [scope_group_id]}. */
   scope_group_id: string;
+  /** The target, when the policy was written with a selector. */
+  scope?: TargetSelector;
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
@@ -2133,14 +2140,32 @@ export interface GroupNetPolicy {
 export interface GroupPolicyView extends GroupNetPolicy {
   scope_group_name?: string;
   group_rule_count: number;
+  /** The effective target: the stored scope, or the one-group selector scope_group_id stands for. */
+  target: TargetSelector;
+  /** The target resolved now, limited to nodes this session may read. */
+  target_node_ids: string[];
+  /** The name, or a description of the target. */
+  label: string;
 }
 
+/**
+ * An outbound policy write. Send `scope`; `scope_group_id` alone is the older
+ * form for a one-group target and must agree with `scope` when both are sent.
+ */
 export interface GroupPolicyUpsertRequest {
   id?: string;
-  scope_group_id: string;
+  name?: string;
+  scope?: TargetSelector;
+  scope_group_id?: string;
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
+}
+
+export interface NetPolicyConvertResult {
+  group_policy: GroupPolicyView;
+  /** The reviewed plan; null when the converted policy is disabled. */
+  approval: ApprovalView | null;
 }
 
 export interface GroupPolicyPlanResult {

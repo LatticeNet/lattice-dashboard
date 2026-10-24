@@ -387,6 +387,15 @@ export default {
     hideNodes: "Hide",
   },
 
+  // First-visit notes on the pages design 32 renamed (RenameNote).
+  renames: {
+    outboundPolicy: "Network Policy is now Outbound policy. It controls the connections a node opens; inbound traffic is the Inbound firewall.",
+    nodeGroups: "Groups is now Node groups, the fleet groups that checks and outbound policy target.",
+    inboundFirewall: "NetGuard Firewall is now Inbound firewall, under Networking.",
+    wireguardMesh: "WireGuard Networks is now WireGuard mesh, under Networking.",
+    dismiss: "Dismiss",
+  },
+
   nav: {
     sections: {
       overview: "Overview",
@@ -402,7 +411,7 @@ export default {
       overview: "Overview",
       nodes: "Nodes",
       "node-detail": "Node",
-      groups: "Groups",
+      groups: "Node groups",
       map: "Map",
       inventory: "Inventory",
       upcoming: "Upcoming",
@@ -411,7 +420,10 @@ export default {
       tasks: "Tasks",
       terminal: "Terminal",
       audit: "Audit",
-      "network-policy": "Network Policy",
+      "network-outbound-policy": "Outbound policy",
+      // Official plugin pages the console names (navigationModel.OFFICIAL_PLUGIN_PAGES).
+      "inbound-firewall": "Inbound firewall",
+      "wireguard-mesh": "WireGuard mesh",
       "network-dns": "Self-host DNS",
       "network-geo-routing": "Geo-Routing",
       "network-ddns": "DDNS",
@@ -533,7 +545,7 @@ export default {
         tasks: "job jobs run runs failed queue",
         terminal: "shell ssh command",
         audit: "log history who changed",
-        networkPolicy: "firewall rule allow deny",
+        networkPolicy: "network policy egress firewall rule allow deny",
         sshGuard: "ssh knock ban port",
         publishing: "share subscription link publish route",
         notifications: "alert bark notify channel",

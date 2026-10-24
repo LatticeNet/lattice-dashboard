@@ -23,6 +23,9 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import PluginFrameHost from "./PluginFrameHost.vue";
+import RenameNote from "@/components/common/RenameNote.vue";
+import { RENAMED_PLUGIN_PAGES } from "@/components/common/renameNoteModel";
+import { officialPageTitleKey } from "@/layout/navigationModel";
 import { bridgeInterfaceFingerprint, interfaceMethodScopes } from "./pluginBridgeModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -74,6 +77,17 @@ const viewRoute = computed(() => {
 });
 
 const plugin = computed(() => findPlugin(pluginId.value));
+
+/**
+ * An official page design 32 renamed (Inbound firewall, WireGuard mesh)
+ * shows the old name next to the new one on its first visit; the console
+ * names the page, so only a page it names gets the note.
+ */
+const renameNote = computed(() => {
+  const p = plugin.value;
+  if (!p || !officialPageTitleKey(p.id, viewRoute.value, p.publisher)) return null;
+  return RENAMED_PLUGIN_PAGES[`${p.id}/${viewRoute.value}`] ?? null;
+});
 const view = computed(() => findView(pluginId.value, viewRoute.value));
 
 const pageTitle = computed(() => view.value?.title || plugin.value?.name || t("pluginViews.fallbackTitle"));
@@ -362,17 +376,21 @@ function confirmAction() {
 </script>
 
 <template>
-  <PluginFrameHost
-    v-if="kind === 'sandbox' && hasAccess && plugin?.ui_runtime"
-    :key="`${plugin.id}:${plugin.ui_runtime.asset_digest}:${viewRoute}:${callableInterfaceFingerprint}`"
-    :plugin-id="plugin.id"
-    :plugin-name="plugin.name || plugin.id"
-    :plugin-version="plugin.version"
-    :plugin-route="viewRoute"
-    :runtime="plugin.ui_runtime"
-    :interfaces="plugin.interfaces ?? []"
-    :call-timeouts-ms="plugin.call_timeouts_ms"
-  />
+  <div v-if="kind === 'sandbox' && hasAccess && plugin?.ui_runtime" class="absolute inset-0 flex flex-col">
+    <RenameNote v-if="renameNote" :id="renameNote" class="mx-4 mt-3 shrink-0 sm:mx-6" />
+    <div class="relative min-h-0 flex-1">
+      <PluginFrameHost
+        :key="`${plugin.id}:${plugin.ui_runtime.asset_digest}:${viewRoute}:${callableInterfaceFingerprint}`"
+        :plugin-id="plugin.id"
+        :plugin-name="plugin.name || plugin.id"
+        :plugin-version="plugin.version"
+        :plugin-route="viewRoute"
+        :runtime="plugin.ui_runtime"
+        :interfaces="plugin.interfaces ?? []"
+        :call-timeouts-ms="plugin.call_timeouts_ms"
+      />
+    </div>
+  </div>
 
   <div v-else class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="pageTitle">

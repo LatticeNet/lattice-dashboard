@@ -6,8 +6,11 @@ import {
   consoleSectionForPlugin,
   extensionWorkspaceVisible,
   nextNavIndex,
+  officialPageTitleKey,
   partitionPluginNav,
   placeHoistedItems,
+  pluginNavItemName,
+  SECTION_ITEM_ORDER,
   pluginIdOfRoute,
   reconcileCollapsedSections,
   toggleCollapsedSection,
@@ -265,4 +268,57 @@ test("with only official plugins installed the Extensions switch is gone, except
   const consoleIds = new Set(["latticenet.vpn-core"]);
   assert.equal(extensionWorkspaceVisible(0, "/plugins/latticenet.vpn-core/lines", consoleIds), false);
   assert.equal(extensionWorkspaceVisible(0, "/plugins/example.removed/view", consoleIds), true);
+});
+
+// Design 32 D3: Networking reads by layer. The two plugin pages sit around
+// Outbound policy, not after the console's own pages.
+test("the Networking section orders its rows by layer, plugin pages included", () => {
+  const order = { order: SECTION_ITEM_ORDER, nameOf: (item: string) => item };
+  const networking = section("networking", [
+    "network-outbound-policy",
+    "network-dns",
+    "network-ddns",
+    "network-geo-routing",
+    "network-tunnels",
+    "network-ssh-guard",
+  ]);
+  const placed = placeHoistedItems(
+    [networking],
+    [
+      { sectionId: "networking", item: pluginNavItemName("latticenet.netguard", "firewall") },
+      { sectionId: "networking", item: pluginNavItemName("latticenet.wireguard", "networks") },
+    ],
+    () => undefined,
+    ORDER,
+    order,
+  );
+  assert.deepEqual(placed[0]?.items, [
+    "plugin:latticenet.netguard:firewall",
+    "network-outbound-policy",
+    "plugin:latticenet.wireguard:networks",
+    "network-dns",
+    "network-ddns",
+    "network-geo-routing",
+    "network-tunnels",
+    "network-ssh-guard",
+  ]);
+
+  // A principal who sees only some of the pages keeps the same relative order,
+  // and a row the order does not name keeps its place after the named ones.
+  const partial = placeHoistedItems(
+    [section("networking", ["network-ssh-guard", "network-outbound-policy", "network-new"])],
+    [{ sectionId: "networking", item: pluginNavItemName("latticenet.wireguard", "networks") }],
+    () => undefined,
+    ORDER,
+    order,
+  );
+  assert.deepEqual(partial[0]?.items, ["network-outbound-policy", "plugin:latticenet.wireguard:networks", "network-ssh-guard", "network-new"]);
+});
+
+test("the console names the two official networking pages by what they do, and only those", () => {
+  assert.equal(officialPageTitleKey("latticenet.netguard", "firewall", "latticenet"), "inbound-firewall");
+  assert.equal(officialPageTitleKey("latticenet.wireguard", "networks", "latticenet"), "wireguard-mesh");
+  // A look-alike publisher is not the project's, and keeps its manifest title.
+  assert.equal(officialPageTitleKey("latticenet.netguard", "firewall", "acme"), null);
+  assert.equal(officialPageTitleKey("latticenet.vpn-core", "lines", "latticenet"), null);
 });
