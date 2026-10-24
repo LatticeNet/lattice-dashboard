@@ -18,7 +18,10 @@
  * resolved members); `label` names the field for assistive technology;
  * `allowGroups` and `allowFleet` turn those choices off, with
  * `restrictedReason` saying why (a token confined to some nodes may name only
- * nodes, the rule design 32 D1 sets for stored selectors).
+ * nodes, the rule design 32 D1 sets for stored selectors); `notes` maps a node
+ * id to one short line shown under that node in the warning tone, for what
+ * the caller knows about it (a check source whose agent cannot run the chosen
+ * method, for example). Nodes without a note look as before.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -58,8 +61,9 @@ const props = withDefaults(
     allowFleet?: boolean;
     restrictedReason?: string;
     idPrefix?: string;
+    notes?: Record<string, string>;
   }>(),
-  { allowGroups: true, allowFleet: true, restrictedReason: "", idPrefix: "selector" },
+  { allowGroups: true, allowFleet: true, restrictedReason: "", idPrefix: "selector", notes: () => ({}) },
 );
 const model = defineModel<TargetSelector>({ required: true });
 
@@ -138,6 +142,14 @@ function noteOf(node: Node): string {
   if (c.fleet) return t("selector.viaFleet");
   if (c.via.length) return t("selector.via", { groups: c.via.map((id) => groupById.value.get(id)?.name ?? id).join(", ") });
   return "";
+}
+
+/** The ids of the lines that describe a node's row, for aria-describedby. */
+function describedBy(node: Node): string | undefined {
+  const ids: string[] = [];
+  if (noteOf(node)) ids.push(`${props.idPrefix}-note-${node.id}`);
+  if (props.notes[node.id]) ids.push(`${props.idPrefix}-warn-${node.id}`);
+  return ids.length ? ids.join(" ") : undefined;
 }
 
 function partLabel(part: SelectorPart): string {
@@ -292,12 +304,13 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
             <Checkbox
               :model-value="coverageOf(node).targeted"
               :disabled="coveredElsewhere(node)"
-              :aria-describedby="noteOf(node) ? `${idPrefix}-note-${node.id}` : undefined"
+              :aria-describedby="describedBy(node)"
               @update:model-value="(v) => emit(toggleNode(value, node.id, v === true))"
             />
             <span class="min-w-0 flex-1">
               <span :class="cn('block truncate text-sm', coverageOf(node).excluded && 'text-muted-foreground line-through')" :title="node.name || node.id">{{ node.name || node.id }}</span>
               <span v-if="noteOf(node)" :id="`${idPrefix}-note-${node.id}`" class="block truncate text-xs text-muted-foreground">{{ noteOf(node) }}</span>
+              <span v-if="notes[node.id]" :id="`${idPrefix}-warn-${node.id}`" class="block text-xs text-warning-text wrap-anywhere" :data-note="node.id">{{ notes[node.id] }}</span>
             </span>
           </label>
           <label
