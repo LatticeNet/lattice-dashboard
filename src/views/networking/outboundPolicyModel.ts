@@ -12,7 +12,7 @@
  * Pure TS, so `node --test` covers it directly.
  */
 import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
-import type { GroupNetRule, NetEndpoint, NetEndpointKind } from "@/lib/api/types";
+import type { GroupNetRule, GroupPolicyView, NetEndpoint, NetEndpointKind } from "@/lib/api/types";
 
 import { draftPorts, type PolicyRuleDraft } from "./policyRuleModel.ts";
 
@@ -149,4 +149,26 @@ export function remoteProblem(draft: OutboundRuleDraft): RemoteProblem | undefin
  */
 export function isNodeRestricted(allowlist: readonly string[] | undefined): boolean {
   return !!allowlist && allowlist.length > 0 && !allowlist.includes("*");
+}
+
+/** Why a confined session cannot change a policy: the reason key under networking.outbound.locked. */
+export type OutboundLockReason = "groupTarget" | "hiddenNodes" | "remoteGroup";
+
+/**
+ * Which actions on a stored policy a session confined to some nodes is
+ * refused, by the rule the server applies (authorizeOutboundPolicyWrite):
+ * a node group or whole-fleet target, or named nodes the session cannot read
+ * (the view left them out), blocks both edit and delete; a remote group blocks
+ * a save but not a delete, since a delete carries no rules. The policy stays
+ * listed and readable either way; an unrestricted session is never locked.
+ */
+export function outboundLock(
+  p: Pick<GroupPolicyView, "target" | "rules" | "hidden_target_nodes">,
+  restricted: boolean,
+): { edit?: OutboundLockReason; remove?: OutboundLockReason } {
+  if (!restricted) return {};
+  if (p.target.all || (p.target.groups?.length ?? 0) > 0) return { edit: "groupTarget", remove: "groupTarget" };
+  if ((p.hidden_target_nodes ?? 0) > 0) return { edit: "hiddenNodes", remove: "hiddenNodes" };
+  if (p.rules.some((rule) => rule.remote.kind === "group")) return { edit: "remoteGroup" };
+  return {};
 }

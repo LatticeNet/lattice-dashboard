@@ -57,7 +57,7 @@ import { approvalTitleMessage } from "@/lib/approvalKind";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 import { NETGUARD_PLUGIN_ID, pluginPagePath } from "@/views/platform/pluginsModel";
-import { OUTBOUND_LAYERS, POLICY_PARAM, isNodeRestricted, type OutboundLayer } from "@/views/networking/outboundPolicyModel";
+import { OUTBOUND_LAYERS, POLICY_PARAM, isNodeRestricted, outboundLock, type OutboundLayer } from "@/views/networking/outboundPolicyModel";
 import { selectorParts } from "@/components/selector/selectorModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -309,6 +309,8 @@ const outboundColumns = computed<DataTableColumn<GroupPolicyView>[]>(() => [
 ]);
 
 const openOutbound = computed(() => groupPolicies.value.find((p) => p.id === policySheet.openId.value));
+/** What a confined session may not do to the open policy, and why; it stays readable. */
+const openOutboundLock = computed(() => (openOutbound.value ? outboundLock(openOutbound.value, restricted.value) : {}));
 const outboundSheetState = computed(() => {
   if (!policySheet.openId.value) return "ready" as const;
   if (openOutbound.value) return groupPoliciesQuery.error.value ? ("stale" as const) : ("ready" as const);
@@ -367,9 +369,28 @@ async function confirmOutboundDelete(): Promise<void> {
 }
 
 function outboundMenu(p: GroupPolicyView): RowMenuItem[] {
+  const lock = outboundLock(p, restricted.value);
+  const reason = t("networking.outbound.locked.menu");
   return [
-    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openOutboundEdit(p) },
-    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (outboundDeleteTarget.value = p) },
+    {
+      key: "edit",
+      label: t("common.actions.edit"),
+      icon: Pencil,
+      hidden: !canAdmin.value,
+      disabled: !!lock.edit,
+      reason,
+      run: () => openOutboundEdit(p),
+    },
+    {
+      key: "delete",
+      label: t("common.actions.delete"),
+      icon: Trash2,
+      danger: true,
+      hidden: !canAdmin.value,
+      disabled: !!lock.remove,
+      reason,
+      run: () => (outboundDeleteTarget.value = p),
+    },
   ];
 }
 
@@ -1124,7 +1145,13 @@ function closePlan(open: boolean) {
       <div class="space-y-0.5">
         <h2 id="policy-matrix-heading" class="text-sm font-medium">{{ $t('networking.matrix.title') }}</h2>
         <p class="text-xs text-muted-foreground">
-          {{ canEditCells && hasGroups ? $t('networking.policyPage.matrixHintAdmin') : $t('networking.matrix.description') }}
+          {{
+            canEditCells && hasGroups
+              ? $t('networking.policyPage.matrixHintAdmin')
+              : canAdmin && restricted
+                ? $t('networking.outbound.locked.matrix')
+                : $t('networking.matrix.description')
+          }}
           {{ $t('networking.outbound.matrixScope') }}
         </p>
       </div>
@@ -1409,10 +1436,13 @@ function closePlan(open: boolean) {
             </li>
           </ol>
         </section>
+        <p v-if="canAdmin && (openOutboundLock.edit || openOutboundLock.remove)" class="text-xs text-muted-foreground" data-testid="outbound-locked">
+          {{ $t(`networking.outbound.locked.${openOutboundLock.edit ?? openOutboundLock.remove}`) }}
+        </p>
         <p class="text-xs text-muted-foreground">{{ $t('networking.outbound.planHint') }}</p>
       </div>
       <template v-if="openOutbound && canAdmin" #actions>
-        <Button variant="outline" size="sm" type="button" @click="openOutboundEdit(openOutbound)">
+        <Button variant="outline" size="sm" type="button" :disabled="!!openOutboundLock.edit" @click="openOutboundEdit(openOutbound)">
           <Pencil aria-hidden="true" />
           {{ $t('common.actions.edit') }}
         </Button>

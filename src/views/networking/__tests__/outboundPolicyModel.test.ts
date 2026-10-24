@@ -6,6 +6,7 @@ import {
   isNodeRestricted,
   legacyPolicyQuery,
   outboundDraftToRule,
+  outboundLock,
   remoteProblem,
   ruleToOutboundDraft,
 } from "../outboundPolicyModel.ts";
@@ -58,4 +59,20 @@ test("a session is confined when its allowlist names nodes and no wildcard", () 
   assert.equal(isNodeRestricted(["*"]), false);
   assert.equal(isNodeRestricted(["node-a", "*"]), false);
   assert.equal(isNodeRestricted(["node-a"]), true);
+});
+
+test("a confined session keeps seeing a policy it cannot change, with the reason per action", () => {
+  const base = { target: { nodes: ["node-a"] }, rules: [], hidden_target_nodes: 0 };
+  const groupRemote = { protocol: "tcp", ports: [443], direction: "egress", action: "accept", remote: { kind: "group", group_id: "g1" } } as const;
+  // An unrestricted session changes anything.
+  assert.deepEqual(outboundLock({ ...base, target: { groups: ["g1"] } }, false), {});
+  // Explicit nodes it holds: nothing locked.
+  assert.deepEqual(outboundLock(base, true), {});
+  // A group or the whole fleet: neither edit nor delete.
+  assert.deepEqual(outboundLock({ ...base, target: { groups: ["g1"] } }, true), { edit: "groupTarget", remove: "groupTarget" });
+  assert.deepEqual(outboundLock({ ...base, target: { all: true, exclude: ["node-a"] } }, true), { edit: "groupTarget", remove: "groupTarget" });
+  // Named nodes it cannot read, which the server left out of the view.
+  assert.deepEqual(outboundLock({ ...base, hidden_target_nodes: 2 }, true), { edit: "hiddenNodes", remove: "hiddenNodes" });
+  // A remote group blocks a save, not a delete, as the server does.
+  assert.deepEqual(outboundLock({ ...base, rules: [groupRemote] }, true), { edit: "remoteGroup" });
 });

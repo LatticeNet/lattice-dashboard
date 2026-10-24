@@ -531,6 +531,13 @@ export default {
       hiddenTargetNodes: "and {n} node you cannot read | and {n} nodes you cannot read",
       reachesNone: "The target resolves to no node you can see. A node that joins a targeted group is covered at the next plan.",
       planHint: "Edits reach nodes through Plan outbound policies, which makes one plan per affected node for approval.",
+      locked: {
+        menu: "Needs a token with fleet scope",
+        groupTarget: "Your token is limited to some nodes, so it cannot change or delete a policy that targets a node group or the whole fleet: a group can grow to nodes outside your reach. An operator with fleet scope can.",
+        hiddenNodes: "This policy names nodes your token cannot read, so your token cannot change or delete it. An operator with fleet scope can.",
+        remoteGroup: "A rule here sends to a node group, which a token limited to some nodes cannot save. You can still delete the policy, and an operator with fleet scope can edit it.",
+        matrix: "Your token is limited to some nodes, so the matrix is read only: every cell writes a policy that targets a node group.",
+      },
       delete: {
         title: "Delete {name}?",
         description: "This deletes the definition on this server. Nothing is sent to a node.",
