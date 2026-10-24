@@ -21,6 +21,29 @@ export default {
       mfaOff: "未开启",
     },
     groups: {
+      // 分组的「被谁使用」部分（设计 32 D3）。
+      usedBy: {
+        title: "被谁使用",
+        count: "无 | {n} 个对象 | {n} 个对象",
+        unread: "未能读取：{reason}",
+        kind: {
+          check: "检查",
+          outbound_policy: "出站策略",
+          security_group_binding: "安全组绑定",
+          mesh_rule: "WireGuard 网状网络规则",
+        },
+        role: { target: "以该分组为目标", remote: "把它作为远端" },
+        none: {
+          check: "没有检查指定这个分组。",
+          outbound_policy: "没有出站策略指定这个分组。",
+          security_group_binding: "无。在支持绑定节点分组之前，安全组只绑定单个节点。",
+          mesh_rule: "无。所有具备组网条件的节点都在同一个 WireGuard 网状网络中。",
+        },
+        noneGeneric: "无。",
+        matrix: "打开分组矩阵",
+        hidden: "还有 {n} 处你无权读取。 | 还有 {n} 处你无权读取。",
+        blocksDelete: "{n} 个对象指定了这个分组，在改变之前服务器会拒绝删除。 | {n} 个对象指定了这个分组，在它们改变之前服务器会拒绝删除。",
+      },
       query: {
         label: "搜索、筛选和排序分组",
         placeholder: "搜索，或 node:hetzner offline>0 sort:-members",

@@ -2168,6 +2168,24 @@ export interface NetPolicyConvertResult {
   approval: ApprovalView | null;
 }
 
+/** One object that names a node group (GET /api/groups/used-by). */
+export type GroupUseKind = "outbound_policy" | "check" | "security_group_binding" | "mesh_rule";
+
+export interface GroupUse {
+  kind: GroupUseKind;
+  id: string;
+  label: string;
+  /** "target": the group is what the object applies to; "remote": a rule points at it. */
+  role: string;
+}
+
+export interface GroupUsedByResponse {
+  group_id: string;
+  used_by: GroupUse[];
+  /** Uses of kinds this session cannot read. */
+  hidden: number;
+}
+
 export interface GroupPolicyPlanResult {
   affected: { node_id: string; approval_id: string; plan_sha: string }[];
   conflicts: { node_id: string; reason: string }[];

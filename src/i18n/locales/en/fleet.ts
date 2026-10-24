@@ -22,6 +22,29 @@ export default {
       mfaOff: "off",
     },
     groups: {
+      // A group's Used by section (design 32 D3).
+      usedBy: {
+        title: "Used by",
+        count: "nothing | {n} object | {n} objects",
+        unread: "Not read: {reason}",
+        kind: {
+          check: "Checks",
+          outbound_policy: "Outbound policy",
+          security_group_binding: "Security-group bindings",
+          mesh_rule: "WireGuard mesh rules",
+        },
+        role: { target: "targets this group", remote: "names it as a remote" },
+        none: {
+          check: "No check names this group.",
+          outbound_policy: "No outbound policy names this group.",
+          security_group_binding: "None. Security groups bind to single nodes until node-group bindings ship.",
+          mesh_rule: "None. Every mesh-ready node is in the one WireGuard mesh.",
+        },
+        noneGeneric: "None.",
+        matrix: "Open the group matrix",
+        hidden: "{n} more use you cannot read. | {n} more uses you cannot read.",
+        blocksDelete: "{n} object names this group, so the server refuses to delete it until that changes. | {n} objects name this group, so the server refuses to delete it until they change.",
+      },
       query: {
         label: "Search, filter and sort groups",
         placeholder: "Search, or node:hetzner offline>0 sort:-members",

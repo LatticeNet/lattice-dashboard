@@ -39,6 +39,7 @@ import type {
   GroupPolicyPlanResult,
   GroupPolicyUpsertRequest,
   GroupPolicyView,
+  GroupUsedByResponse,
   NetPolicyConvertResult,
   GroupSelector,
   GroupUpsertRequest,
@@ -695,6 +696,9 @@ export const api = {
     preview: (selector: GroupSelector) =>
       http.post<{ node_ids: string[]; count: number }>("/api/groups/preview", selector),
     seed: () => http.post<{ created: number; skipped: number }>("/api/groups/seed", {}),
+    /** Every object that names the group, by the kinds this session may read. */
+    usedBy: (id: string, opts?: RequestOptions) =>
+      http.get<GroupUsedByResponse>("/api/groups/used-by", { id }, opts),
   },
 
   groupPolicy: {

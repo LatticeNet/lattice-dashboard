@@ -16,6 +16,7 @@ import {
   api,
   unwrap,
   ApiError,
+  type GroupUse,
   type GroupSelector,
   type GroupUpsertRequest,
   type GroupView,
@@ -38,7 +39,11 @@ import { bindQueryParam } from "@/composables/useQueryParam";
 import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import { withoutSorts } from "@/lib/query/syntax";
 import { GROUPS_QUERY_EXAMPLES, groupsQuerySchema } from "./groupsQuery";
+import { groupUseCount, groupUseSections } from "./groupUsedByModel";
 import RenameNote from "@/components/common/RenameNote.vue";
+import { usePluginContributions } from "@/composables/usePluginContributions";
+import { NETGUARD_PLUGIN_ID, WIREGUARD_PLUGIN_ID, pluginPagePath } from "@/views/platform/pluginsModel";
+import type { RouteLocationRaw } from "vue-router";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
@@ -134,6 +139,50 @@ const selectedId = computed(() => (creating.value ? undefined : sheet.openId.val
 const selectedGroup = computed<GroupView | undefined>(() =>
   groups.value.find((g) => g.id === selectedId.value),
 );
+
+/* ----------------------------------------------------------------- */
+/* Used by (design 32 D3): every object that names the open group      */
+/* ----------------------------------------------------------------- */
+const usedByQuery = useAsyncData(
+  (signal) => (selectedGroup.value ? api.groups.usedBy(selectedGroup.value.id, { signal }) : Promise.resolve(undefined)),
+  { immediate: false, pollInterval: 0 },
+);
+watch(
+  () => selectedGroup.value?.id,
+  (id) => {
+    if (id) void usedByQuery.refresh();
+  },
+  { immediate: true },
+);
+/** The answer for the open group; a stale one for the previous group reads as loading. */
+const usedBy = computed(() => {
+  const data = usedByQuery.data.value;
+  return data && data.group_id === selectedGroup.value?.id ? data : undefined;
+});
+const usedBySections = computed(() => groupUseSections(usedBy.value?.used_by ?? []));
+const usedByCount = computed(() => groupUseCount(usedBy.value?.used_by ?? [], usedBy.value?.hidden ?? 0));
+
+const { findPlugin } = usePluginContributions();
+function pluginPage(pluginId: string): RouteLocationRaw | null {
+  const plugin = findPlugin(pluginId);
+  return plugin ? pluginPagePath(plugin) : null;
+}
+
+/** Where one use opens: the policy in its sheet; the other kinds' pages until they hold group references. */
+function useLink(use: GroupUse): RouteLocationRaw | null {
+  switch (use.kind) {
+    case "outbound_policy":
+      return { name: "network-outbound-policy", query: { policy: use.id } };
+    case "check":
+      return { name: "monitoring" };
+    case "security_group_binding":
+      return pluginPage(NETGUARD_PLUGIN_ID);
+    case "mesh_rule":
+      return pluginPage(WIREGUARD_PLUGIN_ID);
+    default:
+      return null;
+  }
+}
 
 const form = reactive({
   id: undefined as string | undefined,
@@ -495,12 +544,14 @@ async function confirmDelete() {
     }
     await refreshAll();
   } catch (error) {
-    // The server rejects (409) when the group has children or is referenced by
-    // a group policy; surface that exact reason rather than a generic message.
+    // The server rejects (409) when the group has children or anything names
+    // it, and the message names every user; surface that exact reason rather
+    // than a generic message, and re-read the Used by list it refers to.
     const message =
       error instanceof ApiError ? error.message : t("fleet.groups.toast.deleteFailed");
     toast.error(message);
     deleteOpen.value = false;
+    if (selectedGroup.value?.id === target.id) void usedByQuery.refresh();
   } finally {
     deleting.value = false;
   }
@@ -642,7 +693,11 @@ const deleteImpact = computed(() => {
   const target = deleteTarget.value;
   if (!target) return [];
   const members = groups.value.find((g) => g.id === target.id)?.resolved_members.length ?? target.resolved_members.length;
-  return [t("fleet.groups.deleteImpact", { n: members })];
+  const impact = [t("fleet.groups.deleteImpact", { n: members })];
+  // Known before the request: the server refuses while anything names the group.
+  const uses = usedBy.value && usedBy.value.group_id === target.id ? usedByCount.value : 0;
+  if (uses > 0) impact.unshift(t("fleet.groups.usedBy.blocksDelete", { n: uses }, uses));
+  return impact;
 });
 </script>
 
@@ -804,6 +859,38 @@ const deleteImpact = computed(() => {
             </li>
             <li v-if="openMembers.length === 0" class="px-3 py-4 text-xs text-muted-foreground">{{ $t('fleet.groups.sheet.noMembers') }}</li>
           </ul>
+        </section>
+        <!-- Used by (design 32 D3): every check, outbound policy, security-group binding and mesh rule naming the group. -->
+        <section class="space-y-2" aria-labelledby="group-used-by" data-testid="group-used-by">
+          <h3 id="group-used-by" class="flex items-baseline gap-2 text-xs font-medium text-muted-foreground">
+            {{ $t('fleet.groups.usedBy.title') }}
+            <span v-if="usedBy" class="tabular">{{ $t('fleet.groups.usedBy.count', { n: usedByCount }, usedByCount) }}</span>
+          </h3>
+          <p v-if="usedByQuery.error.value && !usedBy" class="text-xs text-warning-text">
+            {{ $t('fleet.groups.usedBy.unread', { reason: usedByQuery.error.value.message }) }}
+          </p>
+          <p v-else-if="!usedBy" class="text-xs text-muted-foreground">{{ $t('common.state.loading') }}</p>
+          <dl v-else class="divide-y divide-border rounded-md border border-border">
+            <div v-for="section in usedBySections" :key="section.kind" class="grid grid-cols-1 gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+              <dt class="text-xs text-muted-foreground">{{ $t(`fleet.groups.usedBy.kind.${section.kind}`, section.kind) }}</dt>
+              <dd class="min-w-0 text-xs">
+                <ul v-if="section.uses.length" class="space-y-1">
+                  <li v-for="use in section.uses" :key="use.id" class="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <RouterLink v-if="useLink(use)" :to="useLink(use)!" class="min-w-0 truncate text-primary underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center">{{ use.label }}</RouterLink>
+                    <span v-else class="min-w-0 truncate">{{ use.label }}</span>
+                    <span class="shrink-0 text-muted-foreground">{{ $t(`fleet.groups.usedBy.role.${use.role}`, use.role) }}</span>
+                  </li>
+                </ul>
+                <span v-else class="text-muted-foreground">{{ $t(`fleet.groups.usedBy.none.${section.kind}`, $t('fleet.groups.usedBy.noneGeneric')) }}</span>
+                <RouterLink
+                  v-if="section.kind === 'outbound_policy' && section.uses.some((u) => u.role === 'target' || u.role === 'remote')"
+                  :to="{ name: 'network-outbound-policy', query: { view: 'matrix' } }"
+                  class="mt-1 inline-block text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >{{ $t('fleet.groups.usedBy.matrix') }}</RouterLink>
+              </dd>
+            </div>
+          </dl>
+          <p v-if="usedBy && usedBy.hidden > 0" class="text-xs text-muted-foreground">{{ $t('fleet.groups.usedBy.hidden', { n: usedBy.hidden }, usedBy.hidden) }}</p>
         </section>
         <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2">
           <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersTitle') }}</dt>
