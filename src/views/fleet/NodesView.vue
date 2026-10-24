@@ -1032,9 +1032,13 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             <span class="flex min-w-0 font-medium" :title="row.name || row.id">
               <span class="truncate">{{ nameParts(displayName(row))[0] }}</span><span class="shrink-0">{{ nameParts(displayName(row))[1] }}</span>
             </span>
+            <!-- On a phone the pinned column is too narrow for name and word
+                 side by side, and both refuse to shrink, so they printed over
+                 each other; there the dot carries the state on screen and the
+                 word stays for assistive technology. -->
             <span
               v-if="statusWord(row)"
-              :class="cn('shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(row).tone])"
+              :class="cn('shrink-0 text-xs max-sm:sr-only', STATUS_TEXT[describeNodeStatus(row).tone])"
             >{{ statusWord(row) }}</span>
           </span>
         </template>
@@ -1063,7 +1067,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           <!-- One evaluation per row: the cell reads it in six places. -->
           <template v-for="cell in [networkCell(row)]" :key="row.id">
             <span
-              :class="cn('inline-flex items-center gap-x-2 whitespace-nowrap font-mono text-xs tabular', cell.stale && 'text-muted-foreground')"
+              :class="cn('inline-flex flex-col items-end gap-x-2 whitespace-nowrap font-mono text-xs tabular sm:flex-row sm:items-center', cell.stale && 'text-muted-foreground')"
               :title="cell.title"
             >
               <template v-if="cell.rx">
