@@ -142,7 +142,7 @@ test("the Network view's copy exists in both locales, and the Paths and Topology
     assert.equal(typeof at(messages, "fleet.monitoring.layers.network"), "string");
     assert.equal(at(messages, "fleet.monitoring.layers.paths"), undefined);
     assert.equal(at(messages, "fleet.monitoring.layers.topology"), undefined);
-    for (const key of ["editCheck", "pathSet", "pair.title", "list.last", "list.check", "graph.undrawn", "graph.drawAll", "lens.reaches", "lens.reachedBy"]) {
+    for (const key of ["editCheck", "pathSet", "pair.title", "list.last", "graph.undrawn", "graph.drawAll", "lens.reaches", "lens.reachedBy"]) {
       assert.equal(typeof at(messages, `fleet.monitoring.network.${key}`), "string", key);
     }
   }

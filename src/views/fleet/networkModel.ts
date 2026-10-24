@@ -9,7 +9,7 @@
 import { REGION_ORDER, type RegionKey } from "@/lib/regions";
 import type { QueryValue } from "@/components/common/tableUrlState";
 import { worstFirst } from "@/views/fleet/nodePathsModel";
-import type { PathItem } from "@/views/fleet/pathsModel";
+import { targetLabel, type PathItem } from "@/views/fleet/pathsModel";
 
 /* ------------------------------------------------------------------ */
 /* Presentation                                                         */
@@ -88,7 +88,7 @@ export function regionGroups(paths: readonly PathItem[]): RegionGroup[] {
     const group = listGroup(path);
     const targets = groups.get(group) ?? new Map<string, TargetGroup>();
     const key = path.targetNode ?? path.rowKey;
-    const target = targets.get(key) ?? { key, name: path.targetName, detail: path.targetNode ? (path.country ?? "") : path.target, paths: [] };
+    const target = targets.get(key) ?? { key, name: targetLabel(path), detail: path.targetNode ? (path.country ?? "") : path.target, paths: [] };
     target.paths.push(path);
     targets.set(key, target);
     groups.set(group, targets);

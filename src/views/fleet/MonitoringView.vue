@@ -321,7 +321,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const m = matrix.value;
   if (!m) return [];
   const out: ProofSegment[] = [{ key: "paths", tone: "strong", text: t("fleet.monitoring.paths.proof.paths", { n: m.counts.paths }, m.counts.paths) }];
-  const sources = reachBySource(m).filter((r) => r.total > 0).length;
+  // Nodes that run a path, as the Network view's source picker counts them: the control plane is not one.
+  const sources = reachBySource(m).filter((r) => r.source && r.total > 0).length;
   if (sources > 1) out.push({ key: "sources", text: t("fleet.monitoring.paths.proof.sources", { n: sources }, sources) });
   if (m.counts.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.paths.proof.down", { n: m.counts.down }), to: pathsLink("state:down") });
   // Degraded after down, in the warning tone, only from a server that judges it (design 29 D13).
@@ -491,7 +492,10 @@ const shortestIntervalSec = computed(() => {
   return list.length ? Math.min(...list) : undefined;
 });
 
+/** Counts the page's refreshes, so the Network view rereads its own chains read with the rest. */
+const refreshTick = ref(0);
 function refreshAll(): void {
+  refreshTick.value += 1;
   if (canReadMonitors.value) {
     void monitorsQuery.refresh();
     void incidentsQuery.refresh();
@@ -560,6 +564,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :failure-of="failureOf"
         :no-sources="noSources"
         :agent-of="agentOf"
+        :refresh-tick="refreshTick"
         @path-set="openPathSet"
         @create-check="openCreate()"
         @edit-check="openEdit"

@@ -813,12 +813,13 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
           >
             <span :class="cn('size-2 shrink-0 rounded-full', freshnessDot(row.node))" aria-hidden="true" />
             <span class="w-5 shrink-0 font-mono text-[11px] text-muted-foreground">{{ row.node.country ?? '' }}</span>
-            <span class="min-w-0 flex-1 truncate" :title="row.node.name">{{ row.node.name }}</span>
+            <span class="min-w-16 flex-1 truncate" :title="row.node.name">{{ row.node.name }}</span>
             <span v-if="quietAge(row.node)" class="shrink-0 font-mono text-[11px] text-destructive tabular">{{ quietAge(row.node) }}</span>
             <span v-if="row.node.incidents" class="shrink-0 rounded-sm bg-destructive/12 px-1 font-mono text-[10px] font-semibold text-destructive tabular" aria-hidden="true">{{ row.node.incidents }}</span>
             <span v-if="row.node.relay" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.relay') }}</span>
             <span v-if="row.node.exit" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.exit') }}</span>
-            <span v-if="rowValue(row.node)" class="flex min-w-0 shrink items-center gap-1.5 font-mono text-xs tabular">
+            <!-- At most half the row, so a long unknown reason never pushes the node's name out. -->
+            <span v-if="rowValue(row.node)" class="flex min-w-0 max-w-[50%] shrink items-center gap-1.5 font-mono text-xs tabular">
               <span v-if="rowValue(row.node)!.loss" class="text-[11px] text-muted-foreground">{{ rowValue(row.node)!.loss }}</span>
               <span :class="cn('truncate', rowValue(row.node)!.tone)" :title="rowValue(row.node)!.text">{{ rowValue(row.node)!.text }}</span>
               <!-- One mark per drawn source, in the picker's order, so overlapping fans stay readable. -->

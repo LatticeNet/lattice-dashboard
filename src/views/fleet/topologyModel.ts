@@ -137,7 +137,7 @@ export interface TopoEdge {
   /** The path the edge opens: the one that speaks for it, or under a query the first that matches. */
   pathKey?: string;
   chain?: { status: string; sourceLine: string; targetLine?: string; error?: string };
-  /** Kept by the page's query; true for every edge without one, and for chains, which the query does not read. */
+  /** Kept by the page's query; true for every edge without one. The query reads paths, so under one a chain is never kept. */
   matched: boolean;
 }
 
@@ -152,6 +152,8 @@ export interface TopoAddress {
   checks: string[];
   /** Its paths, drawn or not, by state. */
   counts: PathCounts;
+  /** Why its first unknown path is unknown, for a terminal nothing measures. */
+  reason?: string;
   matched: boolean;
 }
 
@@ -512,7 +514,8 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         targetLine: row.current?.target_line_uuid,
         error: row.last_error || row.attempt?.error || undefined,
       },
-      matched: true,
+      // The query reads paths only: under one, a chain is part of the rest and fades.
+      matched: !matching,
     });
     counts.chains += 1;
     if (state === "failed" || state === "drifted") counts.chainsBroken += 1;
@@ -528,6 +531,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
       methods: [...entry.methods].sort(),
       checks: [...entry.checks].sort((a, b) => a.localeCompare(b)),
       counts: countPaths(entry.paths),
+      reason: entry.paths.find((p) => displayState(p) === "unknown")?.reason,
       matched: !matching || matchedEnds.has(id),
     }))
     .sort((a, b) => Number(b.counts.down > 0) - Number(a.counts.down > 0) || a.address.localeCompare(b.address) || a.id.localeCompare(b.id));

@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button";
 import PathDetail from "./PathDetail.vue";
 import { buildSourcePause, canEditCheck, sourcePaused } from "./checksModel";
 import { draftFromConfig, draftToConfig, formatMs, pairEnabledIn, setPairEnabled } from "./latencyModel";
-import { decodePathKey, displayState, type PathItem } from "./pathsModel";
+import { decodePathKey, displayState, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 import { pairOrder, pathEnd } from "./topologyModel";
 import { verdictFor } from "./triangulationModel";
@@ -67,7 +67,7 @@ const openAddress = computed(() => decodePathKey(props.sheet.openId.value));
 const openPath = computed(() => (props.sheet.openId.value ? matrix.value?.paths.find((p) => p.key === props.sheet.openId.value) : undefined));
 const openTitle = computed(() => {
   const p = openPath.value;
-  if (p) return t("fleet.monitoring.paths.sheet.title", { source: p.sourceName, target: p.targetName });
+  if (p) return t("fleet.monitoring.paths.sheet.title", { source: p.sourceName, target: targetLabel(p) });
   return props.sheet.openId.value ?? "";
 });
 const sheetState = computed(() => {

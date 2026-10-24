@@ -398,7 +398,8 @@ test("the row summary's words exist in both locales, and unknown says why", () =
     ] as const) {
       const v = rowSummaryValue(t, summary);
       assert.ok(!v.text.startsWith("fleet."), `${v.text} resolves`);
-      assert.match(v.text, new RegExp(String(summary.of)));
+      // Every source unknown or paused: the marks say "all", the words say why.
+      if (summary.n !== summary.of || summary.state === "down" || summary.state === "degraded" || summary.state === "up") assert.match(v.text, new RegExp(String(summary.of)));
       if (summary.state === "unknown") assert.ok(v.text.includes(t(`fleet.monitoring.paths.reasonShort.${summary.reason}`)), `${v.text} carries its reason`);
     }
   }
@@ -407,7 +408,7 @@ test("the row summary's words exist in both locales, and unknown says why", () =
   assert.deepEqual(rowSummaryValue(en, { state: "down", n: 4, of: 4 }), { text: "down from all 4", tone: "text-destructive" });
   assert.deepEqual(rowSummaryValue(en, { state: "degraded", n: 3, of: 3 }), { text: "degraded from all 3", tone: "text-warning-text" });
   assert.deepEqual(rowSummaryValue(en, { state: "up", n: 4, of: 4 }), { text: "up from all 4", tone: "text-foreground" });
-  assert.deepEqual(rowSummaryValue(en, { state: "unknown", n: 2, of: 2, reason: "agent_offline" }), { text: "unknown from all 2: agent offline", tone: "text-muted-foreground" });
+  assert.deepEqual(rowSummaryValue(en, { state: "unknown", n: 2, of: 2, reason: "agent_offline" }), { text: "unknown: agent offline", tone: "text-muted-foreground" });
 });
 
 test("an edge says up, degraded, down, paused or unknown, and unknown always carries its reason", () => {
@@ -492,7 +493,9 @@ test("chains run relay to exit; a planned chain with no exit yet is counted, not
   assert.equal(m.counts.chainsUnplaced, 1);
   assert.equal(m.nodes.get("hk")!.relay && m.nodes.get("hk")!.exit, true, "a middle hop is both");
   assert.equal(edgeStyle(chains[0]!).color, "--primary");
-  assert.ok(chains.every((e) => e.matched), "the query does not read chains");
+  assert.ok(chains.every((e) => e.matched), "without a query every chain keeps full strength");
+  const filtered = buildTopology(input({ matching: new Set(["sh~hk"]) }));
+  assert.ok(filtered.edges.filter((e) => e.kind === "chain").every((e) => !e.matched), "the query reads paths, so a chain fades under one");
 });
 
 test("chain status words", () => {

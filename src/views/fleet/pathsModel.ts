@@ -646,6 +646,16 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
   };
 }
 
+/**
+ * What a path is said to reach: its target node when it has one (a check to
+ * a node is a path between two nodes, design 32 D1), else its row's name (a
+ * check to an address is named by the check). The query's `target:` keeps
+ * reading the row's name, so the attention list's links find what they did.
+ */
+export function targetLabel(path: Pick<PathItem, "targetNodeName" | "targetName">): string {
+  return path.targetNodeName || path.targetName;
+}
+
 /** Down first, then degraded, then unknown, then up (design 29 D13). */
 export function stateRank(state: PathState): number {
   return state === "down" ? 0 : state === "degraded" ? 1 : state === "unknown" ? 2 : 3;

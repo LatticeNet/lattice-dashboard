@@ -9,8 +9,8 @@
  *
  * Each row carries what the matrix response has for the path: the state in
  * words (unknown with its reason), p50, p95, jitter, loss, availability, the
- * last run, the method and the check. A figure column no path has (a server
- * from before design 29 keeps no jitter) is not shown. Below 768 px the rows
+ * last run, the method and the check. A figure column no path of the matrix
+ * has (a server from before design 29 keeps no jitter) is not shown. Below 768 px the rows
  * become a list grouped by target, one line per source, the figures in a
  * second line.
  */
@@ -26,12 +26,14 @@ import DataTable, { type DataTableColumn } from "@/components/common/DataTable.v
 
 import { formatLoss, formatMs } from "./latencyModel";
 import { LIST_GROUP_ORDER, formatAvailability, listGroup, regionGroups, type ListGroup } from "./networkModel";
-import { LOSS_TEXT, availability, displayState, lossTone, type PathItem } from "./pathsModel";
+import { LOSS_TEXT, availability, displayState, lossTone, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
   /** The paths the query keeps, in the list's order (worst first, or the query's sort). */
   rows: PathItem[];
+  /** Every path of the matrix: a figure column shows when any of them has the figure, so typing a query never adds or drops a column. */
+  all: readonly PathItem[];
   sheet: RouteOpen;
   /** The query carries `sort:`; the table keeps the order given. */
   querySorted: boolean;
@@ -49,10 +51,10 @@ const wide = useMediaQuery("(min-width: 768px)");
 
 /** Measured figures only when the path measures now: an unknown or paused path never leads with a number its window still holds. */
 const measured = (p: PathItem) => p.state === "up" || p.state === "degraded" || p.state === "down";
-const has = (pick: (p: PathItem) => number | undefined) => props.rows.some((p) => pick(p) !== undefined);
+const has = (pick: (p: PathItem) => number | undefined) => props.all.some((p) => pick(p) !== undefined);
 
 const columns = computed<DataTableColumn<PathItem>[]>(() => [
-  { key: "target", label: t("fleet.monitoring.network.list.target"), sortable: true, value: (p) => p.targetName },
+  { key: "target", label: t("fleet.monitoring.network.list.target"), sortable: true, value: (p) => targetLabel(p) },
   { key: "source", label: t("fleet.monitoring.network.list.source"), sortable: true, value: (p) => p.sourceName },
   { key: "state", label: t("fleet.monitoring.network.list.state"), sortable: true, value: (p) => STATE_ORDER[displayState(p)] },
   { key: "p50", label: "p50", align: "right", sortable: true, value: (p) => (measured(p) ? p.p50Ms : undefined) },
@@ -61,7 +63,6 @@ const columns = computed<DataTableColumn<PathItem>[]>(() => [
   { key: "loss", label: t("fleet.monitoring.paths.stats.loss"), align: "right", sortable: true, value: (p) => (measured(p) ? p.loss : undefined) },
   ...(has(availability) ? [{ key: "availability", label: t("fleet.monitoring.paths.stats.availability"), align: "right" as const, sortable: true, value: (p: PathItem) => availability(p) }] : []),
   { key: "last", label: t("fleet.monitoring.network.list.last"), align: "right", sortable: true, value: (p) => p.lastAt },
-  { key: "check", label: t("fleet.monitoring.network.list.check"), sortable: true, value: (p) => `${p.method} ${checkLabel(p)}` },
 ]);
 
 /** Worst first when sorted ascending, as the list's own order is. */
@@ -150,15 +151,20 @@ const groupCounts = computed(() => {
       <template #group="{ group }">
         <span class="font-medium text-foreground">{{ groupLabel(group.key as ListGroup) }}</span>
         <span class="font-mono tabular text-muted-foreground">{{ group.rows.length }}</span>
-        <span v-if="groupCounts.get(group.key)?.down" class="font-mono text-destructive tabular">{{ $t('fleet.monitoring.paths.proof.down', { n: groupCounts.get(group.key)!.down }) }}</span>
-        <span v-if="groupCounts.get(group.key)?.degraded" class="font-mono text-warning-text tabular">{{ $t('fleet.monitoring.paths.proof.degraded', { n: groupCounts.get(group.key)!.degraded }) }}</span>
+        <template v-if="groupCounts.get(group.key)?.down"><span class="text-muted-foreground" aria-hidden="true">·</span><span class="font-mono text-destructive tabular">{{ $t('fleet.monitoring.paths.proof.down', { n: groupCounts.get(group.key)!.down }) }}</span></template>
+        <template v-if="groupCounts.get(group.key)?.degraded"><span class="text-muted-foreground" aria-hidden="true">·</span><span class="font-mono text-warning-text tabular">{{ $t('fleet.monitoring.paths.proof.degraded', { n: groupCounts.get(group.key)!.degraded }) }}</span></template>
       </template>
       <template #cell-target="{ row }">
-        <span class="block max-w-56 truncate font-medium" :title="row.targetName">{{ row.targetName }}</span>
+        <span class="block max-w-56 truncate font-medium" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
         <span class="block max-w-56 truncate font-mono text-xs text-muted-foreground" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
       </template>
+      <!-- The source, and what it measures with: the method and the check, the path set's or an operator's. -->
       <template #cell-source="{ row }">
         <span class="block max-w-44 truncate" :title="row.sourceName">{{ row.sourceName }}</span>
+        <span class="flex max-w-44 min-w-0 items-center gap-1.5 text-xs text-muted-foreground" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
+          <span class="shrink-0 font-mono text-[10px] uppercase">{{ row.method }}</span>
+          <span class="truncate">{{ checkLabel(row) }}</span>
+        </span>
       </template>
       <template #cell-state="{ row }">
         <span class="flex min-w-0 items-center gap-2" :title="stateWords(row).title || undefined" :data-state="displayState(row)">
@@ -168,28 +174,22 @@ const groupCounts = computed(() => {
         <span v-if="stateWords(row).why" :class="cn('block max-w-48 truncate ps-4 text-xs', displayState(row) === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')" :title="stateWords(row).title || undefined">{{ stateWords(row).why }}</span>
       </template>
       <template #cell-p50="{ row }">
-        <span :class="cn('font-mono tabular', STATE_INK[displayState(row)])">{{ measured(row) ? formatMs(row.p50Ms) : '' }}</span>
+        <span :class="cn('whitespace-nowrap font-mono tabular', STATE_INK[displayState(row)])">{{ measured(row) ? formatMs(row.p50Ms) : '' }}</span>
       </template>
       <template #cell-p95="{ row }">
-        <span class="font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.p95Ms) : '' }}</span>
+        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.p95Ms) : '' }}</span>
       </template>
       <template #cell-jitter="{ row }">
-        <span class="font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.jitterMs) : '' }}</span>
+        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.jitterMs) : '' }}</span>
       </template>
       <template #cell-loss="{ row }">
-        <span :class="cn('font-mono tabular', lossClass(row))">{{ measured(row) && row.loss !== undefined && row.samples > 0 ? formatLoss(row.loss) : '' }}</span>
+        <span :class="cn('whitespace-nowrap font-mono tabular', lossClass(row))">{{ measured(row) && row.loss !== undefined && row.samples > 0 ? formatLoss(row.loss) : '' }}</span>
       </template>
       <template #cell-availability="{ row }">
-        <span class="font-mono text-muted-foreground tabular">{{ formatAvailability(availability(row)) }}</span>
+        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ formatAvailability(availability(row)) }}</span>
       </template>
       <template #cell-last="{ row }">
         <span class="whitespace-nowrap font-mono text-xs text-muted-foreground tabular" :title="row.lastAt ? new Date(row.lastAt).toISOString() : undefined">{{ lastRun(row) }}</span>
-      </template>
-      <template #cell-check="{ row }">
-        <span class="flex min-w-0 items-center gap-1.5">
-          <span class="shrink-0 font-mono text-[10px] uppercase text-muted-foreground">{{ row.method }}</span>
-          <span class="max-w-44 truncate" :title="checkLabel(row)">{{ checkLabel(row) }}</span>
-        </span>
       </template>
     </DataTable>
 
@@ -224,7 +224,7 @@ const groupCounts = computed(() => {
                     <span v-if="displayState(p) !== 'up'" :class="cn('block text-xs', STATE_INK[displayState(p)])">
                       {{ stateWords(p).why ? `${stateWords(p).word}: ${stateWords(p).why}` : stateWords(p).title ? `${stateWords(p).word}: ${stateWords(p).title}` : stateWords(p).word }}
                     </span>
-                    <span v-if="figures(p)" class="block truncate font-mono text-[11px] text-muted-foreground tabular">{{ figures(p) }}</span>
+                    <span v-if="figures(p)" class="block break-words font-mono text-[11px] text-muted-foreground tabular">{{ figures(p) }}</span>
                   </span>
                   <span class="text-end">
                     <span :class="cn('block font-mono font-medium tabular', STATE_INK[displayState(p)])">{{ measured(p) ? formatMs(p.p50Ms) : '' }}</span>

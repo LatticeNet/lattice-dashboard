@@ -75,8 +75,10 @@ export function edgeValue(t: Translate, edge: TopoEdge): EdgeValue {
 /**
  * A target row's value with several sources drawn: "down from 1 of 4",
  * "degraded from 2 of 4", "up from 3 of 4", and "down from all 4" (likewise
- * every state) when every drawn source reads it, in the speaking state's
- * ink. Unknown says why, from the path that speaks for the row.
+ * degraded and up) when every drawn source reads it, in the speaking state's
+ * ink. Unknown says why, from the path that speaks for the row; when every
+ * source reads unknown or paused the marks already say "all", so the words
+ * spend the row's width on the reason ("unknown: nothing to dial").
  */
 export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
   const { state, n, of } = summary;
@@ -90,10 +92,13 @@ export function rowSummaryValue(t: Translate, summary: RowSummary): EdgeValue {
  * wherever a path state is shown (D13), so paths that are only unknown or
  * paused beside the passing ones keep the muted ink.
  */
-export function addressLineValue(t: Translate, address: Pick<TopoAddress, "counts">): EdgeValue {
+export function addressLineValue(t: Translate, address: Pick<TopoAddress, "counts" | "reason">): EdgeValue {
   const c = address.counts;
   if (c.down > 0) return { text: t("fleet.monitoring.topology.address.down", { n: c.down, total: c.paths }), tone: "text-destructive" };
   if (c.degraded > 0) return { text: t("fleet.monitoring.topology.address.degraded", { n: c.degraded, total: c.paths }), tone: "text-warning-text" };
+  // Nothing measured: say so, and why, rather than "0 of 1 up".
+  if (c.up === 0 && c.unknown > 0) return { text: t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, address.reason) }), tone: "text-muted-foreground" };
+  if (c.up === 0 && c.paused > 0) return { text: t("fleet.monitoring.paths.state.paused"), tone: "text-muted-foreground" };
   return { text: t("fleet.monitoring.topology.address.up", { up: c.up, total: c.paths }), tone: "text-muted-foreground" };
 }
 

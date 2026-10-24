@@ -24,7 +24,7 @@
  * ?as= picks the mode: absent, the graph with a mouse from 768 px up and the
  * list on a phone or a touch screen; the other is one tap away.
  */
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMediaQuery, useNow } from "@vueuse/core";
 import { Network, Route as RouteIcon, Settings2 } from "lucide-vue-next";
@@ -93,6 +93,8 @@ const props = defineProps<{
   noSources: boolean;
   /** A source's agent version, for a path whose agent is too old. */
   agentOf?: (source: string) => string | undefined;
+  /** The page's refreshes: each one rereads the chains too. */
+  refreshTick?: number;
 }>();
 
 const emit = defineEmits<{
@@ -121,6 +123,13 @@ const planQuery = props.data.planQuery;
 const chainsQuery = useAsyncData<LineChainView[]>(
   (signal) => api.proxy.lineChains({ signal }).then((r) => unwrap(r as { chains: LineChainView[] }, "chains")),
   { pollInterval: canReadChains.value ? 60000 : 0, immediate: canReadChains.value },
+);
+
+watch(
+  () => props.refreshTick,
+  () => {
+    if (canReadChains.value) void chainsQuery.refresh();
+  },
 );
 
 /* ---- The mode ---- */
@@ -278,9 +287,15 @@ function openPath(key: string, el: HTMLElement | null): void {
 /** The node sheet's lens: the node's paths, outbound then inbound, worst first. */
 const lens = computed(() => (peek.openId.value ? nodePaths(matrix.value, peek.openId.value) : undefined));
 const lensName = (id: string) => nodes.value?.find((n) => n.id === id)?.name || model.value.nodes.get(id)?.name || id;
-/** The rest of one side in the list: the query that finds them, the node sheet closed. */
-function showInList(side: "reachedBy" | "reaches", id: string): void {
-  props.owned.replace({ ...props.owned.query(), peek: undefined, path: undefined, as: formatPresentation("list", screen.value) === "auto" ? undefined : "list", "paths.q": monitoringQuery(side, lensName(id)) });
+/**
+ * A node's outbound paths in the list, the node sheet closed: `source:=` finds
+ * exactly them. Inbound paths are all listed in the lens (one per source and
+ * check, so few), since `target:` reads a check's own name and would miss a
+ * check to the node named otherwise.
+ */
+function showOutboundInList(id: string): void {
+  const as = formatPresentation("list", screen.value);
+  props.owned.replace({ ...props.owned.query(), peek: undefined, path: undefined, as: as === "auto" ? undefined : as, "paths.q": monitoringQuery("reaches", lensName(id)) });
 }
 
 function openTerminal(node: Node): void {
@@ -382,6 +397,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
           v-else-if="mode === 'list'"
           ref="listRef"
           :rows="[...listQuery.rows.value]"
+          :all="allPaths"
           :sheet="pathSheet"
           :query-sorted="listQuery.sorted.value"
           :failure-of="failureOf"
@@ -496,11 +512,11 @@ const STEP = "text-xs font-medium text-muted-foreground";
               <h3 :class="STEP">
                 {{ $t(`fleet.monitoring.network.lens.${side}`) }} <span class="font-normal tabular">{{ lens[side].length }}</span>
               </h3>
-              <NodePathList v-if="lens[side].length" :paths="lens[side]" :side="side" @open="(p: PathItem, el: HTMLElement) => openPath(p.key, el)" />
+              <NodePathList v-if="lens[side].length" :paths="lens[side]" :side="side" :shown="side === 'reaches' ? NODE_PATHS_SHOWN : lens[side].length" @open="(p: PathItem, el: HTMLElement) => openPath(p.key, el)" />
               <p v-else class="text-xs text-muted-foreground">{{ side === 'reaches' ? $t('fleet.monitoring.nodePaths.noneReaches') : $t('fleet.monitoring.nodePaths.noneReachedBy') }}</p>
-              <p v-if="lens[side].length > NODE_PATHS_SHOWN" class="text-xs text-muted-foreground">
+              <p v-if="side === 'reaches' && lens[side].length > NODE_PATHS_SHOWN" class="text-xs text-muted-foreground">
                 {{ $t('fleet.monitoring.nodePaths.more', { n: lens[side].length - NODE_PATHS_SHOWN }) }}
-                <button type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" @click="showInList(side, node.id)">{{ $t('fleet.monitoring.network.lens.showAll') }}</button>
+                <button type="button" class="font-medium text-foreground underline underline-offset-2 pointer-coarse:min-h-11" @click="showOutboundInList(node.id)">{{ $t('fleet.monitoring.network.lens.showAll') }}</button>
               </p>
             </div>
           </template>
