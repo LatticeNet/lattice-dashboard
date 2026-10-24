@@ -6,13 +6,25 @@
  * Pure TS, so `node --test` covers it directly.
  */
 import type {
+  NodeNetworkInbound,
   NodeNetworkOwner,
   NodeNetworkOutbound,
   NodeNetworkPolicy,
   NodeNetworkPort,
+  NodeNetworkSecurityGroup,
   NodeNetworkTable,
   NodeNetworkView,
 } from "@/lib/api/types";
+
+/**
+ * The security groups that compile into the node's inbound rules: its own,
+ * then those it takes through node groups (design 32 S4). A derived group on
+ * a node NetGuard does not manage is inactive and compiles nothing, so it is
+ * left out; the section still lists it, marked.
+ */
+export function compiledSecurityGroups(inbound: NodeNetworkInbound): NodeNetworkSecurityGroup[] {
+  return [...(inbound.security_groups ?? []), ...(inbound.derived_security_groups ?? []).filter((group) => group.state !== "inactive")];
+}
 
 /** The policies that put rules on the node now, in the order they merge. */
 export function applyingPolicies(outbound: NodeNetworkOutbound): NodeNetworkPolicy[] {

@@ -37,7 +37,7 @@ export default {
         none: {
           check: "No check names this group.",
           outbound_policy: "No outbound policy names this group.",
-          security_group_binding: "None. Security groups bind to single nodes until node-group bindings ship.",
+          security_group_binding: "No security group is bound to this group, and no guard rule names it as a remote.",
           mesh_rule: "None. Every mesh-ready node is in the one WireGuard mesh.",
         },
         noneGeneric: "None.",
@@ -2930,6 +2930,8 @@ export default {
         securityGroups: "Security groups: ",
         noSecurityGroups: "No security group bound",
         viaGroup: "via node group {group}",
+        viaUnnamed: "through a node group",
+        groupInactive: "inactive: node not managed",
         groupRules: "no rule | {n} rule | {n} rules",
         // Leading space: the detail follows the group name; Chinese opens on a full-width parenthesis.
         groupDetail: " ({rules})",

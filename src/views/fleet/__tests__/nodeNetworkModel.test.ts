@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { NodeNetworkTable, NodeNetworkView } from "../../../lib/api/types.ts";
 import { returnRefreshDue } from "../../../lib/referenceChanges.ts";
-import { activeOwners, applyingPolicies, attentionTables, compareRulesets, guardAttention, orderedOwners, portLabel, refusedSections, tableAttention, tableInSync } from "../nodeNetworkModel.ts";
+import { activeOwners, applyingPolicies, attentionTables, compareRulesets, compiledSecurityGroups, guardAttention, orderedOwners, portLabel, refusedSections, tableAttention, tableInSync } from "../nodeNetworkModel.ts";
 
 const table = (over: Partial<NodeNetworkTable>): NodeNetworkTable => ({ state: "ok", table: "inet lattice_guard", ...over });
 
@@ -130,4 +130,16 @@ test("one return to the page reads once although focus and visibility both fire"
   assert.equal(returnRefreshDue(undefined, 1_000), true);
   assert.equal(returnRefreshDue(1_000, 1_400), false);
   assert.equal(returnRefreshDue(1_000, 2_000), true);
+});
+
+test("the inbound summary counts own groups, then active derived ones, and leaves an inactive derived group out", () => {
+  const groups = compiledSecurityGroups({
+    state: "ok",
+    security_groups: [{ id: "sg-ssh", name: "ssh", rules: 1 }],
+    derived_security_groups: [
+      { id: "sg-web", name: "web", rules: 2, via: { id: "grp_edge", name: "edge" } },
+      { id: "sg-db", name: "db", rules: 1, state: "inactive", reason: "group binding inactive: node not managed" },
+    ],
+  });
+  assert.deepEqual(groups.map((g) => g.id), ["sg-ssh", "sg-web"]);
 });
