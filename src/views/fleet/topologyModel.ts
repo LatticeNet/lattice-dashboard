@@ -213,6 +213,8 @@ export interface TopoSourceChoice {
   node: TopoNode;
   reach: SourceReach;
   drawn: boolean;
+  /** Drawn only because the query matches one of its paths: not the picker's to untick, and never written to ?topo.sources=. */
+  forced: boolean;
 }
 
 export interface TopologyModel {
@@ -276,16 +278,18 @@ export function formatDrawnSources(ids: readonly string[] | undefined, defaults:
  * The path set's sources in its order, then every other node the matrix
  * shows running a path (an operator check's sources), in the matrix's
  * order; from the matrix alone when the plan is not read. A source the plan
- * notes (deleted or disabled) runs nothing and is left out, so it never
- * takes one of the default four places. The control plane is never a choice:
- * its box is always drawn.
+ * notes (deleted or disabled) comes last, so it never takes one of the
+ * default four places, and is still offered while the matrix holds its
+ * paths: every path the page counts can be drawn. The control plane is never
+ * a choice: its box is always drawn.
  */
 export function sourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_notes"> | undefined, matrix: Pick<PathsMatrix, "sources" | "paths"> | undefined): string[] {
   const noted = new Set(Object.keys(plan?.source_notes ?? {}));
-  const running = new Set((matrix?.paths ?? []).filter((p) => p.source && !noted.has(p.source)).map((p) => p.source));
+  const running = new Set((matrix?.paths ?? []).filter((p) => p.source).map((p) => p.source));
+  const candidates = [...(plan?.config.sources ?? []), ...(matrix?.sources ?? []).map((c) => c.nodeId)].filter((id) => running.has(id));
   const out: string[] = [];
-  for (const id of plan?.config.sources ?? []) if (running.has(id) && !out.includes(id)) out.push(id);
-  for (const column of matrix?.sources ?? []) if (running.has(column.nodeId) && !out.includes(column.nodeId)) out.push(column.nodeId);
+  for (const id of candidates) if (!noted.has(id) && !out.includes(id)) out.push(id);
+  for (const id of candidates) if (noted.has(id) && !out.includes(id)) out.push(id);
   return out;
 }
 
@@ -296,9 +300,14 @@ export function sourceOrder(plan: Pick<LatencyProbePlan, "config" | "source_note
  * picker.
  */
 export function drawnSources(order: readonly string[], chosen: readonly string[] | undefined, withMatches: ReadonlySet<string> = new Set()): string[] {
+  const base = pickedSources(order, chosen);
+  return order.filter((id) => base.includes(id) || withMatches.has(id));
+}
+
+/** The sources the picker draws, before the query adds any: its choice that still runs a path, else the first four. */
+export function pickedSources(order: readonly string[], chosen: readonly string[] | undefined): string[] {
   const picked = chosen ? order.filter((id) => chosen.includes(id)) : [];
-  const base = new Set(picked.length ? picked : order.slice(0, DEFAULT_DRAWN_SOURCES));
-  return order.filter((id) => base.has(id) || withMatches.has(id));
+  return picked.length ? picked : order.slice(0, DEFAULT_DRAWN_SOURCES);
 }
 
 /** A chain row's status in the four words the drawing uses. */
@@ -412,6 +421,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   const order = sourceOrder(plan, matrix);
   const withMatches = new Set(matching ? (matrix?.paths ?? []).filter((p) => p.source && matching.has(p.key)).map((p) => p.source) : []);
   const drawn = drawnSources(order, input.drawnSources, withMatches);
+  const picked = new Set(pickedSources(order, input.drawnSources));
   const reachOf = new Map(matrix ? reachBySource(matrix).map((r) => [r.source, r]) : []);
   const sourceName = new Map((matrix?.sources ?? []).map((s) => [s.nodeId, s.name]));
   const sourceChoices: TopoSourceChoice[] = order.map((id) => {
@@ -419,7 +429,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     node.source = true;
     if (node.name === node.id && sourceName.get(id)) node.name = sourceName.get(id)!;
     const reach = reachOf.get(id) ?? { source: id, name: node.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
-    return { node, reach, drawn: drawn.includes(id) };
+    return { node, reach, drawn: drawn.includes(id), forced: drawn.includes(id) && !picked.has(id) };
   });
   if (showPaths) for (const id of drawn) sources.push(nodes.get(id)!);
   const addresses = new Map<string, { address: string; paths: PathItem[]; methods: Set<string>; checks: Set<string> }>();

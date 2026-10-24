@@ -403,6 +403,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
           :failure-of="failureOf"
           :stale="listQuery.staleRows.value"
           @drop-query-sort="queryText = withoutSorts(queryText)"
+          @open="openPath"
         />
 
         <template v-else>

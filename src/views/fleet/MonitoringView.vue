@@ -393,27 +393,29 @@ const retentionOpen = ref(false);
  * loop). The check or path sheet it was opened from closes first, after its
  * exit, and comes back when the editor closes without saving.
  */
-let returnTo: { open?: string; path?: string } | null = null;
+let returnTo: { open?: string; path?: string; peek?: string } | null = null;
 const SHEET_EXIT_MS = 220;
 
 function fromSheet(then: () => void): void {
   const query = owned.query();
   const open = typeof query.open === "string" ? query.open : undefined;
   const path = typeof query.path === "string" ? query.path : undefined;
-  if (!open && !path) {
+  // The Network view's node sheet (?peek=) is one of them: "New check" sits in that view's header.
+  const peek = typeof query.peek === "string" ? query.peek : undefined;
+  if (!open && !path && !peek) {
     returnTo = null;
     then();
     return;
   }
-  returnTo = { open, path };
-  owned.replace({ ...query, open: undefined, path: undefined });
+  returnTo = { open, path, peek };
+  owned.replace({ ...query, open: undefined, path: undefined, peek: undefined });
   window.setTimeout(then, SHEET_EXIT_MS);
 }
 
 function backToSheet(): void {
   const back = returnTo;
   returnTo = null;
-  if (back) window.setTimeout(() => owned.replace({ ...owned.query(), open: back.open, path: back.path }), SHEET_EXIT_MS);
+  if (back) window.setTimeout(() => owned.replace({ ...owned.query(), open: back.open, path: back.path, peek: back.peek }), SHEET_EXIT_MS);
 }
 
 function openCreate(type?: MonitorType): void {

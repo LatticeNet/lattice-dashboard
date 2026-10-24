@@ -332,6 +332,19 @@ test("the picker's choice draws those sources in the path set's order; one that 
   assert.deepEqual(sourceOrder(undefined, matrixOf(PATHS)), ["sh"], "without the plan, the matrix's sources");
 });
 
+test("a source the plan notes as gone comes last but can still be drawn, so every path the page counts can be", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "old", name: "retired" }, { node_id: "bj", name: "cd-bj-iplc" }];
+  const paths = [...PATHS, probe("old", "hk", { state: "unknown", reason: "source_unavailable", samples: 0 }), probe("bj", "hk", { state: "up", p50_ms: 30 })];
+  const p = plan({ config: { ...plan().config, sources: ["old", "sh", "bj"] }, source_notes: { old: "deleted" } } as Partial<LatencyProbePlan>);
+  assert.deepEqual(sourceOrder(p, matrixOf(paths, sources)), ["sh", "bj", "old"]);
+  const m = buildTopology(input({ plan: p, matrix: matrixOf(paths, sources), drawnSources: ["sh"] }));
+  assert.equal(m.counts.undrawn, 2);
+  // "Draw all" draws it: nothing the page counts is out of reach.
+  const every = buildTopology(input({ plan: p, matrix: matrixOf(paths, sources), drawnSources: m.sourceChoices.map((c) => c.node.id) }));
+  assert.equal(every.counts.undrawn, 0);
+  assert.equal(edge(every, "path:old>hk").state, "unknown");
+});
+
 test("a check's own sources are offered after the path set's, so a check from any node can be drawn", () => {
   const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "us1", name: "DMIT-pro-malibu" }];
   const relay = check("us1", "relay", { target_node: "hk", target: "203.0.113.21:443", state: "up", p50_ms: 160 });
@@ -473,6 +486,10 @@ test("a query keeps matching edges and their ends at full strength and fades the
   // The graph and the list count the same: every path the query keeps is on a matching edge.
   const onEdges = m.edges.flatMap((e) => (e.matched ? e.paths!.filter((p) => matching.has(p.key)) : []));
   assert.equal(onEdges.length, matching.size);
+  // The query's sources are drawn but not picked: the picker locks them and never writes them to the address.
+  assert.deepEqual(m.sourceChoices.filter((c) => c.forced).map((c) => c.node.id), ["s5", "s2"]);
+  assert.deepEqual(m.sourceChoices.filter((c) => c.drawn && !c.forced).map((c) => c.node.id), ["s9", "s8", "s7", "s6"]);
+  assert.ok(all.sourceChoices.every((c) => !c.forced));
   // A query that keeps one of a pair's checks opens that one.
   const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "up", p50_ms: 36 });
   const pair = buildTopology(input({ matrix: matrixOf([...PATHS, ping]), matching: new Set(["sh~@ping"]) }));

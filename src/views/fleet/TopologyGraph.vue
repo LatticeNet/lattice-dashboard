@@ -21,7 +21,7 @@
  * The card lives outside the scrolling frame, in a host that does not
  * scroll, so a card near the bottom or the right edge is moved, never cut.
  */
-import { computed, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useResizeObserver } from "@vueuse/core";
 import { ChevronDown, ChevronRight } from "lucide-vue-next";
@@ -234,14 +234,25 @@ function bundleCountry(le: LayoutEdge): { row: Extract<LayoutRow, { type: "count
 /** The state a bundle's members count as healthy, by kind. */
 const HEALTHY = { path: "up", chain: "converged" } as const;
 
-function onEdgeClick(le: LayoutEdge, el: Element | null): void {
+/** A line's keyboard button: what a sheet hands focus back to, however the line was opened. */
+function edgeButton(le: LayoutEdge): HTMLElement | null {
+  return host.value?.querySelector<HTMLElement>(`[data-edge-key="${CSS.escape(le.edge.id)}"]`) ?? null;
+}
+
+async function onEdgeClick(le: LayoutEdge, fromKeyboard = false): Promise<void> {
   const edge = le.edge;
   if (le.bundle.length > 1) {
     const hit = bundleCountry(le);
-    if (hit) toggleCountry(hit.row.country);
+    if (!hit) return;
+    toggleCountry(hit.row.country);
+    // The bundle's line goes away as its country opens: the keyboard lands on the country's row, not on the page.
+    if (fromKeyboard) {
+      await nextTick();
+      host.value?.querySelector<HTMLElement>(`[data-country="${CSS.escape(hit.row.country)}"]`)?.focus();
+    }
     return;
   }
-  if (edge.kind === "path" && edge.pathKey) emit("openPath", edge.pathKey, el as HTMLElement | null);
+  if (edge.kind === "path" && edge.pathKey) emit("openPath", edge.pathKey, edgeButton(le));
   else if (edge.kind === "chain") emit("openNode", edge.from, null);
 }
 
@@ -468,6 +479,9 @@ function edgeLabel(le: LayoutEdge): string {
   return parts.filter(Boolean).join(", ");
 }
 
+/** Every line's label, worked out once per drawing rather than on each render a hover causes. */
+const edgeLabels = computed(() => new Map(layout.value.edges.map((le) => [le.key, edgeLabel(le)])));
+
 function pathList(id: string): Pick<Card, "paths" | "more"> {
   const list = edgesOf(props.model, id).sort((a, b) => a.severity - b.severity);
   const shown = list.slice(0, 8).map((e) => {
@@ -585,7 +599,7 @@ const cardStyle = computed(() => {
 function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
-  onEdgeClick(le, event.currentTarget as Element);
+  void onEdgeClick(le, true);
 }
 </script>
 
@@ -647,7 +661,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
               class="cursor-pointer"
               @pointermove="(e) => onEdgeMove(le, e)"
               @pointerleave="onEdgeLeave(le)"
-              @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+              @click="onEdgeClick(le)"
             />
           </g>
         </g>
@@ -695,13 +709,13 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             role="button"
             tabindex="0"
             class="outline-none"
-            :aria-label="edgeLabel(le)"
+            :aria-label="edgeLabels.get(le.key)"
             :data-edge-key="le.edge.id"
             :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
             @focus="onEdgeFocus(le)"
             @blur="onEdgeBlur(le)"
             @keydown="(e) => onEdgeKey(le, e)"
-            @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+            @click="onEdgeClick(le, true)"
           >
             <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
           </g>
@@ -746,13 +760,13 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
               role="button"
               tabindex="0"
               class="outline-none"
-              :aria-label="edgeLabel(le)"
+              :aria-label="edgeLabels.get(le.key)"
               :data-edge-key="le.edge.id"
               :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
               @focus="onEdgeFocus(le)"
               @blur="onEdgeBlur(le)"
               @keydown="(e) => onEdgeKey(le, e)"
-              @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+              @click="onEdgeClick(le, true)"
             >
               <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
             </g>
@@ -775,6 +789,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             :class="rowDimmed(row) && 'opacity-35'"
             :style="{ left: `${layout.rowsX}px`, top: `${row.y}px`, width: `${layout.rowsW}px`, height: `${row.h}px` }"
             :aria-expanded="row.expanded"
+            :data-country="row.country"
             :aria-label="row.expanded ? $t('fleet.monitoring.topology.country.collapse', { country: row.country }) : $t('fleet.monitoring.topology.country.expand', { country: row.country, n: row.members.length })"
             data-testid="topology-country"
             @pointerenter="(e) => onBoxEnter('country', row.key, e)"
@@ -871,12 +886,12 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             role="button"
             tabindex="0"
             class="outline-none"
-            :aria-label="edgeLabel(le)"
+            :aria-label="edgeLabels.get(le.key)"
             :data-edge-key="le.edge.id"
             @focus="onEdgeFocus(le)"
             @blur="onEdgeBlur(le)"
             @keydown="(e) => onEdgeKey(le, e)"
-            @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+            @click="onEdgeClick(le, true)"
           >
             <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
           </g>

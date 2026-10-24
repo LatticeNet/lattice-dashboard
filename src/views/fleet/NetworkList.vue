@@ -43,7 +43,11 @@ const props = defineProps<{
   stale?: boolean;
 }>();
 
-const emit = defineEmits<{ dropQuerySort: [] }>();
+const emit = defineEmits<{
+  dropQuerySort: [];
+  /** A row opens its path sheet: the view's, which closes the node sheet first, so two sheets never stand side by side. */
+  open: [key: string, el: HTMLElement];
+}>();
 
 const { t } = useI18n();
 const { displayLabel, reasonShort, whyText, groupLabel, methodName, evidenceText } = usePathsCopy();
@@ -141,7 +145,7 @@ const groupCounts = computed(() => {
       :searchable="false"
       :expression-filter="false"
       :show-summary="false"
-      :row-click="(p, el) => sheet.open(p.key, el)"
+      :row-click="(p, el) => emit('open', p.key, el)"
       :active-row-id="sheet.openId.value"
       :group-key="listGroup"
       :group-order="LIST_GROUP_ORDER"
@@ -214,7 +218,7 @@ const groupCounts = computed(() => {
                   :data-state="displayState(p)"
                   :data-path="p.key"
                   :data-row-key="p.key"
-                  @click="(e) => sheet.open(p.key, e.currentTarget as HTMLElement)"
+                  @click="(e) => emit('open', p.key, e.currentTarget as HTMLElement)"
                 >
                   <span class="min-w-0 ps-1">
                     <span class="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
