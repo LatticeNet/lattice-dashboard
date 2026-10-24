@@ -518,6 +518,8 @@ export default {
       removeInboundRule: "Remove inbound rule {rule}",
       ruleLabel: "Rule {index}",
       removeRule: "Remove rule",
+      removeRuleN: "Remove rule {index}",
+      remoteKept: "{kind} (kept as is)",
       action: "Action",
       protocol: "Protocol",
       ports: "Ports",

@@ -1060,17 +1060,20 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           >{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).text }}<span v-if="metricCell(row, shownPercent(row.metrics?.cpu_percent)).age" class="ml-1 text-[10px]">{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).age }}</span></span>
         </template>
         <template #cell-network="{ row }">
-          <span
-            :class="cn('inline-flex items-center gap-x-2 whitespace-nowrap font-mono text-xs tabular', networkCell(row).stale && 'text-muted-foreground')"
-            :title="networkCell(row).title"
-          >
-            <template v-if="networkCell(row).rx">
-              <span class="inline-flex items-center gap-0.5"><ArrowDown class="size-3 shrink-0" :aria-label="$t('fleet.nodes.metric.received')" />{{ networkCell(row).rx }}</span>
-              <span class="inline-flex items-center gap-0.5"><ArrowUp class="size-3 shrink-0" :aria-label="$t('fleet.nodes.metric.sent')" />{{ networkCell(row).tx }}</span>
-              <span v-if="networkCell(row).age" class="text-[10px]">{{ networkCell(row).age }}</span>
-            </template>
-            <template v-else>{{ networkCell(row).text }}</template>
-          </span>
+          <!-- One evaluation per row: the cell reads it in six places. -->
+          <template v-for="cell in [networkCell(row)]" :key="row.id">
+            <span
+              :class="cn('inline-flex items-center gap-x-2 whitespace-nowrap font-mono text-xs tabular', cell.stale && 'text-muted-foreground')"
+              :title="cell.title"
+            >
+              <template v-if="cell.rx">
+                <span class="inline-flex items-center gap-0.5"><ArrowDown class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.received') }}</span>{{ cell.rx }}</span>
+                <span class="inline-flex items-center gap-0.5"><ArrowUp class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.sent') }}</span>{{ cell.tx }}</span>
+                <span v-if="cell.age" class="text-[10px]">{{ cell.age }}</span>
+              </template>
+              <template v-else>{{ cell.text }}</template>
+            </span>
+          </template>
         </template>
         <template #cell-memory="{ row }">
           <span

@@ -511,6 +511,15 @@ interface RuleDraft extends PolicyRuleDraft {
   remoteNodeId: string;
   remoteCidr: string;
   remoteDomain: string;
+  /** The remote as loaded, saved back unchanged for a kind this form does not edit. */
+  remoteLoaded?: NetRule["remote"];
+}
+
+/** The remote kinds the node form edits; any other loaded kind is kept as it was. */
+const EDITABLE_REMOTE_KINDS: readonly NetEndpointKind[] = ["node", "cidr", "domain", "any"];
+
+function editsRemote(kind: NetEndpointKind): boolean {
+  return EDITABLE_REMOTE_KINDS.includes(kind);
 }
 
 function emptyRule(): RuleDraft {
@@ -537,6 +546,7 @@ function ruleToDraft(rule: NetRule): RuleDraft {
     remoteNodeId: rule.remote.node_id ?? "",
     remoteCidr: rule.remote.cidr ?? "",
     remoteDomain: rule.remote.domain ?? "",
+    remoteLoaded: rule.remote,
     comment: rule.comment ?? "",
     disabled: !!rule.disabled,
   };
@@ -659,12 +669,15 @@ function draftToRule(draft: RuleDraft, id: string): NetRule {
     direction: "egress",
     protocol: draft.protocol,
     ports: draftPorts(draft),
-    remote: {
-      kind: draft.remoteKind,
-      ...(draft.remoteKind === "node" ? { node_id: draft.remoteNodeId } : {}),
-      ...(draft.remoteKind === "cidr" ? { cidr: draft.remoteCidr.trim() } : {}),
-      ...(draft.remoteKind === "domain" ? { domain: draft.remoteDomain.trim() } : {}),
-    },
+    remote:
+      !editsRemote(draft.remoteKind) && draft.remoteLoaded
+        ? { ...draft.remoteLoaded }
+        : {
+            kind: draft.remoteKind,
+            ...(draft.remoteKind === "node" ? { node_id: draft.remoteNodeId } : {}),
+            ...(draft.remoteKind === "cidr" ? { cidr: draft.remoteCidr.trim() } : {}),
+            ...(draft.remoteKind === "domain" ? { domain: draft.remoteDomain.trim() } : {}),
+          },
     ...(draft.comment.trim() ? { comment: draft.comment.trim() } : {}),
     ...(draft.disabled ? { disabled: true } : {}),
   };
@@ -1043,6 +1056,9 @@ function closePlan(open: boolean) {
                       <SelectItem value="cidr">cidr</SelectItem>
                       <SelectItem value="domain">domain</SelectItem>
                       <SelectItem value="any">any</SelectItem>
+                      <SelectItem v-if="!editsRemote(form.rules[index]!.remoteKind)" :value="form.rules[index]!.remoteKind" disabled>
+                        {{ $t('networking.policy.remoteKept', { kind: form.rules[index]!.remoteKind }) }}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

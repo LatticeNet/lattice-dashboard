@@ -109,10 +109,16 @@ function errorId(index: number): string {
       {{ emptyText }}
     </p>
 
-    <div v-for="(rule, index) in rules" :key="index" class="space-y-3 rounded-lg border border-border p-3">
+    <div
+      v-for="(rule, index) in rules"
+      :key="index"
+      role="group"
+      :aria-label="$t('networking.policy.ruleLabel', { index: index + 1 })"
+      class="space-y-3 rounded-lg border border-border p-3"
+    >
       <div class="flex items-center justify-between">
         <span class="text-xs font-medium text-muted-foreground">{{ $t("networking.policy.ruleLabel", { index: index + 1 }) }}</span>
-        <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRule')" @click="emit('remove', index)">
+        <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRuleN', { index: index + 1 })" @click="emit('remove', index)">
           <Trash2 class="size-4 text-destructive" />
         </Button>
       </div>
@@ -148,7 +154,7 @@ function errorId(index: number): string {
             :disabled="rule.protocol === 'any'"
             :placeholder="rule.protocol === 'any' ? $t('networking.policy.portsAny') : $t('networking.policy.portsPlaceholder')"
             :aria-invalid="errors[index]?.ports ? 'true' : undefined"
-            :aria-describedby="errors[index] ? errorId(index) : undefined"
+            :aria-describedby="errors[index]?.ports ? errorId(index) : undefined"
           />
         </div>
       </div>

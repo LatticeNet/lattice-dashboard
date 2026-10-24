@@ -7,7 +7,10 @@ test("single ports parse, sort and collapse", () => {
   assert.deepEqual(parsePortList("443, 80,80"), { ok: true, ports: [80, 443] });
   assert.deepEqual(parsePortList(" 22 8080\n53 "), { ok: true, ports: [22, 53, 8080] });
   assert.deepEqual(parsePortList(""), { ok: true, ports: [] });
-  assert.deepEqual(parsePortList(" , "), { ok: true, ports: [] });
+  // A field holding only separators was not left empty, so it is an error
+  // rather than "every port".
+  assert.deepEqual(parsePortList(" , "), { ok: false, reason: "invalid", token: "," });
+  assert.deepEqual(parsePortList(",,"), { ok: false, reason: "invalid", token: ",," });
 });
 
 // The defect design 32 D7 names: the old parser dropped "8000-8010" and saved

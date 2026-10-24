@@ -492,6 +492,8 @@ export default {
       removeInboundRule: "删除入站规则 {rule}",
       ruleLabel: "规则 {index}",
       removeRule: "移除规则",
+      removeRuleN: "移除规则 {index}",
+      remoteKept: "{kind}（保持原样）",
       action: "动作",
       protocol: "协议",
       ports: "端口",
