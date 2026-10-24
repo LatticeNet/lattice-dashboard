@@ -56,9 +56,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 
       <!-- On a phone the sheet covers the screen and this is the only way
            out, so on a coarse pointer it is a visible 44 px box, its glyph
-           where it sat before. -->
+           where it sat before. Below 768 px (the sheet is full screen there)
+           any pointer gets a 44 px invisible pad around the 16 px glyph. -->
       <DialogClose
-        class="ring-offset-background focus-visible:ring-ring touch-target absolute top-4 right-4 inline-flex items-center justify-center rounded-xs opacity-70 pointer-coarse:top-0.5 pointer-coarse:right-0.5 pointer-coarse:size-11 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0"
+        class="ring-offset-background focus-visible:ring-ring touch-target absolute top-4 right-4 inline-flex items-center justify-center rounded-xs opacity-70 pointer-coarse:top-0.5 pointer-coarse:right-0.5 pointer-coarse:size-11 max-md:after:absolute max-md:after:top-1/2 max-md:after:left-1/2 max-md:after:size-11 max-md:after:-translate-x-1/2 max-md:after:-translate-y-1/2 max-md:after:content-[''] transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0"
       >
         <X />
         <span class="sr-only">{{ $t('common.actions.close') }}</span>
