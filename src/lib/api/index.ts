@@ -1,5 +1,6 @@
 import { ApiError, http, type RequestOptions } from "./client";
 import { unwrapApproval, unwrapApprovalCounts } from "./approvalsEnvelope";
+import { afterReferenceChange } from "@/lib/referenceChanges";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type { MetricsQuery, MetricsRange, SystemHealth } from "./systemTypes";
 import type {
@@ -81,6 +82,7 @@ import type {
   PathsResponse,
   NetPolicyGraph,
   NetPolicyMatrix,
+  NodeNetworkView,
   NetPolicyUpsertRequest,
   NetPolicyView,
   Node,
@@ -313,6 +315,13 @@ export const api = {
     /** A node's long-term cpu, memory, disk, load, network and beat gap (node:read on it). */
     history: (node_id: string, range: MetricsRange, opts?: RequestOptions) =>
       http.get<MetricsQuery>("/api/nodes/history", { node_id, range }, opts),
+    /**
+     * Design 32 D4: what applies to the node. Each section is refused whole,
+     * naming its scope, when this session lacks it; rules=true adds the
+     * ruleset text to Show rules. 404 from a server that predates it.
+     */
+    network: (node_id: string, rules = false, opts?: RequestOptions) =>
+      http.get<NodeNetworkView>("/api/nodes/network", rules ? { node_id, rules: 1 } : { node_id }, opts),
     enrollToken: (input: {
       node_id?: string;
       name: string;
@@ -593,14 +602,14 @@ export const api = {
     definitions: {
       list: (opts?: RequestOptions) => http.get<CheckDefinitionList>("/api/monitors/definitions", undefined, opts),
       get: (id: string, opts?: RequestOptions) => http.get<CheckDefinitionView>("/api/monitors/definitions", { id }, opts),
-      create: (input: CheckDefinitionSave) => http.post<CheckDefinitionView>("/api/monitors/definitions", input),
+      create: (input: CheckDefinitionSave) => afterReferenceChange("check", http.post<CheckDefinitionView>("/api/monitors/definitions", input)),
       /** 409 when someone saved since `version` was read. */
-      update: (input: CheckDefinitionSave) => http.post<CheckDefinitionView>("/api/monitors/definitions/update", input),
+      update: (input: CheckDefinitionSave) => afterReferenceChange("check", http.post<CheckDefinitionView>("/api/monitors/definitions/update", input)),
       /** What a save of the same body would write and measure; writes nothing. */
       preview: (input: CheckDefinitionSave, opts?: RequestOptions) => http.post<CheckDefinitionPreview>("/api/monitors/definitions/preview", input, opts),
       /** Deletes the definition and every monitor named, with history; 409 when the list no longer matches. */
       delete: (input: { id: string; version: number; monitor_ids: string[] }) =>
-        http.post<{ ok: boolean; deleted: string[]; runs: number }>("/api/monitors/definitions/delete", input),
+        afterReferenceChange("check", http.post<{ ok: boolean; deleted: string[]; runs: number }>("/api/monitors/definitions/delete", input)),
       /** Deletes paused targets with their history; 409 for one still in the set. */
       forget: (input: { id: string; monitor_ids: string[] }) =>
         http.post<{ ok: boolean; forgotten: string[]; runs: number }>("/api/monitors/definitions/forget", input),
@@ -692,13 +701,13 @@ export const api = {
   netpolicy: {
     list: (opts?: RequestOptions) =>
       http.get<{ policies: NetPolicyView[] }>("/api/netpolicy", undefined, opts),
-    upsert: (input: NetPolicyUpsertRequest) => http.post<NetPolicyView>("/api/netpolicy", input),
+    upsert: (input: NetPolicyUpsertRequest) => afterReferenceChange("outbound_policy", http.post<NetPolicyView>("/api/netpolicy", input)),
     delete: (target_node_id: string) =>
-      http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id }),
+      afterReferenceChange("outbound_policy", http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id })),
     plan: (node_id: string) => http.post<ApprovalView>("/api/netpolicy/plan", { node_id }),
     /** Turn a node's manual policy into an outbound policy targeting it, with one reviewed plan. */
     convert: (target_node_id: string, input: { name?: string; priority?: number } = {}) =>
-      http.post<NetPolicyConvertResult>("/api/netpolicy/convert", { target_node_id, ...input }),
+      afterReferenceChange("outbound_policy", http.post<NetPolicyConvertResult>("/api/netpolicy/convert", { target_node_id, ...input })),
     graph: (opts?: RequestOptions) =>
       http.get<NetPolicyGraph>("/api/netpolicy/graph", undefined, opts),
     matrix: (direction: "egress" | "ingress" = "egress", opts?: RequestOptions) =>
@@ -707,12 +716,12 @@ export const api = {
 
   groups: {
     list: (opts?: RequestOptions) => http.get<GroupsListResponse>("/api/groups", undefined, opts),
-    upsert: (input: GroupUpsertRequest) => http.post<GroupView>("/api/groups", input),
+    upsert: (input: GroupUpsertRequest) => afterReferenceChange("group", http.post<GroupView>("/api/groups", input)),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/groups/delete", { id }),
     reorder: (items: { id: string; parent_id?: string; order: number }[]) =>
       http.post<{ ok: boolean }>("/api/groups/reorder", { items }),
     members: (group_id: string, add: string[], remove: string[]) =>
-      http.post<GroupView>("/api/groups/members", { group_id, add, remove }),
+      afterReferenceChange("group", http.post<GroupView>("/api/groups/members", { group_id, add, remove })),
     preview: (selector: GroupSelector) =>
       http.post<{ node_ids: string[]; count: number }>("/api/groups/preview", selector),
     seed: () => http.post<{ created: number; skipped: number }>("/api/groups/seed", {}),
@@ -724,9 +733,10 @@ export const api = {
   groupPolicy: {
     list: (opts?: RequestOptions) =>
       http.get<{ policies: GroupPolicyView[] }>("/api/group-policies", undefined, opts),
+    /** 409 version_conflict when someone saved since `version` was read. */
     upsert: (input: GroupPolicyUpsertRequest) =>
-      http.post<GroupPolicyView>("/api/group-policies", input),
-    delete: (id: string) => http.post<{ ok: boolean }>("/api/group-policies/delete", { id }),
+      afterReferenceChange("outbound_policy", http.post<GroupPolicyView>("/api/group-policies", input)),
+    delete: (id: string) => afterReferenceChange("outbound_policy", http.post<{ ok: boolean }>("/api/group-policies/delete", { id })),
     plan: () => http.post<GroupPolicyPlanResult>("/api/group-policies/plan", {}),
   },
 

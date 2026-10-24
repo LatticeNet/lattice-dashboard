@@ -3,16 +3,22 @@
  *
  * Production on 2026-09-30: 3 groups, 0 group policies, 0 node policies. That
  * is the default here. The group names and colours are invented (FACTS gives
- * only the count). `?policy=dense` adds an invented working set: two group
+ * only the count). `?policies=dense` adds an invented working set: two group
  * policies, five node policies (one failing, one planned and never applied,
  * one disabled) and the node-to-node edges the server would draw for them.
  * `?groups=0` gives a fleet with no groups, so the matrix has nothing to draw.
+ *
+ * Design 32 S3b, under `?policies=dense`: the cd group's policy excludes two of
+ * its members, and a whole-fleet policy excludes a third, so the matrix
+ * draws row exclusions and the fleet row. The group policies carry versions,
+ * so the editor's conflict can be drawn (see netplatFakeApi's groupPolicy).
  */
-import type { GroupPolicyView, NetPolicyGraph, NetPolicyMatrix, NetPolicyView } from "@/lib/api/index";
+import type { GroupPolicyView, GroupView, NetPolicyGraph, NetPolicyMatrix, NetPolicyView } from "@/lib/api/index";
 
 import { DAY, HOUR, NODES, flags, iso, nodeByName } from "./netplatFixture";
 
-const DENSE = flags.get("policy") === "dense";
+// Not ?policy=: that is the page's own sheet parameter, and a fixture name there opens a "no such policy" sheet.
+const DENSE = flags.get("policies") === "dense";
 const NO_GROUPS = flags.get("groups") === "0";
 
 const GROUPS = NO_GROUPS
@@ -22,6 +28,18 @@ const GROUPS = NO_GROUPS
       { id: "grp_metix", name: "Metix", slug: "metix", color: "#7a5cc4" },
       { id: "grp_home", name: "HOME", slug: "home", color: "#b9772b" },
     ];
+
+/**
+ * The matrix groups as /api/groups lists them under ?policies=dense, members
+ * by tag, so the policy editor's selector names the group a dense policy
+ * targets and resolves it to nodes.
+ */
+export const POLICY_GROUPS: GroupView[] = DENSE
+  ? GROUPS.map((group, order) => {
+      const members = NODES.filter((node) => (node.tags ?? []).includes(group.name)).map((node) => node.id);
+      return { ...group, order: 10 + order, members, resolved_members: members, rollup: { total: members.length, online: members.length, offline: 0, disabled: 0 } } as GroupView;
+    })
+  : [];
 
 export function policyMatrix(direction: "egress" | "ingress"): NetPolicyMatrix {
   return {
@@ -35,13 +53,51 @@ export function policyMatrix(direction: "egress" | "ingress"): NetPolicyMatrix {
         ]
       : [],
     external: DENSE ? [{ from: "grp_cd", rule_count: 2 }] : [],
+    exclusions: DENSE
+      ? [
+          {
+            from: "grp_cd",
+            policy_id: "gp_cd",
+            label: "cd egress",
+            nodes: [
+              { id: nodeByName("[cd]-nas-home").id, name: "[cd]-nas-home" },
+              { id: nodeByName("[cd]-homeserver").id, name: "[cd]-homeserver" },
+            ],
+            hidden: 1,
+          },
+        ]
+      : [],
+    fleet: DENSE
+      ? {
+          cells: [{ from: "", to: "grp_home", action: "allow", protocols: ["udp"], ports: [53], rule_count: 1, mixed: false }],
+          external: 1,
+          exclusions: [{ policy_id: "gp_fleet", label: "fleet dns", nodes: [{ id: nodeByName("[Metix]-Akko-UK").id, name: "[Metix]-Akko-UK" }] }],
+        }
+      : undefined,
   };
 }
 
+const https = [{ id: "https", action: "allow" as const, direction: "egress" as const, protocol: "tcp" as const, ports: [443], remote: { kind: "any" as const } }];
+
 export const GROUP_POLICIES: GroupPolicyView[] = DENSE
   ? ([
-      { id: "gp_home", scope_group_id: "grp_home", scope_group_name: "HOME", enabled: true, priority: 100, rules: [], group_rule_count: 2 },
-      { id: "gp_cd", scope_group_id: "grp_cd", scope_group_name: "cd", enabled: true, priority: 90, rules: [], group_rule_count: 3 },
+      { id: "gp_home", name: "home egress", label: "home egress", scope_group_id: "grp_home", scope_group_name: "HOME", target: { groups: ["grp_home"] }, target_node_ids: [], enabled: true, priority: 100, version: 3, rules: https, group_rule_count: 1, updated_at: iso(-2 * DAY) },
+      {
+        id: "gp_cd",
+        name: "cd egress",
+        label: "cd egress",
+        scope_group_id: "",
+        scope: { groups: ["grp_cd"], exclude: [nodeByName("[cd]-nas-home").id, nodeByName("[cd]-homeserver").id] },
+        target: { groups: ["grp_cd"], exclude: [nodeByName("[cd]-nas-home").id, nodeByName("[cd]-homeserver").id] },
+        target_node_ids: [],
+        enabled: true,
+        priority: 90,
+        version: 5,
+        rules: https,
+        group_rule_count: 1,
+        updated_at: iso(-3 * HOUR),
+      },
+      { id: "gp_fleet", name: "fleet dns", label: "fleet dns", scope_group_id: "", scope: { all: true, exclude: [nodeByName("[Metix]-Akko-UK").id] }, target: { all: true, exclude: [nodeByName("[Metix]-Akko-UK").id] }, target_node_ids: [], enabled: true, priority: 20, version: 2, rules: [{ id: "dns", action: "allow", direction: "egress", protocol: "udp", ports: [53], remote: { kind: "any" } }], group_rule_count: 1, updated_at: iso(-DAY) },
     ] as unknown as GroupPolicyView[])
   : [];
 

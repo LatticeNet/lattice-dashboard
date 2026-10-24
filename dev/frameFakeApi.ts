@@ -23,7 +23,7 @@
  * reality read) the nodes, approvals and sshGuard of dev/fakeApi.ts, and on
  * Policy the nodes of netplat, by the page's path (PAGE_OWNERS). Policy's
  * node policies are in its dense fixture: open
- * /network/policy?policy=dense&view=policies to reach a policy's Plan and
+ * /network/policy?policies=dense&view=policies to reach a policy's Plan and
  * the plan review dialog.
  *
  * NetGuard and WireGuard are sandbox plugins here. Their frame loads
