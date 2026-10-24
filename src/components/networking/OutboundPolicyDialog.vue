@@ -145,11 +145,11 @@ const fieldLabels = computed<Record<string, string>>(() => {
   for (let i = 0; i < count; i++) {
     const rule = t("networking.policy.ruleLabel", { index: i + 1 });
     labels[`rules[${i}]`] = rule;
-    labels[`rules[${i}].action`] = `${rule}, ${t("networking.policy.action")}`;
-    labels[`rules[${i}].protocol`] = `${rule}, ${t("networking.policy.protocol")}`;
-    labels[`rules[${i}].ports`] = `${rule}, ${t("networking.policy.ports")}`;
-    labels[`rules[${i}].remote`] = `${rule}, ${t("networking.policy.remoteKind")}`;
-    labels[`rules[${i}].comment`] = `${rule}, ${t("networking.policy.comment")}`;
+    labels[`rules[${i}].action`] = t("networking.policy.ruleField", { rule, field: t("networking.policy.action") });
+    labels[`rules[${i}].protocol`] = t("networking.policy.ruleField", { rule, field: t("networking.policy.protocol") });
+    labels[`rules[${i}].ports`] = t("networking.policy.ruleField", { rule, field: t("networking.policy.ports") });
+    labels[`rules[${i}].remote`] = t("networking.policy.ruleField", { rule, field: t("networking.policy.remoteKind") });
+    labels[`rules[${i}].comment`] = t("networking.policy.ruleField", { rule, field: t("networking.policy.comment") });
   }
   return labels;
 });

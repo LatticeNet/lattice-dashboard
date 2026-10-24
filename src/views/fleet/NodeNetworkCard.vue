@@ -27,7 +27,7 @@ import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { Network } from "lucide-vue-next";
 
-import type { Node, NodeNetworkPolicy } from "@/lib/api";
+import type { Node, NodeNetworkPolicy, NodeNetworkSecurityGroup } from "@/lib/api";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import { proofReason } from "@/components/common/proofModel";
 
@@ -85,6 +85,12 @@ function outboundHead(): string {
   return section.default_drop ? `${head} · ${t("fleet.nodeNetwork.outbound.defaultDrop")}` : head;
 }
 
+function groupDetail(group: NodeNetworkSecurityGroup): string {
+  const rules = t("fleet.nodeNetwork.inbound.groupRules", { n: group.rules }, group.rules);
+  if (!group.via) return t("fleet.nodeNetwork.inbound.groupDetail", { rules });
+  return t("fleet.nodeNetwork.inbound.groupDetailVia", { rules, via: t("fleet.nodeNetwork.inbound.viaGroup", { group: group.via.name || group.via.id }) });
+}
+
 function reachText(policy: NodeNetworkPolicy): string {
   if (policy.reach === "group") return t("fleet.nodeNetwork.outbound.reach.group", { groups: text.list((policy.via_groups ?? []).map((g) => g.name || g.id)) });
   return t(`fleet.nodeNetwork.outbound.reach.${policy.reach}`);
@@ -112,17 +118,16 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
           <p :class="inbound?.state !== 'ok' ? 'text-xs text-muted-foreground' : undefined">{{ inboundHead() }}</p>
           <template v-if="inbound?.state === 'ok'">
             <p class="break-words">
-              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }} </span>
+              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }}</span>
               <template v-if="securityGroups.length">
                 <span v-for="(group, i) in securityGroups" :key="`${group.id}-${group.via?.id ?? ''}`">
-                  {{ group.name || group.id }}
-                  <span class="text-xs text-muted-foreground">({{ $t('fleet.nodeNetwork.inbound.groupRules', { n: group.rules }, group.rules) }}<template v-if="group.via">, {{ $t('fleet.nodeNetwork.inbound.viaGroup', { group: group.via.name || group.via.id }) }}</template>)</span><template v-if="i < securityGroups.length - 1">{{ $t('fleet.nodeNetwork.join') }}</template>
+                  {{ group.name || group.id }}<span class="text-xs text-muted-foreground">{{ groupDetail(group) }}</span><template v-if="i < securityGroups.length - 1">{{ $t('fleet.nodeNetwork.join') }}</template>
                 </span>
               </template>
               <span v-else class="text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.noSecurityGroups') }}</span>
             </p>
             <p v-if="inbound.extra_ports?.length" class="break-words">
-              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.extraPorts') }} </span>
+              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.extraPorts') }}</span>
               <span class="font-mono text-xs">{{ text.list(inbound.extra_ports.map(text.extraPort)) }}</span>
             </p>
             <p v-if="inbound.legacy_ingress" class="text-xs text-muted-foreground">
@@ -147,7 +152,7 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
                 class="min-w-0 truncate underline decoration-dotted underline-offset-2 hover:text-foreground"
                 :class="policy.state === 'applies' ? 'text-foreground' : undefined"
               >
-                {{ policy.label }}<span v-if="policy.hidden_target_nodes" class="text-xs text-muted-foreground"> {{ $t('fleet.nodeNetwork.outbound.hidden', { n: policy.hidden_target_nodes }) }}</span>
+                {{ policy.label }}<span v-if="policy.hidden_target_nodes" class="ms-1.5 text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.outbound.hidden', { n: policy.hidden_target_nodes }) }}</span>
               </RouterLink>
               <span class="col-start-2 min-w-0 truncate text-xs sm:col-start-auto">{{ reachText(policy) }}</span>
               <span class="col-start-2 text-xs sm:col-start-auto sm:text-end">

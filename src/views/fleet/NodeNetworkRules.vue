@@ -155,7 +155,7 @@ function shortSha(sha?: string): string {
                     :key="i"
                     class="block whitespace-pre px-3"
                     :class="line.changed ? 'border-s-2 border-warning-text bg-warning/15 ps-2.5' : undefined"
-                  ><span v-if="line.changed" class="sr-only">{{ $t('fleet.nodeNetwork.rules.changedLines', { n: 1 }, 1) }}: </span>{{ line.text || ' ' }}</span></pre>
+                  ><span v-if="line.changed" class="sr-only">{{ $t('fleet.nodeNetwork.rules.lineDiffers') }}</span>{{ line.text || ' ' }}</span></pre>
                   <p v-else class="rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
                     {{ columnNote(side === 'now' ? entry.table.compile_now : entry.table.last_applied, side) }}
                   </p>

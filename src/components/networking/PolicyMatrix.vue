@@ -76,7 +76,7 @@ function excludesText(row: RowExclusions | undefined): string {
   if (!row || row.names.length + row.hidden === 0) return "";
   const shown = shownNames(row);
   if (!shown.names.length) return t("networking.matrix.excludesHidden", { n: row.hidden }, row.hidden);
-  const names = shown.names.join(", ");
+  const names = shown.names.join(t("networking.matrix.join"));
   return shown.more ? t("networking.matrix.excludesMore", { nodes: names, n: shown.more }) : t("networking.matrix.excludes", { nodes: names });
 }
 
@@ -87,7 +87,7 @@ function excludesDetail(row: RowExclusions | undefined): string {
     .map((p) => {
       const parts = [...p.names];
       if (p.hidden) parts.push(t("networking.matrix.hiddenNodes", { n: p.hidden }, p.hidden));
-      return t("networking.matrix.excludedBy", { policy: p.label, nodes: parts.join(", ") });
+      return t("networking.matrix.excludedBy", { policy: p.label, nodes: parts.join(t("networking.matrix.join")) });
     })
     .join(" ");
 }
@@ -148,7 +148,7 @@ function excludesDetail(row: RowExclusions | undefined): string {
               <GroupChip :name="src.name" :color="src.color" />
               <p
                 v-if="excludesText(exclusionsByRow.get(src.id))"
-                class="mt-0.5 max-w-[12rem] truncate text-xs font-normal text-warning-text"
+                class="mt-0.5 line-clamp-2 max-w-[12rem] break-words text-xs font-normal text-warning-text"
                 :title="excludesDetail(exclusionsByRow.get(src.id))"
                 data-testid="matrix-row-exclusions"
               >
@@ -175,7 +175,7 @@ function excludesDetail(row: RowExclusions | undefined): string {
           <tr v-if="fleet" class="border-t-2 border-border" data-testid="matrix-fleet-row">
             <th scope="row" class="sticky left-0 z-10 min-w-[7rem] sm:min-w-[10rem] bg-card px-3 py-2 text-left" :title="$t('networking.matrix.fleetRowHint')">
               <span class="text-sm font-medium">{{ $t("networking.matrix.fleetRow") }}</span>
-              <p v-if="excludesText(fleetExclusions)" class="mt-0.5 max-w-[12rem] truncate text-xs font-normal text-warning-text" :title="excludesDetail(fleetExclusions)">
+              <p v-if="excludesText(fleetExclusions)" class="mt-0.5 line-clamp-2 max-w-[12rem] break-words text-xs font-normal text-warning-text" :title="excludesDetail(fleetExclusions)">
                 {{ excludesText(fleetExclusions) }}
                 <span class="sr-only">{{ excludesDetail(fleetExclusions) }}</span>
               </p>
