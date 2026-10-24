@@ -54,8 +54,8 @@ export interface NodeColumn {
 
 /**
  * The default set is what an operator scans the fleet for (design 23, 4.2):
- * the node, its address, its agent version, when it last reported, its CPU
- * and its tags. Status is not a column: "online" printed on 32 rows was a
+ * the node, its address, its agent version, when it last reported, its CPU,
+ * its network rates (design 32 D6) and its tags. Status is not a column: "online" printed on 32 rows was a
  * column of one word, so the name cell carries a dot and names the state only
  * when it is not online, and the head counts the rest. The owner is the
  * default grouping, so its column starts hidden; what each agent is allowed
@@ -68,6 +68,7 @@ export const NODE_COLUMNS: readonly NodeColumn[] = [
   { id: "agent", labelKey: "fleet.nodes.table.colAgent", optional: true },
   { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", optional: true },
   { id: "cpu", labelKey: "fleet.nodes.metric.cpu", optional: true },
+  { id: "network", labelKey: "fleet.nodes.table.colNetwork", optional: true },
   { id: "tags", labelKey: "fleet.nodes.table.colTags", optional: true },
   { id: "hostname", labelKey: "fleet.nodes.table.colHostname", optional: true, defaultHidden: true },
   { id: "role", labelKey: "fleet.nodes.table.colRole", optional: true, defaultHidden: true },
@@ -149,6 +150,56 @@ export function metricCellKind(node: Pick<Node, "metrics"> & NodeStatusInput, va
 /** A metric column's sort key: the shown reading, or -1 so a node with none ranks below every real reading, a real 0% included. */
 export function metricSortValue(node: Pick<Node, "metrics">, value: number | undefined): number {
   return value !== undefined && hasMetricSample(node.metrics) ? value : -1;
+}
+
+/**
+ * Query sort field to the column that shows it, for the header mark of a
+ * typed sort:. rx and tx both sort the Network column (design 32 D6).
+ */
+export const NODE_SORT_COLUMN: Readonly<Record<string, string>> = {
+  name: "name",
+  ip: "address",
+  agent: "agent",
+  last_seen: "lastSeen",
+  cpu: "cpu",
+  rx: "network",
+  tx: "network",
+  tag: "tags",
+  mem: "memory",
+  disk: "disk",
+};
+
+export interface NetworkReading {
+  /** Receive and send rates, bytes per second. */
+  rx: number;
+  tx: number;
+  /** Cumulative bytes over every interface but loopback since the node booted. */
+  rxTotal?: number;
+  txTotal?: number;
+}
+
+/** The node's network reading, or undefined when it never produced a sample. */
+export function networkReading(node: Pick<Node, "metrics">): NetworkReading | undefined {
+  const m = node.metrics;
+  if (!hasMetricSample(m)) return undefined;
+  return { rx: m?.net_rx_speed ?? 0, tx: m?.net_tx_speed ?? 0, rxTotal: m?.net_rx_bytes, txTotal: m?.net_tx_bytes };
+}
+
+/** The Network column's header sort: the combined rate, and -1 below every reading when there is none. */
+export function networkSortValue(node: Pick<Node, "metrics">): number {
+  const reading = networkReading(node);
+  return reading ? reading.rx + reading.tx : -1;
+}
+
+/**
+ * How old the node's last reading is, in milliseconds, for a stale cell: from
+ * the sample's own collected_at, else the last beat. Undefined when neither
+ * is a real instant.
+ */
+export function metricReadingAge(node: Pick<Node, "metrics" | "last_seen">, now: number): number | undefined {
+  const collected = node.metrics?.collected_at ? Date.parse(node.metrics.collected_at) : NaN;
+  const at = !Number.isNaN(collected) && new Date(collected).getUTCFullYear() > 1 ? collected : lastSeenMillis(node);
+  return at > 0 ? Math.max(0, now - at) : undefined;
 }
 
 export function lastSeenMillis(node: Pick<Node, "last_seen">): number {

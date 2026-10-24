@@ -10,7 +10,11 @@ import {
   canonicalLayoutQuery,
   compareNodeIdentity,
   metricCellKind,
+  metricReadingAge,
   metricSortValue,
+  networkReading,
+  networkSortValue,
+  NODE_SORT_COLUMN,
   nodeGroupByCodec,
   nodeGroupKey,
   nodeGroupOrder,
@@ -27,9 +31,9 @@ import {
 
 const node = (id: string, over: Partial<Node> = {}): Node => ({ id, name: id, online: true, status: "online", ...over } as Node);
 
-test("the default columns are node, address, agent, last seen, CPU and tags; status is not a column", () => {
+test("the default columns are node, address, agent, last seen, CPU, network and tags; status is not a column", () => {
   const shown = NODE_COLUMNS.filter((column) => !DEFAULT_HIDDEN_COLUMNS.has(column.id)).map((column) => column.id);
-  assert.deepEqual(shown, ["name", "address", "agent", "lastSeen", "cpu", "tags"]);
+  assert.deepEqual(shown, ["name", "address", "agent", "lastSeen", "cpu", "network", "tags"]);
   assert.ok(!NODE_COLUMNS.some((column) => column.id === "status"));
 });
 
@@ -176,4 +180,29 @@ test("a node with no reading ranks below every real reading, a real 0% included"
   assert.equal(metricSortValue({ metrics: SAMPLE }, undefined), -1);
   assert.equal(metricSortValue({ metrics: {} as Node["metrics"] }, 0), -1);
   assert.equal(metricSortValue({ metrics: { collected_at: "0001-01-01T00:00:00Z" } as Node["metrics"] }, 0), -1);
+});
+
+// Design 32 D6: the list could not show traffic. The Network column carries
+// the rates, sorts by their sum, and a typed sort:rx or sort:tx marks it.
+test("the network column reads rates from a sample, sorts by their sum, and owns sort:rx and sort:tx", () => {
+  const SAMPLE = { collected_at: "2026-10-17T09:30:00Z", net_rx_speed: 1200, net_tx_speed: 300, net_rx_bytes: 9e9, net_tx_bytes: 4e9 } as Node["metrics"];
+  assert.deepEqual(networkReading({ metrics: SAMPLE }), { rx: 1200, tx: 300, rxTotal: 9e9, txTotal: 4e9 });
+  assert.equal(networkSortValue({ metrics: SAMPLE }), 1500);
+  for (const metrics of [{} as Node["metrics"], { collected_at: "0001-01-01T00:00:00Z", net_rx_speed: 0 } as Node["metrics"]]) {
+    assert.equal(networkReading({ metrics }), undefined);
+    assert.equal(networkSortValue({ metrics }), -1);
+  }
+  assert.equal(NODE_SORT_COLUMN.rx, "network");
+  assert.equal(NODE_SORT_COLUMN.tx, "network");
+  assert.ok(NODE_COLUMNS.some((column) => column.id === "network" && column.optional));
+});
+
+test("a stale reading's age comes from its sample, else the last beat", () => {
+  const now = Date.parse("2026-10-17T12:30:00Z");
+  assert.equal(metricReadingAge({ metrics: { collected_at: "2026-10-17T09:30:00Z" } as Node["metrics"] }, now), 3 * 3_600_000);
+  assert.equal(
+    metricReadingAge({ metrics: { collected_at: "0001-01-01T00:00:00Z" } as Node["metrics"], last_seen: "2026-10-17T12:00:00Z" }, now),
+    30 * 60_000,
+  );
+  assert.equal(metricReadingAge({ metrics: {} as Node["metrics"] }, now), undefined);
 });

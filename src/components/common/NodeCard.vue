@@ -188,6 +188,9 @@ const freshness = computed(() => metricFreshness(props.node, hasMetricSample(pro
 const { t } = useI18n();
 
 const noSample = computed(() => freshness.value === "none");
+/** A node that stopped reporting keeps its last numbers, muted and dated (design 32 D6). */
+const staleMetrics = computed(() => freshness.value === "stale");
+const staleSince = computed(() => formatRelativeTime(props.node.metrics?.collected_at || props.node.last_seen));
 
 /**
  * In compact mode the three bars share one row, about 110px each on the
@@ -472,12 +475,16 @@ function onGroup(id: string) {
          third of the card's height on the Nodes wall. Below 288px of card
          width a third of the row cannot hold "Memory" and "100%" side by
          side and the value is what would be cut, so a phone gets the stack. -->
-    <div :class="cn(compact ? 'mt-3 grid grid-cols-1 gap-2 @min-[18rem]:grid-cols-3' : 'mt-4 space-y-2.5')">
+    <p v-if="staleMetrics" :class="cn('text-xs text-warning-text', compact ? 'mt-3' : 'mt-4')">
+      {{ t("fleet.nodes.card.staleReading", { time: staleSince }) }}
+    </p>
+    <div :class="cn(compact ? 'grid grid-cols-1 gap-2 @min-[18rem]:grid-cols-3' : 'space-y-2.5', staleMetrics ? 'mt-1.5' : compact ? 'mt-3' : 'mt-4')">
       <MetricBar
         :label="cpuLabel"
         tone="cpu"
         :percent="node.metrics?.cpu_percent"
         :unavailable="noSample"
+        :stale="staleMetrics"
       />
       <MetricBar
         :label="memoryLabel"
@@ -487,6 +494,7 @@ function onGroup(id: string) {
         :value-text="bytesPercent(node.metrics?.memory_used, node.metrics?.memory_total)"
         :title="bytesPair(node.metrics?.memory_used, node.metrics?.memory_total)"
         :unavailable="noSample"
+        :stale="staleMetrics"
       />
       <MetricBar
         :label="diskLabel"
@@ -496,6 +504,7 @@ function onGroup(id: string) {
         :value-text="bytesPercent(node.metrics?.disk_used, node.metrics?.disk_total)"
         :title="bytesPair(node.metrics?.disk_used, node.metrics?.disk_total)"
         :unavailable="noSample"
+        :stale="staleMetrics"
       />
     </div>
 
