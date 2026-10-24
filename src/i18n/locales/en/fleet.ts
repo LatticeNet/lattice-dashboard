@@ -289,6 +289,9 @@ export default {
         disk: "Disk",
         sparklineLabel: "Recent CPU trend",
         lastKnown: "last known {value}, {time}",
+        networkTotals: "Since boot, every interface but loopback: received {rx}, sent {tx}",
+        received: "received",
+        sent: "sent",
       },
       view: {
         label: "View mode",
@@ -299,6 +302,7 @@ export default {
         showMoreTags: "Show {names}",
         showMoreGroups: "Show groups {names}",
         showFewer: "Show fewer",
+        staleReading: "Last reading {time}, not live",
       },
       table: {
         colAgent: "Agent",
@@ -311,7 +315,7 @@ export default {
         colPublicIp: "Public IPv4",
         colArchOs: "Arch / OS",
         colAgentConfig: "Agent config",
-        colNetwork: "Net (rx/tx)",
+        colNetwork: "Network",
         colLastSeen: "Last seen",
         colUpdate: "Update",
         colActions: "Actions",

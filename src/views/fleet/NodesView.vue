@@ -16,7 +16,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
-import { Ban, KeyRound, LayoutGrid, List, Plus, Power, RotateCw, Search, Server, SquareTerminal, X } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, Ban, KeyRound, LayoutGrid, List, Plus, Power, RotateCw, Search, Server, SquareTerminal, X } from "lucide-vue-next";
 
 import { api, unwrap, type GroupView, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -28,7 +28,7 @@ import { useMediaQuery } from "@/composables/useMediaQuery";
 import { createConfirmReturn } from "./confirmFocus";
 import { useAuthStore } from "@/stores/auth";
 import { countryName, splitNamePrefix } from "@/lib/fleet";
-import { NO_VALUE, formatBytes, formatRelativeTime } from "@/lib/format";
+import { NO_VALUE, formatBytes, formatBytesPerSec, formatRelativeTime } from "@/lib/format";
 import { agentConfigBadges, nodeHasAgentCapability, nodeHasArchOsToken } from "@/lib/nodeFilterExpressions";
 import { nodeQuerySchema } from "@/lib/query/nodeFields";
 import { withoutSorts } from "@/lib/query/syntax";
@@ -64,8 +64,12 @@ import {
   isNodesLayout,
   lastSeenMillis,
   metricCellKind,
+  metricReadingAge,
   metricSortValue,
   nameParts,
+  networkReading,
+  networkSortValue,
+  NODE_SORT_COLUMN,
   nodeGroupByCodec,
   nodeGroupKey,
   nodeGroupOrder,
@@ -264,20 +268,9 @@ const emptyActions = computed<EmptyAction[]>(() => [
   ...(panelCount.value > 0 ? [{ key: "panel", label: t("fleet.nodes.filters.clearChips"), run: clearPanel }] : []),
 ]);
 
-/** Query field to the column that shows it, for the header mark of a typed sort:. */
-const SORT_COLUMN: Record<string, string> = {
-  name: "name",
-  ip: "address",
-  agent: "agent",
-  last_seen: "lastSeen",
-  cpu: "cpu",
-  tag: "tags",
-  mem: "memory",
-  disk: "disk",
-};
 const sortMark = computed(() => {
   const first = query.active.value.sorts[0];
-  const column = first && SORT_COLUMN[first.field.key];
+  const column = first && NODE_SORT_COLUMN[first.field.key];
   return column ? { key: column, dir: first.desc ? ("desc" as const) : ("asc" as const) } : null;
 });
 
@@ -317,7 +310,7 @@ const optionalColumns = computed(() => NODE_COLUMNS.filter((column) => column.op
 const uniform = computed(() => uniformColumns(nodes.value, ["owner", "agent", "archOs", "agentConfig", "role"]));
 const uniformIds = computed(() => new Set(uniform.value.map((entry) => entry.id)));
 
-const ALIGN_RIGHT = new Set(["cpu", "memory", "disk"]);
+const ALIGN_RIGHT = new Set(["cpu", "network", "memory", "disk"]);
 const SORT_VALUE: Record<string, (node: Node) => unknown> = {
   name: (node) => (node.name || node.id).toLowerCase(),
   owner: (node) => nodeOwner(node).toLowerCase(),
@@ -325,6 +318,7 @@ const SORT_VALUE: Record<string, (node: Node) => unknown> = {
   agent: (node) => node.agent_version ?? "",
   lastSeen: (node) => lastSeenMillis(node),
   cpu: (node) => metricSortValue(node, shownPercent(node.metrics?.cpu_percent)),
+  network: (node) => networkSortValue(node),
   memory: (node) => metricSortValue(node, ratioPercent(node.metrics?.memory_used, node.metrics?.memory_total)),
   disk: (node) => metricSortValue(node, ratioPercent(node.metrics?.disk_used, node.metrics?.disk_total)),
   tags: (node) => (node.tags ?? []).join(" "),
@@ -487,12 +481,21 @@ const rotatedOpen = computed({
   },
 });
 
+interface MetricCell {
+  text: string;
+  title?: string;
+  stale: boolean;
+  /** How old a stale reading is, printed beside it. */
+  age?: string;
+}
+
 /**
- * A number from a node that is not reporting is a memory, not a reading: the
- * no-value mark in the cell, the last value and its age in the title. DMIT-4,
- * offline six days, read "10%" in full weight beside a live fleet.
+ * A number from a node that is not reporting is a memory, not a reading: it
+ * prints in the muted tone with its age beside it, and the title says when it
+ * was taken (design 32 D6). DMIT-4, offline six days, read "10%" in full
+ * weight beside a live fleet.
  */
-function metricCell(node: Node, value: number | undefined): { text: string; title?: string; stale: boolean } {
+function metricCell(node: Node, value: number | undefined): MetricCell {
   switch (metricCellKind(node, value)) {
     case "blank":
       return { text: "", stale: false };
@@ -501,11 +504,36 @@ function metricCell(node: Node, value: number | undefined): { text: string; titl
     case "live":
       return { text: `${value}%`, stale: false };
   }
+  return staleCell(node, `${value}%`);
+}
+
+function staleCell(node: Node, text: string): MetricCell {
+  const age = metricReadingAge(node, Date.now());
   return {
-    text: NO_VALUE,
-    title: t("fleet.nodes.metric.lastKnown", { value: `${value}%`, time: formatRelativeTime(node.metrics?.collected_at ?? node.last_seen) }),
+    text,
+    title: t("fleet.nodes.metric.lastKnown", { value: text, time: formatRelativeTime(node.metrics?.collected_at ?? node.last_seen) }),
     stale: true,
+    age: age === undefined ? undefined : formatAge(age, locale.value),
   };
+}
+
+interface NetworkCell extends MetricCell {
+  rx?: string;
+  tx?: string;
+}
+
+/** Receive and send rates; the cumulative counters since boot ride in the title. */
+function networkCell(node: Node): NetworkCell {
+  const reading = networkReading(node);
+  if (!reading) return { text: NO_VALUE, stale: false };
+  const rx = formatBytesPerSec(reading.rx);
+  const tx = formatBytesPerSec(reading.tx);
+  const totals = t("fleet.nodes.metric.networkTotals", { rx: formatBytes(reading.rxTotal), tx: formatBytes(reading.txTotal) });
+  if (metricCellKind(node, 0) === "stale") {
+    const stale = staleCell(node, `${rx} / ${tx}`);
+    return { ...stale, rx, tx, title: `${stale.title}. ${totals}` };
+  }
+  return { text: `${rx} / ${tx}`, rx, tx, title: totals, stale: false };
 }
 
 function openTerminal(node: Node): void {
@@ -1004,9 +1032,13 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             <span class="flex min-w-0 font-medium" :title="row.name || row.id">
               <span class="truncate">{{ nameParts(displayName(row))[0] }}</span><span class="shrink-0">{{ nameParts(displayName(row))[1] }}</span>
             </span>
+            <!-- On a phone the pinned column is too narrow for name and word
+                 side by side, and both refuse to shrink, so they printed over
+                 each other; there the dot carries the state on screen and the
+                 word stays for assistive technology. -->
             <span
               v-if="statusWord(row)"
-              :class="cn('shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(row).tone])"
+              :class="cn('shrink-0 text-xs max-sm:sr-only', STATUS_TEXT[describeNodeStatus(row).tone])"
             >{{ statusWord(row) }}</span>
           </span>
         </template>
@@ -1029,19 +1061,35 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           <span
             :class="cn('font-mono text-xs tabular', metricCell(row, shownPercent(row.metrics?.cpu_percent)).stale && 'text-muted-foreground')"
             :title="metricCell(row, shownPercent(row.metrics?.cpu_percent)).title"
-          >{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).text }}</span>
+          >{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).text }}<span v-if="metricCell(row, shownPercent(row.metrics?.cpu_percent)).age" class="ml-1 text-[10px]">{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).age }}</span></span>
+        </template>
+        <template #cell-network="{ row }">
+          <!-- One evaluation per row: the cell reads it in six places. -->
+          <template v-for="cell in [networkCell(row)]" :key="row.id">
+            <span
+              :class="cn('inline-flex flex-col items-end gap-x-2 whitespace-nowrap font-mono text-xs tabular sm:flex-row sm:items-center', cell.stale && 'text-muted-foreground')"
+              :title="cell.title"
+            >
+              <template v-if="cell.rx">
+                <span class="inline-flex items-center gap-0.5"><ArrowDown class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.received') }}</span>{{ cell.rx }}</span>
+                <span class="inline-flex items-center gap-0.5"><ArrowUp class="size-3 shrink-0" aria-hidden="true" /><span class="sr-only">{{ $t('fleet.nodes.metric.sent') }}</span>{{ cell.tx }}</span>
+                <span v-if="cell.age" class="text-[10px]">{{ cell.age }}</span>
+              </template>
+              <template v-else>{{ cell.text }}</template>
+            </span>
+          </template>
         </template>
         <template #cell-memory="{ row }">
           <span
             :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).stale && 'text-muted-foreground')"
             :title="metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).title ?? (hasMetricSample(row.metrics) ? `${formatBytes(row.metrics.memory_used)} / ${formatBytes(row.metrics.memory_total)}` : undefined)"
-          >{{ metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).text }}</span>
+          >{{ metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).text }}<span v-if="metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).age" class="ml-1 text-[10px]">{{ metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).age }}</span></span>
         </template>
         <template #cell-disk="{ row }">
           <span
             :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).stale && 'text-muted-foreground')"
             :title="metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).title ?? (hasMetricSample(row.metrics) ? `${formatBytes(row.metrics.disk_used)} / ${formatBytes(row.metrics.disk_total)}` : undefined)"
-          >{{ metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).text }}</span>
+          >{{ metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).text }}<span v-if="metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).age" class="ml-1 text-[10px]">{{ metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).age }}</span></span>
         </template>
         <template #cell-tags="{ row }">
           <span class="block max-w-64 truncate text-xs text-muted-foreground" :title="(row.tags ?? []).join(', ')">{{ (row.tags ?? []).join(', ') }}</span>

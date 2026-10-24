@@ -19,6 +19,9 @@ const props = withDefaults(
     valueText?: string;
     /** The node is not in contact and never produced this sample. */
     unavailable?: boolean;
+    /** The reading is the last one a node that stopped reporting sent: it
+     *  prints in the muted tone so it does not read as live. */
+    stale?: boolean;
     class?: HTMLAttributes["class"];
   }>(),
   {
@@ -70,7 +73,7 @@ const valueText = computed(() => {
   return formatPercent(pct.value);
 });
 
-const toneColor = computed(() => TONE_COLORS[props.tone]);
+const toneColor = computed(() => (props.stale ? "var(--muted-foreground)" : TONE_COLORS[props.tone]));
 
 // The native tooltip is the escape hatch for a value too wide for its track,
 // so it is bound only when the text is actually cut. Binding it always put a
@@ -103,7 +106,7 @@ const measureOverflow = () => {
         :class="
           cn(
             'ml-auto min-w-0 truncate whitespace-nowrap font-mono tabular text-xs',
-            unavailable ? 'text-muted-foreground' : 'text-foreground',
+            unavailable || stale ? 'text-muted-foreground' : 'text-foreground',
           )
         "
       >

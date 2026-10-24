@@ -11,7 +11,10 @@
  * and no edges said nothing, and names cut to 8 characters made all 13
  * `[Metix]-` nodes read the same. An old `?tab=` link lands on its layer.
  *
- * NetGuard also writes nftables, so the overview says so and links to it.
+ * Outbound only (design 32 D3 and D7): the policy compiles outbound rules
+ * into lattice_policy, so neither the form nor the matrix offers a direction,
+ * and inbound rules a policy still holds are listed as not applied, with a
+ * link to the NetGuard firewall that owns inbound traffic.
  * Deleting a policy leaves its ruleset on the node (design 23, section 3.8,
  * "leaves config on a node"): the confirm names the node and what keeps
  * running, and asks for the node's name.
@@ -34,9 +37,6 @@ import {
   type NetPolicyUpsertRequest,
   type NetPolicyView,
   type NetRule,
-  type NetRuleAction,
-  type NetRuleDirection,
-  type NetRuleProtocol,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useLayer } from "@/composables/useLayer";
@@ -87,6 +87,8 @@ import {
 } from "@/components/ui/select";
 import PolicyMatrix from "@/components/networking/PolicyMatrix.vue";
 import PolicyCellEditor from "@/components/networking/PolicyCellEditor.vue";
+import PolicyRulesEditor, { type InboundRuleLine, type PolicyRuleError } from "@/components/networking/PolicyRulesEditor.vue";
+import { assignRuleIds, draftPorts, ruleFieldError, type PolicyRuleDraft, type RuleFieldError } from "@/views/networking/policyRuleModel";
 
 /**
  * Go's `omitempty` does not drop a zero time.Time, so a policy that was never
@@ -120,8 +122,8 @@ const nodes = computed(() => nodesQuery.data.value ?? []);
 provideNodeDirectory(computed(() => nodesQuery.data.value));
 
 // ── Reachability matrix (the overview picture) ─────────────────────────────────────
-const matrixDirection = ref<NetRuleDirection>("egress");
-const matrixQuery = useAsyncData((signal) => api.netpolicy.matrix(matrixDirection.value, { signal }), {
+// Outbound only: the policy compiles no inbound rules, so the matrix shows none.
+const matrixQuery = useAsyncData((signal) => api.netpolicy.matrix("egress", { signal }), {
   pollInterval: 0,
 });
 const groupPoliciesQuery = useAsyncData(
@@ -133,11 +135,6 @@ const groupPolicies = computed<GroupPolicyView[]>(() => groupPoliciesQuery.data.
 const matrixGroups = computed<MatrixGroup[]>(() => matrix.value?.groups ?? []);
 const hasGroups = computed(() => matrixGroups.value.length > 0);
 const hasGroupPolicies = computed(() => groupPolicies.value.length > 0);
-
-function setMatrixDirection(value: NetRuleDirection) {
-  matrixDirection.value = value;
-  matrixQuery.refresh();
-}
 
 function refreshMatrix() {
   matrixQuery.refresh();
@@ -281,22 +278,35 @@ const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
 /* Policy state                                                        */
 /* ------------------------------------------------------------------ */
 
-type PolicyState = "failing" | "unapplied" | "applied" | "disabled";
+type PolicyState = "failing" | "blocked" | "unapplied" | "applied" | "disabled";
+
+/** An inbound rule makes the policy's own plan fail ("egress-only MVP"). */
+function holdsInbound(p: NetPolicyView): boolean {
+  return p.rules.some((r) => r.direction === "ingress");
+}
+
+/** An enabled policy its inbound rules keep from being planned, whatever else is wrong with it. */
+function heldByInbound(p: NetPolicyView): boolean {
+  return p.enabled && holdsInbound(p);
+}
 
 /**
  * What a node's policy amounts to on the node. A failed apply is the only
- * red; an enabled policy that never applied is not enforced yet; a disabled
- * one is the operator's choice and stays quiet.
+ * red; an enabled policy holding inbound rules cannot be planned at all; an
+ * enabled policy that never applied is not enforced yet; a disabled one is
+ * the operator's choice and stays quiet.
  */
 function policyState(p: NetPolicyView): PolicyState {
   if (p.last_error) return "failing";
   if (!p.enabled) return "disabled";
+  if (holdsInbound(p)) return "blocked";
   return hasRealTime(p.last_applied_at) ? "applied" : "unapplied";
 }
 
-const STATE_ORDER: Record<PolicyState, number> = { failing: 0, unapplied: 1, applied: 2, disabled: 3 };
+const STATE_ORDER: Record<PolicyState, number> = { failing: 0, blocked: 1, unapplied: 2, applied: 3, disabled: 4 };
 const STATE_TONE: Record<PolicyState, string> = {
   failing: "text-destructive",
+  blocked: "text-warning-text",
   unapplied: "text-warning-text",
   applied: "text-muted-foreground",
   disabled: "text-muted-foreground",
@@ -314,8 +324,14 @@ function ago(value?: string): string {
 }
 
 const counts = computed(() => {
-  const out = { failing: 0, unapplied: 0, applied: 0, disabled: 0 };
-  for (const p of policies.value) out[policyState(p)] += 1;
+  const out = { failing: 0, blocked: 0, unapplied: 0, applied: 0, disabled: 0 };
+  for (const p of policies.value) {
+    const state = policyState(p);
+    out[state] += 1;
+    // A failed policy that also holds inbound rules is held up by them too;
+    // its state shows the failure, the count shows both.
+    if (state === "failing" && heldByInbound(p)) out.blocked += 1;
+  }
   return out;
 });
 
@@ -339,6 +355,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (c.applied) parts.push({ key: "applied", text: t("networking.policyPage.proof.applied", { n: c.applied }) });
   if (c.unapplied) parts.push({ key: "unapplied", text: t("networking.policyPage.proof.unapplied", { n: c.unapplied }), tone: "warning" });
   if (c.failing) parts.push({ key: "failing", text: t("networking.policyPage.proof.failing", { n: c.failing }), tone: "destructive" });
+  if (c.blocked) parts.push({ key: "blocked", text: t("networking.policyPage.proof.blocked", { n: c.blocked }), tone: "warning" });
   return parts;
 });
 
@@ -385,6 +402,15 @@ const attention = computed<AttentionItem[]>(() => {
         claim: t("networking.policyPage.attention.failingClaim", { node: policyNodeLabel(p) }),
         proof: firstLine(p.last_error ?? ""),
         action,
+      });
+    }
+    if (state === "blocked" || (state === "failing" && heldByInbound(p))) {
+      items.push({
+        key: `blocked:${p.target_node_id}`,
+        tone: "warning",
+        claim: t("networking.policyPage.attention.blockedClaim", { node: policyNodeLabel(p) }),
+        proof: t("networking.policyPage.attention.blockedProof"),
+        action: { label: t("common.actions.edit"), run: () => openEdit(p) },
       });
     } else if (state === "unapplied") {
       items.push({
@@ -492,7 +518,15 @@ function groupName(id: string): string {
 
 function menuFor(p: NetPolicyView): RowMenuItem[] {
   return [
-    { key: "plan", label: t("networking.shared.plan"), icon: Play, hidden: !canAdmin.value, disabled: planning.value === p.target_node_id, run: () => void plan(p) },
+    {
+      key: "plan",
+      label: t("networking.shared.plan"),
+      icon: Play,
+      hidden: !canAdmin.value,
+      disabled: planning.value === p.target_node_id || holdsInbound(p),
+      reason: holdsInbound(p) ? t("networking.policyPage.planBlocked") : undefined,
+      run: () => void plan(p),
+    },
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(p) },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = p) },
   ];
@@ -509,23 +543,25 @@ const deleteImpact = computed(() => {
 
 
 // ── Rules editor model ────────────────────────────────────────────────────
-interface RuleDraft {
-  action: NetRuleAction;
-  direction: NetRuleDirection;
-  protocol: NetRuleProtocol;
-  ports: string;
+interface RuleDraft extends PolicyRuleDraft {
   remoteKind: NetEndpointKind;
   remoteNodeId: string;
   remoteCidr: string;
   remoteDomain: string;
-  comment: string;
-  disabled: boolean;
+  /** The remote as loaded, saved back unchanged for a kind this form does not edit. */
+  remoteLoaded?: NetRule["remote"];
+}
+
+/** The remote kinds the node form edits; any other loaded kind is kept as it was. */
+const EDITABLE_REMOTE_KINDS: readonly NetEndpointKind[] = ["node", "cidr", "domain", "any"];
+
+function editsRemote(kind: NetEndpointKind): boolean {
+  return EDITABLE_REMOTE_KINDS.includes(kind);
 }
 
 function emptyRule(): RuleDraft {
   return {
     action: "allow",
-    direction: "egress",
     protocol: "tcp",
     ports: "",
     remoteKind: "any",
@@ -539,38 +575,41 @@ function emptyRule(): RuleDraft {
 
 function ruleToDraft(rule: NetRule): RuleDraft {
   return {
+    id: rule.id,
     action: rule.action,
-    direction: rule.direction,
     protocol: rule.protocol,
     ports: (rule.ports ?? []).join(", "),
     remoteKind: rule.remote.kind,
     remoteNodeId: rule.remote.node_id ?? "",
     remoteCidr: rule.remote.cidr ?? "",
     remoteDomain: rule.remote.domain ?? "",
+    remoteLoaded: rule.remote,
     comment: rule.comment ?? "",
     disabled: !!rule.disabled,
   };
 }
 
-function parsePorts(input: string): number[] {
-  const set = new Set<number>();
-  for (const piece of input.split(",")) {
-    const trimmed = piece.trim();
-    if (!trimmed) continue;
-    const value = Number(trimmed);
-    if (Number.isInteger(value) && value >= 1 && value <= 65535) set.add(value);
-  }
-  return [...set].sort((a, b) => a - b);
+/** The sentence for a ports problem, shared wording with the matrix editor. */
+function fieldErrorText(error: RuleFieldError): string {
+  if (error.key === "errAnyNoPorts") return t("networking.policy.errAnyNoPorts");
+  return t(`networking.policy.${error.key}`, { token: error.token });
+}
+
+/** One line for an inbound rule the form keeps but cannot apply. */
+function inboundRuleText(rule: NetRule): string {
+  const ports = rule.ports?.length ? `:${rule.ports.join(",")}` : "";
+  return `${rule.action} ${rule.protocol}${ports} ${t("networking.policyPage.direction.ingress")} ${remoteText(rule)}`;
 }
 
 // ── Create / edit dialog ──────────────────────────────────────────────────
 const dialogOpen = ref(false);
 const editingId = ref<string | undefined>(undefined);
 const saving = ref(false);
-const form = reactive<{ target_node_id: string; enabled: boolean; rules: RuleDraft[] }>({
+const form = reactive<{ target_node_id: string; enabled: boolean; rules: RuleDraft[]; inbound: NetRule[] }>({
   target_node_id: "",
   enabled: true,
   rules: [],
+  inbound: [],
 });
 
 // Snapshot of the form at open time, drives the unsaved-changes (dirty) guard.
@@ -580,6 +619,7 @@ function snapshotForm(): string {
     target_node_id: form.target_node_id,
     enabled: form.enabled,
     rules: form.rules,
+    inbound: form.inbound.map((r) => r.id),
   });
 }
 const isDirty = computed(() => dialogOpen.value && snapshotForm() !== formSnapshot.value);
@@ -591,6 +631,7 @@ function openCreate() {
   form.target_node_id = "";
   form.enabled = true;
   form.rules = [emptyRule()];
+  form.inbound = [];
   formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
@@ -599,7 +640,9 @@ function openEdit(p: NetPolicyView) {
   editingId.value = p.target_node_id;
   form.target_node_id = p.target_node_id;
   form.enabled = p.enabled;
-  form.rules = p.rules.length ? p.rules.map(ruleToDraft) : [emptyRule()];
+  const outbound = p.rules.filter((r) => r.direction !== "ingress");
+  form.rules = p.rules.length === 0 ? [emptyRule()] : outbound.map(ruleToDraft);
+  form.inbound = p.rules.filter((r) => r.direction === "ingress");
   formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
@@ -634,17 +677,19 @@ function removeRule(index: number) {
   form.rules.splice(index, 1);
 }
 
-/** domain remotes are egress-only; clear protocol ports when protocol=any. */
-function ruleError(draft: RuleDraft): string | undefined {
-  if (draft.remoteKind === "domain" && draft.direction === "ingress") {
-    return t("networking.policy.errDomainEgressOnly");
-  }
-  if (draft.remoteKind === "node" && !draft.remoteNodeId) return t("networking.policy.errSelectNode");
-  if (draft.remoteKind === "cidr" && !draft.remoteCidr.trim()) return t("networking.policy.errEnterCidr");
-  if (draft.remoteKind === "domain" && !draft.remoteDomain.trim()) return t("networking.policy.errEnterDomain");
-  if (draft.protocol === "any" && parsePorts(draft.ports).length > 0) {
-    return t("networking.policy.errAnyNoPorts");
-  }
+function removeInbound(key: string) {
+  form.inbound = form.inbound.filter((r) => r.id !== key);
+}
+
+const inboundLines = computed<InboundRuleLine[]>(() => form.inbound.map((r) => ({ key: r.id, text: inboundRuleText(r) })));
+
+/** A ports token that is not one port is an error, never an empty list (all ports). */
+function ruleError(draft: RuleDraft): PolicyRuleError | undefined {
+  const field = ruleFieldError(draft);
+  if (field) return { text: fieldErrorText(field), ports: true };
+  if (draft.remoteKind === "node" && !draft.remoteNodeId) return { text: t("networking.policy.errSelectNode") };
+  if (draft.remoteKind === "cidr" && !draft.remoteCidr.trim()) return { text: t("networking.policy.errEnterCidr") };
+  if (draft.remoteKind === "domain" && !draft.remoteDomain.trim()) return { text: t("networking.policy.errEnterDomain") };
   return undefined;
 }
 
@@ -654,19 +699,22 @@ const canSubmit = computed(
   () => canAdmin.value && !!form.target_node_id && !hasRuleErrors.value,
 );
 
-function draftToRule(draft: RuleDraft, index: number): NetRule {
+function draftToRule(draft: RuleDraft, id: string): NetRule {
   return {
-    id: `rule_${String(index + 1).padStart(3, "0")}`,
+    id,
     action: draft.action,
-    direction: draft.direction,
+    direction: "egress",
     protocol: draft.protocol,
-    ports: draft.protocol === "any" ? [] : parsePorts(draft.ports),
-    remote: {
-      kind: draft.remoteKind,
-      ...(draft.remoteKind === "node" ? { node_id: draft.remoteNodeId } : {}),
-      ...(draft.remoteKind === "cidr" ? { cidr: draft.remoteCidr.trim() } : {}),
-      ...(draft.remoteKind === "domain" ? { domain: draft.remoteDomain.trim() } : {}),
-    },
+    ports: draftPorts(draft),
+    remote:
+      !editsRemote(draft.remoteKind) && draft.remoteLoaded
+        ? { ...draft.remoteLoaded }
+        : {
+            kind: draft.remoteKind,
+            ...(draft.remoteKind === "node" ? { node_id: draft.remoteNodeId } : {}),
+            ...(draft.remoteKind === "cidr" ? { cidr: draft.remoteCidr.trim() } : {}),
+            ...(draft.remoteKind === "domain" ? { domain: draft.remoteDomain.trim() } : {}),
+          },
     ...(draft.comment.trim() ? { comment: draft.comment.trim() } : {}),
     ...(draft.disabled ? { disabled: true } : {}),
   };
@@ -676,10 +724,13 @@ async function submit() {
   if (!canSubmit.value) return;
   saving.value = true;
   try {
+    // Inbound rules are kept as they were: dropping them on save would lose
+    // data the operator never saw edited. They stay listed until removed.
+    const ids = assignRuleIds(form.rules, form.inbound.map((r) => r.id), "rule");
     const body: NetPolicyUpsertRequest = {
       target_node_id: form.target_node_id,
       enabled: form.enabled,
-      rules: form.rules.map(draftToRule),
+      rules: [...form.rules.map((draft, i) => draftToRule(draft, ids[i]!)), ...form.inbound],
     };
     await api.netpolicy.upsert(body);
     toast.success(editingId.value ? t("networking.policy.toastUpdated") : t("networking.policy.toastCreated"));
@@ -818,9 +869,7 @@ function closePlan(open: boolean) {
           <PolicyMatrix
             v-if="matrix"
             :matrix="matrix"
-            :direction="matrixDirection"
             :can-admin="canAdmin"
-            @update:direction="setMatrixDirection"
             @edit="openCellEditor"
           />
           <p v-if="matrix && !hasGroupPolicies" class="text-xs text-muted-foreground">
@@ -881,6 +930,9 @@ function closePlan(open: boolean) {
       <template #cell-state="{ row: p }">
         <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[policyState(p)])">
           {{ $t(`networking.policyPage.state.${policyState(p)}`) }}
+        </span>
+        <span v-if="policyState(p) === 'failing' && heldByInbound(p)" class="ml-1 whitespace-nowrap text-xs text-warning-text">
+          · {{ $t('networking.policyPage.state.blocked') }}
         </span>
       </template>
       <template #cell-rules="{ row: p }">
@@ -951,6 +1003,7 @@ function closePlan(open: boolean) {
               <span class="min-w-0 break-all font-mono">{{ remoteText(rule) }}</span>
               <span v-if="rule.comment" class="text-muted-foreground">{{ rule.comment }}</span>
               <span v-if="rule.disabled" class="text-muted-foreground">{{ $t('networking.policyPage.ruleDisabled') }}</span>
+              <span v-if="rule.direction === 'ingress'" class="text-warning-text">{{ $t('networking.policyPage.ruleInboundInactive') }}</span>
             </li>
           </ol>
         </section>
@@ -973,7 +1026,14 @@ function closePlan(open: boolean) {
         </p>
       </div>
       <template v-if="openPolicyRow" #actions>
-        <Button variant="outline" size="sm" type="button" :disabled="planning === openPolicyRow.target_node_id" @click="plan(openPolicyRow)">
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          :disabled="planning === openPolicyRow.target_node_id || holdsInbound(openPolicyRow)"
+          :title="holdsInbound(openPolicyRow) ? $t('networking.policyPage.planBlocked') : undefined"
+          @click="plan(openPolicyRow)"
+        >
           <RefreshCw v-if="planning === openPolicyRow.target_node_id" class="animate-spin" aria-hidden="true" />
           <Play v-else aria-hidden="true" />
           {{ $t('networking.shared.plan') }}
@@ -1020,122 +1080,57 @@ function closePlan(open: boolean) {
             </div>
           </div>
 
-          <div class="space-y-3">
-            <div class="flex items-center justify-between">
-              <Label>{{ $t('networking.policy.rules') }}</Label>
-              <Button type="button" variant="outline" size="sm" @click="addRule">
-                <Plus class="size-4" aria-hidden="true" />
-                {{ $t('networking.policy.addRule') }}
-              </Button>
-            </div>
-
-            <p v-if="form.rules.length === 0" class="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-              {{ $t('networking.policy.noRules') }}
-            </p>
-
-            <div
-              v-for="(rule, index) in form.rules"
-              :key="index"
-              class="space-y-3 rounded-lg border border-border p-3"
-            >
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-medium text-muted-foreground">{{ $t('networking.policy.ruleLabel', { index: index + 1 }) }}</span>
-                <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRule')" @click="removeRule(index)">
-                  <Trash2 class="size-4 text-destructive" />
-                </Button>
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.action') }}</Label>
-                  <Select v-model="rule.action">
-                    <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="allow">allow</SelectItem>
-                      <SelectItem value="deny">deny</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.direction') }}</Label>
-                  <Select v-model="rule.direction">
-                    <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="egress">egress</SelectItem>
-                      <SelectItem value="ingress">ingress</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.protocol') }}</Label>
-                  <Select v-model="rule.protocol">
-                    <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tcp">tcp</SelectItem>
-                      <SelectItem value="udp">udp</SelectItem>
-                      <SelectItem value="any">any</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
+          <PolicyRulesEditor
+            :rules="form.rules"
+            :errors="formErrors"
+            :inbound="inboundLines"
+            :firewall-to="netguardTo"
+            :empty-text="$t('networking.policy.noRules')"
+            id-prefix="policy"
+            @add="addRule"
+            @remove="removeRule"
+            @remove-inbound="removeInbound"
+          >
+            <!-- The slot hands back the shared draft type; index reaches the full node draft. -->
+            <template #remote="{ index }">
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.ports') }}</Label>
-                  <Input
-                    v-model="rule.ports"
-                    :disabled="rule.protocol === 'any'"
-                    :placeholder="$t('networking.policy.portsPlaceholder')"
-                  />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.remoteKind') }}</Label>
-                  <Select v-model="rule.remoteKind">
-                    <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                  <Label class="text-xs" :for="`policy-rule-${index}-remote`">{{ $t('networking.policy.remoteKind') }}</Label>
+                  <Select v-model="form.rules[index]!.remoteKind">
+                    <SelectTrigger :id="`policy-rule-${index}-remote`" class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="node">node</SelectItem>
                       <SelectItem value="cidr">cidr</SelectItem>
                       <SelectItem value="domain">domain</SelectItem>
                       <SelectItem value="any">any</SelectItem>
+                      <SelectItem v-if="!editsRemote(form.rules[index]!.remoteKind)" :value="form.rules[index]!.remoteKind" disabled>
+                        {{ $t('networking.policy.remoteKept', { kind: form.rules[index]!.remoteKind }) }}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-
-              <div v-if="rule.remoteKind === 'node'" class="grid gap-1.5">
-                <Label class="text-xs">{{ $t('networking.policy.remoteNode') }}</Label>
-                <Select v-model="rule.remoteNodeId">
-                  <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.policy.selectNode')" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
-                      {{ node.name || node.id }}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div v-else-if="rule.remoteKind === 'cidr'" class="grid gap-1.5">
-                <Label class="text-xs">{{ $t('networking.policy.remoteCidr') }}</Label>
-                <Input v-model="rule.remoteCidr" placeholder="10.0.0.0/24 or 1.2.3.4" />
-              </div>
-              <div v-else-if="rule.remoteKind === 'domain'" class="grid gap-1.5">
-                <Label class="text-xs">{{ $t('networking.policy.remoteDomain') }}</Label>
-                <Input v-model="rule.remoteDomain" placeholder="api.example.com" />
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div class="grid gap-1.5">
-                  <Label class="text-xs">{{ $t('networking.policy.comment') }}</Label>
-                  <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />
+                <div v-if="form.rules[index]!.remoteKind === 'node'" class="grid gap-1.5">
+                  <Label class="text-xs" :for="`policy-rule-${index}-node`">{{ $t('networking.policy.remoteNode') }}</Label>
+                  <Select v-model="form.rules[index]!.remoteNodeId">
+                    <SelectTrigger :id="`policy-rule-${index}-node`" class="w-full"><SelectValue :placeholder="$t('networking.policy.selectNode')" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
+                        {{ node.name || node.id }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <label class="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
-                  <Checkbox v-model="rule.disabled" />
-                  {{ $t('networking.policy.disabled') }}
-                </label>
+                <div v-else-if="form.rules[index]!.remoteKind === 'cidr'" class="grid gap-1.5">
+                  <Label class="text-xs" :for="`policy-rule-${index}-cidr`">{{ $t('networking.policy.remoteCidr') }}</Label>
+                  <Input :id="`policy-rule-${index}-cidr`" v-model="form.rules[index]!.remoteCidr" placeholder="10.0.0.0/24 or 1.2.3.4" />
+                </div>
+                <div v-else-if="form.rules[index]!.remoteKind === 'domain'" class="grid gap-1.5">
+                  <Label class="text-xs" :for="`policy-rule-${index}-domain`">{{ $t('networking.policy.remoteDomain') }}</Label>
+                  <Input :id="`policy-rule-${index}-domain`" v-model="form.rules[index]!.remoteDomain" placeholder="api.example.com" />
+                </div>
               </div>
-
-              <p v-if="formErrors[index]" class="text-xs text-destructive">{{ formErrors[index] }}</p>
-            </div>
-          </div>
+            </template>
+          </PolicyRulesEditor>
 
           <DialogFooter>
             <Button type="button" variant="outline" @click="requestCloseDialog">{{ $t('common.actions.cancel') }}</Button>
@@ -1196,8 +1191,8 @@ function closePlan(open: boolean) {
       :open="cellEditorOpen"
       :source="cellSource"
       :dest="cellDest"
-      :direction="matrixDirection"
       :existing="cellSourcePolicy"
+      :firewall-to="netguardTo"
       :saving="savingCell"
       :can-admin="canAdmin"
       @update:open="(v) => (cellEditorOpen = v)"

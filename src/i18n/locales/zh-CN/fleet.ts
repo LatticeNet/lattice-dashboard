@@ -285,6 +285,9 @@ export default {
         disk: "磁盘",
         sparklineLabel: "近期 CPU 趋势",
         lastKnown: "最后一次读数 {value}，{time}",
+        networkTotals: "开机以来，回环以外的全部网卡：接收 {rx}，发送 {tx}",
+        received: "接收",
+        sent: "发送",
       },
       view: {
         label: "视图模式",
@@ -295,6 +298,7 @@ export default {
         showMoreTags: "显示 {names}",
         showMoreGroups: "显示分组 {names}",
         showFewer: "收起",
+        staleReading: "最后一次读数在 {time}，不是实时数据",
       },
       table: {
         colAgent: "Agent",
@@ -307,7 +311,7 @@ export default {
         colPublicIp: "公网 IPv4",
         colArchOs: "架构 / 系统",
         colAgentConfig: "Agent 配置",
-        colNetwork: "网络(收/发)",
+        colNetwork: "网络",
         colLastSeen: "最后在线",
         colUpdate: "更新",
         colActions: "操作",
