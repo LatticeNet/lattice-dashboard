@@ -200,7 +200,8 @@ export function definitionView(def: CheckDefinition, held: readonly MonitorView[
     ...def,
     summary: {
       monitors: held.length,
-      paths: plan.paths,
+      // The pairs measured now, as the server counts them: a skipped or paused pair is not a path (design 32 R2).
+      paths: plan.pairs.filter((p) => !p.reason || p.reason === "agent_offline").length,
       paused_targets: pausedTargets.length,
       paused_runs: pausedTargets.reduce((n, m) => n + runsOf(m.id), 0),
     },

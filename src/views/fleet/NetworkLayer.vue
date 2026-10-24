@@ -168,10 +168,6 @@ const revealParam = bindQueryParam<boolean>(props.owned, "paths.unmeasured", {
   format: (value) => (value ? "1" : undefined),
 });
 const unmeasured = computed(() => matrix.value?.unmeasured ?? []);
-const unmeasuredCounts = computed(() => ({
-  skipped: unmeasured.value.filter((p) => p.measure === "skipped").length,
-  paused: unmeasured.value.filter((p) => p.measure === "paused").length,
-}));
 /** The view reads the unmeasured pairs too: the reveal is on, or the query names their state. */
 const withUnmeasured = computed(() => revealParam.value || queryNamesUnmeasured(queryText.value));
 /** The matrix as the view reads it: its measured paths, and the unmeasured pairs when asked for. */
@@ -179,6 +175,13 @@ const shown = computed(() => (matrix.value && withUnmeasured.value ? { ...matrix
 /** The list's own order, worst first; a `sort:` term or a column replaces it. */
 const allPaths = computed(() => listOrder(shown.value?.paths ?? []));
 const listQuery = useListQuery(allPaths, schema, queryText);
+/** The pairs the line under counts: the ones the query keeps, so it never promises more rows than showing them adds. */
+const unmeasuredQuery = useListQuery(unmeasured, schema, queryText);
+const unmeasuredKept = computed(() => (listQuery.filtering.value ? unmeasuredQuery.rows.value : unmeasured.value));
+const unmeasuredCounts = computed(() => ({
+  skipped: unmeasuredKept.value.filter((p) => p.measure === "skipped").length,
+  paused: unmeasuredKept.value.filter((p) => p.measure === "paused").length,
+}));
 // Only a query that leaves paths out reshapes the graph: a sort, or a filter every path passes, keeps the drawing as it is.
 const matching = computed(() => (listQuery.filtering.value && listQuery.rows.value.length < allPaths.value.length ? new Set(listQuery.rows.value.map((p) => p.id)) : undefined));
 const queryExamples = computed(() => PATHS_QUERY_EXAMPLES.map((e) => ({ query: e.query, note: t(`fleet.monitoring.paths.query.examples.${e.key}`) })));
@@ -517,9 +520,9 @@ const STEP = "text-xs font-medium text-muted-foreground";
           </div>
         </template>
         <!-- The pairs that are not measured: one quiet line, and a way to see them (design 32 R2). -->
-        <p v-if="unmeasured.length && (revealParam || !withUnmeasured)" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="network-unmeasured">
+        <p v-if="unmeasuredKept.length && (revealParam || !withUnmeasured)" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="network-unmeasured">
           <span>
-            {{ revealParam ? $t('fleet.monitoring.network.unmeasured.shown', { n: unmeasured.length }, unmeasured.length) : $t('fleet.monitoring.network.unmeasured.line', { n: unmeasured.length }, unmeasured.length) }}
+            {{ revealParam ? $t('fleet.monitoring.network.unmeasured.shown', { n: unmeasuredKept.length }, unmeasuredKept.length) : $t('fleet.monitoring.network.unmeasured.line', { n: unmeasuredKept.length }, unmeasuredKept.length) }}
             <template v-if="unmeasuredCounts.skipped && unmeasuredCounts.paused">{{ $t('fleet.monitoring.network.unmeasured.split', { skipped: unmeasuredCounts.skipped, paused: unmeasuredCounts.paused }) }}</template>
           </span>
           <button

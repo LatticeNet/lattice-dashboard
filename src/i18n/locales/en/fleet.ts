@@ -1411,7 +1411,7 @@ export default {
           beacon_unknown_epoch: "The target no longer accepts the key the source used; the source picks up the new one within a minute",
           beacon_rate_limited: "The target refused requests over its limit of 20 a second from this source",
           beacon_no_key: "The source holds no key for this target yet; it arrives with its next configuration pull",
-          packet_budget: "Paused by the control plane: the source would send this address more than 2 packets a second across its checks. It resumes when there is room.",
+          packet_budget: "Skipped by the control plane: the source would send this address more than 2 packets a second across its checks. It is measured again when there is room.",
           degraded_loss: "Loss over the last hour is above its trigger: higher than the floor and higher than its usual level for the past week",
           degraded_latency: "The median over the last 15 minutes is above its trigger: well over its usual level for the past week",
           degraded_loss_latency: "Both loss over the last hour and the median over the last 15 minutes are above their triggers",
@@ -1870,7 +1870,8 @@ export default {
         certLeft: "{n} d left",
         certExpired: "expired",
         noneRunning: "none running",
-        unmeasured: "not measured",
+        // A check whose paths read unknown for a reason; "not measured" is kept for skipped and paused pairs (design 32 R2).
+        unmeasured: "unknown",
         withPaused: "{base}, {n} paused",
         withUnmeasured: "{base}, {n} not measured",
         reasons: "{n} reasons",
