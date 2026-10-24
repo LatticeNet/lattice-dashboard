@@ -55,7 +55,7 @@ export interface NodeColumn {
 /**
  * The default set is what an operator scans the fleet for (design 23, 4.2):
  * the node, its address, its agent version, when it last reported, its CPU,
- * its network rates (design 32 D6) and its tags. Status is not a column: "online" printed on 32 rows was a
+ * its upload and download rates (design 32 D6, R5) and its tags. Status is not a column: "online" printed on 32 rows was a
  * column of one word, so the name cell carries a dot and names the state only
  * when it is not online, and the head counts the rest. The owner is the
  * default grouping, so its column starts hidden; what each agent is allowed
@@ -68,7 +68,8 @@ export const NODE_COLUMNS: readonly NodeColumn[] = [
   { id: "agent", labelKey: "fleet.nodes.table.colAgent", optional: true },
   { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", optional: true },
   { id: "cpu", labelKey: "fleet.nodes.metric.cpu", optional: true },
-  { id: "network", labelKey: "fleet.nodes.table.colNetwork", optional: true },
+  { id: "upload", labelKey: "fleet.nodes.table.colUpload", optional: true },
+  { id: "download", labelKey: "fleet.nodes.table.colDownload", optional: true },
   { id: "tags", labelKey: "fleet.nodes.table.colTags", optional: true },
   { id: "hostname", labelKey: "fleet.nodes.table.colHostname", optional: true, defaultHidden: true },
   { id: "role", labelKey: "fleet.nodes.table.colRole", optional: true, defaultHidden: true },
@@ -100,10 +101,15 @@ export function parseHiddenColumns(raw: string | null): Set<string> {
   const hidden = new Set<string>();
   for (const part of raw.split(",")) {
     const id = part.trim();
-    if (columnById.get(id)?.optional) hidden.add(id);
+    for (const column of RENAMED_COLUMNS[id] ?? [id]) {
+      if (columnById.get(column)?.optional) hidden.add(column);
+    }
   }
   return hidden;
 }
+
+/** A stored column that became others: hiding the one Network column hides both rate columns (design 32 R5). */
+const RENAMED_COLUMNS: Readonly<Record<string, readonly string[]>> = { network: ["upload", "download"] };
 
 export function serializeHiddenColumns(hidden: ReadonlySet<string>): string {
   return NODE_COLUMNS.filter((column) => column.optional && hidden.has(column.id))
@@ -154,7 +160,8 @@ export function metricSortValue(node: Pick<Node, "metrics">, value: number | und
 
 /**
  * Query sort field to the column that shows it, for the header mark of a
- * typed sort:. rx and tx both sort the Network column (design 32 D6).
+ * typed sort:. rx is the Download column and tx the Upload column (design 32
+ * R5).
  */
 export const NODE_SORT_COLUMN: Readonly<Record<string, string>> = {
   name: "name",
@@ -162,8 +169,8 @@ export const NODE_SORT_COLUMN: Readonly<Record<string, string>> = {
   agent: "agent",
   last_seen: "lastSeen",
   cpu: "cpu",
-  rx: "network",
-  tx: "network",
+  rx: "download",
+  tx: "upload",
   tag: "tags",
   mem: "memory",
   disk: "disk",
@@ -185,10 +192,10 @@ export function networkReading(node: Pick<Node, "metrics">): NetworkReading | un
   return { rx: m?.net_rx_speed ?? 0, tx: m?.net_tx_speed ?? 0, rxTotal: m?.net_rx_bytes, txTotal: m?.net_tx_bytes };
 }
 
-/** The Network column's header sort: the combined rate, and -1 below every reading when there is none. */
-export function networkSortValue(node: Pick<Node, "metrics">): number {
+/** A rate column's header sort: the receive (download) or send (upload) rate, and -1 below every reading when there is none. */
+export function networkSortValue(node: Pick<Node, "metrics">, direction: "rx" | "tx"): number {
   const reading = networkReading(node);
-  return reading ? reading.rx + reading.tx : -1;
+  return reading ? reading[direction] : -1;
 }
 
 /**

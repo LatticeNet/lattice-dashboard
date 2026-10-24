@@ -6,8 +6,9 @@ import type { Incident, LatencyProbePlan, LineChainView, Node, PathView, PathsRe
 import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
+import { regionGroups } from "../networkModel.ts";
 import { quietAfterMs } from "../latencyModel.ts";
-import { buildPathsMatrix } from "../pathsModel.ts";
+import { buildPathsMatrix, everyPath } from "../pathsModel.ts";
 import { addressLineValue, edgeValue, rowSummaryValue, stateLabel } from "../topologyCopy.ts";
 import {
   DEFAULT_DRAWN_SOURCES,
@@ -131,13 +132,24 @@ function check(source: string, monitorId: string, spec: PathSpec & { target: str
 const CHECK_NAMES: Record<string, string> = { ping: "ICMP to hk", web: "Status page", cert: "sub cert", relay: "HK relay port" };
 
 /** The matrix of an M3 server: one row per target, one column per source. */
-function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[] = [{ node_id: "sh", name: "cd-hs-sh" }]) {
+function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[] = [{ node_id: "sh", name: "cd-hs-sh" }], countries: Record<string, string> = {}) {
   const targets = [...new Set(paths.map((p) => p.target_node!).filter(Boolean))].map((id) => {
     const n = NODES.find((x) => x.id === id);
-    return { node_id: id, name: n?.name ?? id, country: n?.geo?.country };
+    return { node_id: id, name: n?.name ?? id, country: countries[id] ?? n?.geo?.country };
   });
   const response: PathsResponse = { window: "1h", observed_at: ago(0), degraded_at: ago(30_000), sources, targets, paths };
   return buildPathsMatrix(response, { checkName: (id) => CHECK_NAMES[id] });
+}
+
+/** The ids of an input's paths with these keys: what the page's query hands the drawing. */
+function idsOf(over: Pick<TopologyInput, "matrix">, keys: readonly string[]): Set<string> {
+  return new Set((over.matrix?.paths ?? []).filter((p) => keys.includes(p.key)).map((p) => p.id));
+}
+
+/** The same matrix with the pairs that are not measured shown, as the Topology view reads it on request (design 32 R2). */
+function revealed(paths: PathView[], sources?: { node_id: string; name: string }[]) {
+  const m = matrixOf(paths, sources);
+  return { ...m, paths: everyPath(m) };
 }
 
 /** cd-hs-sh's paths over the hour: up, degraded, down, stale, paused, and a UDP-only target with nothing to dial. */
@@ -180,15 +192,15 @@ test("regions run in order of distance from mainland China; Hong Kong is not mai
   const m = buildTopology(input());
   assert.deepEqual(
     m.members.map((n) => n.id),
-    ["bj", "hk", "jp", "us4", "us1", "us2", "de", "x"],
-    "region, then country, then name; the source sits in the left column",
+    ["bj", "hk", "us4", "us1", "us2", "x"],
+    "region, then country, then name; the source sits in the left column; jp and de, which no measured pair reaches, are not drawn",
   );
   assert.deepEqual(m.sources.map((n) => n.id), ["sh"]);
 });
 
 /* ---- Edges from the matrix ---- */
 
-test("path edges are the matrix's paths in their display state; a target with nothing to dial is unknown with its reason", () => {
+test("path edges are the matrix's measured paths in their display state; a skipped or paused pair is drawn only when asked for", () => {
   const m = buildTopology(input());
   assert.equal(edge(m, "path:sh>hk").state, "up");
   assert.equal(edge(m, "path:sh>us1").state, "degraded");
@@ -196,22 +208,27 @@ test("path edges are the matrix's paths in their display state; a target with no
   assert.equal(edge(m, "path:sh>us2").state, "down");
   assert.equal(edge(m, "path:sh>us4").state, "unknown", "a stale path is the server's unknown, never a colour");
   assert.equal(edge(m, "path:sh>us4").reason, "results_stopped");
-  assert.equal(edge(m, "path:sh>de").state, "paused");
-  // Design 32 D1: no path is left out of the drawing, so the drawing never counts fewer than the page.
-  assert.equal(edge(m, "path:sh>jp").state, "unknown");
-  assert.equal(edge(m, "path:sh>jp").reason, "not_probeable");
-  assert.equal(m.counts.drawn, 6);
+  // Design 32 R2: a pair its check skips or the operator paused is not a path, so the default drawing leaves it out.
+  assert.equal(m.edges.some((e) => e.id === "path:sh>de" || e.id === "path:sh>jp"), false);
+  assert.equal(m.counts.drawn, 4);
   assert.equal(m.counts.undrawn, 0);
+  // Shown on request, each in its own state, the skipped one with its reason.
+  const shown = buildTopology(input({ matrix: revealed(PATHS) }));
+  assert.equal(edge(shown, "path:sh>de").state, "paused");
+  assert.equal(edge(shown, "path:sh>jp").state, "skipped");
+  assert.equal(edge(shown, "path:sh>jp").reason, "not_probeable");
+  assert.equal(shown.counts.drawn, 6);
 });
 
-test("state tones are the only colour: up, degraded and down solid in their tone, unknown dashed and paused dotted, both muted", () => {
-  const m = buildTopology(input());
+test("state tones are the only colour: up, degraded and down solid in their tone, unknown dashed, paused and skipped dotted, all muted", () => {
+  const m = buildTopology(input({ matrix: revealed(PATHS) }));
   const style = (id: string) => edgeStyle(edge(m, id));
   assert.deepEqual([style("path:sh>hk").color, style("path:sh>hk").stroke], ["--success", "solid"]);
   assert.deepEqual([style("path:sh>us1").color, style("path:sh>us1").stroke], ["--warning", "solid"]);
   assert.deepEqual([style("path:sh>us2").color, style("path:sh>us2").stroke], ["--destructive", "solid"]);
   assert.deepEqual([style("path:sh>us4").color, style("path:sh>us4").stroke], ["--muted-foreground", "dashed"]);
   assert.deepEqual([style("path:sh>de").color, style("path:sh>de").stroke], ["--muted-foreground", "dotted"]);
+  assert.deepEqual([style("path:sh>jp").color, style("path:sh>jp").stroke], ["--muted-foreground", "dotted"]);
   for (const e of m.edges.filter((x) => x.kind === "path")) assert.ok(Object.values(PATH_TONE).includes(edgeStyle(e).color), e.id);
 });
 
@@ -234,27 +251,62 @@ test("a check to a node is an edge between two real nodes: no pseudo-node, and o
   const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "down", loss: 1 });
   const m = buildTopology(input({ matrix: matrixOf([...PATHS, ping]) }));
   const pair = edge(m, "path:sh>hk");
-  // Two checks measure sh to hk: one edge, in the worst live state, that lists each check.
+  // Two checks measure sh to hk: one edge, in the worst live state, that lists each check; both are the one pair (design 32 R1).
   assert.equal(pair.state, "down");
-  assert.deepEqual(pair.paths!.map((p) => p.key), ["sh~@ping", "sh~hk"]);
-  assert.equal(pair.pathKey, "sh~@ping", "it opens the path that speaks for it");
+  assert.deepEqual(pair.paths!.map((p) => [p.key, p.checkId]), [["sh~hk", "ping"], ["sh~hk", "mon_lat_hk"]]);
+  assert.equal(pair.pathKey, "sh~hk", "it opens the pair, whose sheet lists both");
   assert.equal(m.edges.filter((e) => e.to === "hk" && e.kind === "path").length, 1);
   assert.ok(!m.members.some((n) => n.id.startsWith("@")), "every row is a node");
   assert.deepEqual(m.addresses, []);
-  assert.equal(m.counts.drawn, 7);
+  assert.equal(m.counts.drawn, 5);
 });
 
-test("a check that cannot run does not grey a pair another check measures; the edge still lists it", () => {
+test("a check that cannot run does not grey a pair another check measures; shown on request, the edge lists it", () => {
   const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "unknown", reason: "icmp_not_permitted", samples: 0 });
   const m = buildTopology(input({ matrix: matrixOf([...PATHS, ping]) }));
   const pair = edge(m, "path:sh>hk");
   assert.equal(pair.state, "up");
   assert.equal(pair.p50Ms, 34);
-  assert.deepEqual(pair.paths!.map((p) => p.key), ["sh~hk", "sh~@ping"]);
-  // Only checks that cannot run: the pair reads unknown, with the reason.
-  const alone = buildTopology(input({ matrix: matrixOf([ping]) }));
-  assert.equal(edge(alone, "path:sh>hk").state, "unknown");
+  assert.deepEqual(pair.paths!.map((p) => p.checkId), ["mon_lat_hk"], "a skipped check is not a path (design 32 R2)");
+  const shown = edge(buildTopology(input({ matrix: revealed([...PATHS, ping]) })), "path:sh>hk");
+  assert.equal(shown.state, "up");
+  assert.deepEqual(shown.paths!.map((p) => p.checkId), ["mon_lat_hk", "ping"]);
+  // Only checks that cannot run: no edge, and shown, the pair reads skipped with the reason.
+  assert.equal(buildTopology(input({ matrix: matrixOf([ping]) })).edges.some((e) => e.id === "path:sh>hk"), false);
+  const alone = buildTopology(input({ matrix: revealed([ping]) }));
+  assert.equal(edge(alone, "path:sh>hk").state, "skipped");
   assert.equal(edge(alone, "path:sh>hk").reason, "icmp_not_permitted");
+});
+
+// Design 32 R2: a target only skipped or paused pairs reach is not part of
+// the drawing (its row, its region's count) until the view shows those
+// pairs; then it is drawn dimmed with the reason, in the same region.
+test("a target no measured pair reaches leaves the graph and its region's count until the reveal brings it back dimmed", () => {
+  const regionCount = (m: ReturnType<typeof buildTopology>, region: string) =>
+    layoutTopology(m, { width: 1200 }).rows.find((r) => r.type === "header" && r.region === region)?.count ?? 0;
+  // x has no country in the node list; the matrix names its target CN.
+  const paths = [...PATHS, probe("sh", "x", { state: "unknown", reason: "not_probeable", target: "", monitor_id: "", samples: 0, expected: 0 })];
+  const quietMatrix = matrixOf(paths, undefined, { x: "CN" });
+  for (const layer of ["all", "paths"] as const) {
+    const quiet = buildTopology(input({ layer, matrix: quietMatrix }));
+    const ids = quiet.members.map((n) => n.id);
+    // jp has nothing to dial, de is paused, x has nothing to dial and no country of its own.
+    for (const id of ["jp", "de", "x"]) assert.ok(!ids.includes(id), `${layer}: ${id} is drawn with no measured pair`);
+    assert.ok(ids.includes("hk") && ids.includes("us4"), `${layer}: a measured target, unknown included, stays`);
+    assert.equal(regionCount(quiet, "eastAsia"), 1, `${layer}: East Asia counts hk only`);
+  }
+  const shown = buildTopology(input({ matrix: { ...quietMatrix, paths: everyPath(quietMatrix) } }));
+  const byId = new Map(shown.members.map((n) => [n.id, n]));
+  assert.deepEqual(byId.get("jp")?.unmeasured, { measure: "skipped", reason: "not_probeable" });
+  assert.deepEqual(byId.get("de")?.unmeasured, { measure: "paused", reason: "path_paused" });
+  assert.equal(byId.get("hk")?.unmeasured, undefined);
+  assert.equal(regionCount(shown, "eastAsia"), 2);
+  // x keeps the region its pair names, shown or not, as the list does.
+  assert.equal(byId.get("x")?.region, "mainland");
+  assert.equal(buildTopology(input({ matrix: quietMatrix })).nodes.get("x")?.region, "mainland");
+  // The list groups paths, so a pair that is not measured has no group until shown.
+  const listed = regionGroups(quietMatrix.paths).flatMap((g) => g.targets.map((t) => t.key));
+  assert.ok(!listed.includes("jp") && !listed.includes("de") && !listed.includes("x"));
 });
 
 test("an address keeps one terminal however many checks and sources dial it; a certificate check leaves the control plane", () => {
@@ -279,7 +331,8 @@ test("an address keeps one terminal however many checks and sources dial it; a c
   assert.equal(edge(m, `path:sh>${addressEndpoint(url)}`).state, "up");
   assert.equal(edge(m, `path:bj>${addressEndpoint(url)}`).state, "down");
   assert.equal(edge(m, `path:${CONTROL_PLANE}>${addressEndpoint("sub.example.net:443")}`).from, CONTROL_PLANE);
-  assert.equal(m.counts.drawn, paths.length);
+  // Every measured path is drawn; the skipped and the paused pair of PATHS are not paths.
+  assert.equal(m.counts.drawn, paths.length - 2);
   // The terminal's line: red when one of its paths is down.
   const t = (key: string, named: Record<string, unknown> = {}) => `${key.split(".").pop()} ${Object.values(named).join("/")}`;
   assert.deepEqual(addressLineValue(t, m.addresses[0]!), { text: "down 1/2", tone: "text-destructive" });
@@ -439,18 +492,18 @@ test("an edge says up, degraded, down, paused or unknown, and unknown always car
   const removed = /no path|not probed|nothing heard|no data/i;
   for (const messages of [enFleet, zhFleet] as unknown as Record<string, unknown>[]) {
     const t = translator(messages);
-    const m = buildTopology(input());
+    const m = buildTopology(input({ matrix: revealed(PATHS) }));
     for (const e of m.edges.filter((x) => x.kind === "path")) {
       const words = [stateLabel(t, e), edgeValue(t, e).text];
       for (const w of words) assert.ok(!w.startsWith("fleet."), `${e.id}: ${w} resolves`);
-      if (e.state === "unknown") assert.ok(stateLabel(t, e).includes(t(`fleet.monitoring.paths.reasonShort.${e.reason}`)), `${e.id} says why`);
+      if (e.state === "unknown" || e.state === "skipped") assert.ok(stateLabel(t, e).includes(t(`fleet.monitoring.paths.reasonShort.${e.reason}`)), `${e.id} says why`);
       if (messages === (enFleet as unknown)) for (const w of words) assert.doesNotMatch(w, removed, `${e.id}: ${w}`);
     }
   }
   const en = translator(enFleet as unknown as Record<string, unknown>);
-  const m = buildTopology(input());
+  const m = buildTopology(input({ matrix: revealed(PATHS) }));
   assert.equal(stateLabel(en, edge(m, "path:sh>us4")), "unknown: results stopped");
-  assert.equal(stateLabel(en, edge(m, "path:sh>jp")), "unknown: nothing to dial");
+  assert.equal(stateLabel(en, edge(m, "path:sh>jp")), "skipped: nothing to dial");
   assert.equal(edgeValue(en, edge(m, "path:sh>de")).text, "paused");
   assert.equal(edgeValue(en, edge(m, "path:sh>hk")).text, "34 ms");
   // An unknown reason the console has no words for is shown as the server sent it.
@@ -486,7 +539,8 @@ test("a query keeps matching edges and their ends at full strength and fades the
   assert.ok(all.edges.every((e) => e.matched), "without a query everything keeps full strength");
   assert.ok(endMatched(all, "s9") && endMatched(all, "hk"));
   // s5 is not among the default four, and its path to hk matches: it is drawn while the query holds.
-  const matching = new Set(["s5~hk", "s2~hk"]);
+  // The query keeps paths by id, one per check (design 32 R1).
+  const matching = idsOf(nineSources(), ["s5~hk", "s2~hk"]);
   const m = buildTopology({ ...nineSources(), matching });
   assert.deepEqual(m.drawnSourceIds, ["s9", "s8", "s7", "s6", "s5", "s2"]);
   assert.deepEqual(m.edges.filter((e) => e.matched).map((e) => e.id).sort(), ["path:s2>hk", "path:s5>hk"]);
@@ -495,16 +549,18 @@ test("a query keeps matching edges and their ends at full strength and fades the
   assert.ok(endMatched(m, "s5") && endMatched(m, "s2") && endMatched(m, "hk"));
   assert.ok(!endMatched(m, "s9") && !endMatched(m, "de"));
   // The graph and the list count the same: every path the query keeps is on a matching edge.
-  const onEdges = m.edges.flatMap((e) => (e.matched ? e.paths!.filter((p) => matching.has(p.key)) : []));
+  const onEdges = m.edges.flatMap((e) => (e.matched ? e.paths!.filter((p) => matching.has(p.id)) : []));
   assert.equal(onEdges.length, matching.size);
   // The query's sources are drawn but not picked: the picker locks them and never writes them to the address.
   assert.deepEqual(m.sourceChoices.filter((c) => c.forced).map((c) => c.node.id), ["s5", "s2"]);
   assert.deepEqual(m.sourceChoices.filter((c) => c.drawn && !c.forced).map((c) => c.node.id), ["s9", "s8", "s7", "s6"]);
   assert.ok(all.sourceChoices.every((c) => !c.forced));
-  // A query that keeps one of a pair's checks opens that one.
+  // A query that keeps one of a pair's checks keeps the pair's edge, and the path sheet opens the pair (design 32 R1).
   const ping = check("sh", "ping", { target_node: "hk", target: "203.0.113.2", method: "icmp", state: "up", p50_ms: 36 });
-  const pair = buildTopology(input({ matrix: matrixOf([...PATHS, ping]), matching: new Set(["sh~@ping"]) }));
-  assert.equal(edge(pair, "path:sh>hk").pathKey, "sh~@ping");
+  const withPing = input({ matrix: matrixOf([...PATHS, ping]) });
+  const pair = buildTopology({ ...withPing, matching: new Set(withPing.matrix!.paths.filter((p) => p.checkId === "ping").map((p) => p.id)) });
+  assert.equal(edge(pair, "path:sh>hk").pathKey, "sh~hk");
+  assert.equal(edge(pair, "path:sh>hk").matched, true);
 });
 
 /* ---- Chains ---- */
@@ -522,7 +578,7 @@ test("chains run relay to exit; a planned chain with no exit yet is counted, not
   assert.equal(m.nodes.get("hk")!.relay && m.nodes.get("hk")!.exit, true, "a middle hop is both");
   assert.equal(edgeStyle(chains[0]!).color, "--primary");
   assert.ok(chains.every((e) => e.matched), "without a query every chain keeps full strength");
-  const filtered = buildTopology(input({ matching: new Set(["sh~hk"]) }));
+  const filtered = buildTopology(input({ matching: idsOf(input(), ["sh~hk"]) }));
   assert.ok(filtered.edges.filter((e) => e.kind === "chain").every((e) => !e.matched), "the query reads paths, so a chain fades under one");
 });
 
@@ -540,7 +596,7 @@ test("chain status words", () => {
 test("each filter keeps only its own nodes and edges", () => {
   const paths = buildTopology(input({ layer: "paths" }));
   assert.deepEqual(new Set(paths.edges.map((e) => e.kind)), new Set(["path"]));
-  assert.deepEqual(paths.members.map((n) => n.id), ["hk", "jp", "us4", "us1", "us2", "de"]);
+  assert.deepEqual(paths.members.map((n) => n.id), ["hk", "us4", "us1", "us2"]);
   const chains = buildTopology(input({ layer: "chains" }));
   assert.deepEqual(chains.sources, [], "the left column holds sources only");
   assert.deepEqual(chains.members.map((n) => n.id), ["bj", "hk", "us1"]);
@@ -593,7 +649,7 @@ test("layout is deterministic and keeps sources left, rows in one column, chains
   assert.equal(a.sources[0]!.box.x, 0);
   assert.ok(a.rowsX >= LEFT_W + 72, "a gap for the fan");
   const headers = a.rows.filter((r) => r.type === "header").map((r) => (r.type === "header" ? `${r.region}:${r.count}` : ""));
-  assert.deepEqual(headers, ["mainland:1", "eastAsia:2", "northAmerica:3", "europe:1", "unknown:1"]);
+  assert.deepEqual(headers, ["mainland:1", "eastAsia:1", "northAmerica:3", "unknown:1"]);
   for (const row of a.rows) if (row.type === "node") assert.equal(row.h, ROW_H);
   const chain = a.edges.find((e) => e.edge.id === "chain:line-hk")!;
   const right = a.rowsX + a.rowsW;
@@ -651,7 +707,7 @@ test("the arrow keys walk the lines source by source, each source's the tall col
   const order = keyboardOrder(a);
   assert.deepEqual(
     order.map((le) => `${le.edge.from}>${le.edge.to}`),
-    [...["hk", "jp", "us4", "us1", "us2", "de", addressEndpoint("https://status.example.net/healthz")].map((to) => `sh>${to}`), "bj>hk"],
+    [...["hk", "us4", "us1", "us2", addressEndpoint("https://status.example.net/healthz")].map((to) => `sh>${to}`), "bj>hk"],
     "in the order the boxes are drawn, then by where they end: the rows top to bottom, then the addresses",
   );
   // Every drawn line is reachable exactly once.
@@ -690,7 +746,7 @@ test("the arrow keys, Home and End move along the walk and stop at its ends; oth
 });
 
 test("with a query the walk holds only the lines it keeps, in the same order", () => {
-  const m = buildTopology({ ...nineSources(), drawnSources: ["s1", "s2", "s3", "s4"], matching: new Set(ninePaths().filter((p) => p.target_node === "hk").map((p) => `${p.source}~hk`)) });
+  const m = buildTopology({ ...nineSources(), drawnSources: ["s1", "s2", "s3", "s4"], matching: idsOf(nineSources(), ninePaths().filter((p) => p.target_node === "hk").map((p) => `${p.source}~hk`)) });
   const a = layoutTopology(m, { width: 1200 });
   const walk = keyboardOrder(a).filter((le) => le.bundle.some((e) => e.matched));
   assert.ok(walk.length > 0 && walk.length < a.edges.length, `${walk.length} of ${a.edges.length}`);

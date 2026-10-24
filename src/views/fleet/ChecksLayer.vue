@@ -1,14 +1,15 @@
 <script setup lang="ts">
 /**
  * Monitoring's Checks layer (design 29 D7, D9, design 32 D1): every check in
- * one list. Your checks come first: check definitions (one check with a
- * source set and a target set, with their path and paused-target counts) and
- * single checks side by side; then the built-in Fleet mesh, the path set,
- * which opens its own editor. A monitor a definition or the path set
- * generated is not a row of its own. A single check's row opens its sheet on
+ * one list: check definitions (one check with a source set and a target
+ * set, with their path and paused-target counts) and single checks side by
+ * side. Fleet mesh is a definition like any other once the path set is
+ * migrated (design 32 R1); only a server whose path set is not migrated lists
+ * it as a built-in row with its own editor. A monitor a definition or the
+ * path set generated is not a row of its own. A single check's row opens its sheet on
  * ?open=: its paths, one per source, and the path chart of the one chosen; a
  * definition's row opens the definition's sheet on the same parameter. Create
- * and edit open the editors the page hosts, so Overview and the Network view
+ * and edit open the editors the page hosts, so Overview and the Topology view
  * can open them too. Below the list, how long history is kept.
  *
  * A link that names a monitor (?open=, the old /monitoring/:id) or a node
@@ -44,13 +45,13 @@ import { Button } from "@/components/ui/button";
 import DefinitionSheet from "./DefinitionSheet.vue";
 import PathDetail from "./PathDetail.vue";
 import { PACKETS_DEFAULT, canEditCheck, checkSourceSummary, latestCertExpiry, multiPacket, sheetSource, withPathVerdict, type PickedSource } from "./checksModel";
-import { CHECK_ROW_GROUP_ORDER, checkRowGroup, checkRowMethod, checkRowName, checkRows, describeSelector, pathsHealth, type CheckRow, type SelectorWords } from "./definitionsModel";
+import { CHECK_ROW_GROUP_ORDER, checkRowGroup, checkRowMethod, checkRowName, checkRows, describeSelector, pathsHealth, type CheckRow, type DefinitionFix, type SelectorWords } from "./definitionsModel";
 import { createConfirmReturn } from "./confirmFocus";
 import { formatLoss, formatMs } from "./latencyModel";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
 import { MONITORING_QUERY_EXAMPLES, checkRowsQuerySchema, type CheckRowFacts } from "./monitoringQuery";
 import { isServerEvaluated } from "./monitorTypeModel";
-import { stateRank, type PathAddress, type PathItem } from "./pathsModel";
+import { everyPath, stateRank, type PathAddress, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 import { verdictFor } from "./triangulationModel";
 import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
@@ -72,12 +73,14 @@ const props = defineProps<{
   /** Why the definitions read failed, while it has not answered since. */
   definitionsError?: string | null;
   groups: GroupView[];
+  /** The path set is not migrated into checks (design 32 R1): only then is its editor offered. */
+  canEditPathSet: boolean;
 }>();
 
 const emit = defineEmits<{
   create: [type?: "http" | "tls" | "tcp"];
   edit: [monitor: MonitorView];
-  editDefinition: [definition: CheckDefinitionView];
+  editDefinition: [definition: CheckDefinitionView, fix?: DefinitionFix];
   pathSet: [];
   retention: [];
   changed: [];
@@ -101,10 +104,14 @@ function nodeName(id: string): string {
   return props.nodes.find((n) => n.id === id)?.name || shortId(id, 14);
 }
 
-/** Each check's paths in the matrix, for the verdict the control plane gives them. */
+/**
+ * Each check's paths in the matrix, for the verdict the control plane gives
+ * them: its skipped and paused pairs too (design 32 R2), so a check's sheet
+ * still says which sources measure nothing and why.
+ */
 const pathsByMonitor = computed(() => {
   const out = new Map<string, PathItem[]>();
-  for (const p of props.data.matrix.value?.paths ?? []) out.set(p.monitorId, [...(out.get(p.monitorId) ?? []), p]);
+  for (const p of props.data.matrix.value ? everyPath(props.data.matrix.value) : []) out.set(p.monitorId, [...(out.get(p.monitorId) ?? []), p]);
   return out;
 });
 
@@ -119,9 +126,14 @@ const monitorsByDefinition = computed(() => {
   return out;
 });
 
-/** A definition's paths in the matrix: the paths of the monitors it expanded into. */
+/** A definition's paths in the matrix: each cell names the definition its monitor was expanded from (design 32 R1). */
 function definitionPaths(definitionId: string): PathItem[] {
-  return (monitorsByDefinition.value.get(definitionId) ?? []).flatMap((m) => pathsByMonitor.value.get(m.id) ?? []);
+  return (props.data.matrix.value?.paths ?? []).filter((p) => p.definitionId === definitionId);
+}
+
+/** The pairs a definition skips (design 32 R2), which the matrix keeps apart from its paths. */
+function definitionSkipped(definitionId: string): PathItem[] {
+  return (props.data.matrix.value?.unmeasured ?? []).filter((p) => p.definitionId === definitionId && p.measure === "skipped");
 }
 
 /** Fleet mesh's paths: the matrix's generated cells. */
@@ -543,6 +555,22 @@ const sheet = bindRouteOpen(props.owned);
 const definitionOpen = computed(() => !!sheet.openId.value?.startsWith("chk_"));
 const openDefinition = computed(() => (definitionOpen.value ? props.definitions.find((d) => d.id === sheet.openId.value) : undefined));
 const openDefinitionPaths = computed(() => (openDefinition.value ? definitionPaths(openDefinition.value.id) : []));
+const openDefinitionSkipped = computed(() => (openDefinition.value ? definitionSkipped(openDefinition.value.id) : []));
+/**
+ * A monitor a definition expanded or adopted opens its definition's sheet:
+ * it is edited and read through the definition, and an old link to a Fleet
+ * mesh check by its monitor id keeps working after the path set became a
+ * definition (design 32 R1).
+ */
+watch(
+  () => [sheet.openId.value, all.value] as const,
+  ([id]) => {
+    if (!id || id.startsWith("chk_")) return;
+    const owner = all.value.find((m) => m.id === id)?.check_definition_id;
+    if (owner) props.owned.replace({ ...props.owned.query(), open: owner });
+  },
+  { immediate: true },
+);
 const selected = computed(() => (sheet.openId.value && !definitionOpen.value ? all.value.find((m) => m.id === sheet.openId.value) : undefined));
 
 /**
@@ -676,7 +704,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
           <LockKeyhole class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.empty.tls') }}
         </Button>
-        <Button variant="outline" size="sm" type="button" @click="emit('pathSet')">
+        <Button v-if="canEditPathSet" variant="outline" size="sm" type="button" @click="emit('pathSet')">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.paths.empty.pathSet') }}
         </Button>
@@ -811,13 +839,14 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :list-loading="definitionsLoading"
       :list-error="definitionsError && !definitions.length ? definitionsError : null"
       :paths="openDefinitionPaths"
+      :skipped="openDefinitionSkipped"
       :nodes="nodes"
       :groups="groups"
       :can-admin="canAdmin"
       :owned="owned"
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
-      @edit="(d) => emit('editDefinition', d)"
+      @edit="(d, f) => emit('editDefinition', d, f)"
       @retry="emit('retryDefinitions')"
       @changed="emit('changed')"
     />
@@ -905,7 +934,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       </div>
       <template v-if="canAdmin && selected" #actions>
         <template v-if="selected.managed_by">
-          <Button variant="outline" size="sm" type="button" @click="emit('pathSet')">
+          <Button v-if="canEditPathSet && selected.managed_by === 'latency'" variant="outline" size="sm" type="button" @click="emit('pathSet')">
             <Settings2 class="size-4" aria-hidden="true" />
             {{ $t('fleet.monitoring.paths.sheet.editPathSet') }}
           </Button>

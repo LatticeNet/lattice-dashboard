@@ -12,7 +12,9 @@
  * click elsewhere never closes it; Escape and the close button do, and return
  * focus to the row that opened it (useRouteOpen). Opening focuses the title,
  * not the first control: Enter from a keyboard-opened sheet must not follow
- * "Open page", which appears when the object has a route of its own.
+ * "Open page", which appears when the object has a route of its own. The
+ * title's ring shows only when a key press opened the sheet (inputModality),
+ * never after a click or a link.
  *
  * While it is modal the sheet also hosts the console's toaster (an empty
  * element at the end of its content, see lib/toastHost), so a toast raised
@@ -38,6 +40,7 @@ import { SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useObjectTitle } from "@/layout/useObjectTitle";
+import { lastInputWasKeyboard, watchInputModality } from "@/lib/inputModality";
 import { registerToastHost } from "@/lib/toastHost";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +59,8 @@ const props = withDefaults(
     returnFocus?: () => HTMLElement | null;
     /** Monospace title, for an address or an id. */
     monoTitle?: boolean;
+    /** Wrap a long title instead of cutting it, for a title that names two things (a path's source and target). */
+    wrapTitle?: boolean;
     /** Monospace subtitle; the default, since a subtitle is usually an id. */
     monoSubtitle?: boolean;
     /** What the gone state says, when the page can name what is gone. */
@@ -106,11 +111,14 @@ function onInteractOutside(event: Event): void {
   event.preventDefault();
 }
 
+watchInputModality();
+
 /** Land on the title, so Enter does not follow the first link in the header. */
 function onOpenAutoFocus(event: Event): void {
   const title = header.value?.querySelector<HTMLElement>("[data-slot='dialog-title']");
   if (!title) return;
   event.preventDefault();
+  title.dataset.ring = lastInputWasKeyboard() ? "on" : "off";
   title.focus();
 }
 
@@ -155,7 +163,8 @@ useObjectTitle(() => (props.open && showBody.value ? props.title : undefined));
               cn(
                 // w-fit: the focus ring hugs the title instead of drawing a
                 // full-width box that read as a text field after a reload.
-                'w-fit max-w-full truncate rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                'w-fit max-w-full rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 data-[ring=off]:focus-visible:ring-0',
+                wrapTitle ? 'break-words' : 'truncate',
                 monoTitle && 'font-mono',
               )
             "

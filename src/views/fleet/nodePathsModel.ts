@@ -22,15 +22,17 @@ export interface NodePaths {
   reaches: PathItem[];
 }
 
-const DISPLAY_RANK: Record<PathDisplay, number> = { down: 0, degraded: 1, unknown: 2, paused: 3, up: 4 };
+const DISPLAY_RANK: Record<PathDisplay, number> = { down: 0, degraded: 1, unknown: 2, paused: 3, skipped: 4, up: 5 };
 
-/** Down first, then degraded, unknown, paused and up; within a state the lossiest, then the slowest. */
+/** Down first, then degraded, unknown, paused, skipped and up; within a state the lossiest, then the slowest. */
 export function worstFirst(a: PathItem, b: PathItem): number {
   return (
     DISPLAY_RANK[displayState(a)] - DISPLAY_RANK[displayState(b)] ||
     (b.loss ?? 0) - (a.loss ?? 0) ||
     (b.p50Ms ?? -1) - (a.p50Ms ?? -1) ||
-    a.key.localeCompare(b.key)
+    a.key.localeCompare(b.key) ||
+    // Two checks on one pair share its key (design 32 R1): their own ids keep the order stable.
+    a.id.localeCompare(b.id)
   );
 }
 
@@ -55,10 +57,16 @@ export function nodePaths(matrix: Pick<PathsMatrix, "paths"> | undefined, nodeId
   return out;
 }
 
-/** The other end of a path as the node's list names it: the source for "reached by", the target (node or check) for "reaches". */
+/**
+ * The other end of a path as the node's list names it: the source for
+ * "reached by", the target (node or check) for "reaches", and the check
+ * that measures it by name (design 32 R3), except on a check to an address,
+ * whose target is named by the check already.
+ */
 export function otherEnd(path: PathItem, side: "reachedBy" | "reaches"): { name: string; check?: string } {
-  if (side === "reachedBy") return { name: path.sourceName || path.source, check: !path.managed ? path.checkName || path.monitorId : undefined };
-  return { name: targetLabel(path), check: !path.managed && path.targetNode ? path.checkName : undefined };
+  const check = path.checkName || path.checkId;
+  if (side === "reachedBy") return { name: path.sourceName || path.source, check };
+  return { name: targetLabel(path), check: path.targetNode ? check : undefined };
 }
 
 /** The Paths layer query that lists all of a list's paths: by target name, or by source name. */
@@ -68,7 +76,7 @@ export function monitoringQuery(side: "reachedBy" | "reaches", nodeName: string)
 
 /** Counts by display state, for the list's heading. */
 export function stateCounts(paths: readonly PathItem[]): Record<PathDisplay, number> {
-  const out: Record<PathDisplay, number> = { up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
+  const out: Record<PathDisplay, number> = { up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, skipped: 0 };
   for (const p of paths) out[displayState(p)] += 1;
   return out;
 }

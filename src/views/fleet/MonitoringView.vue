@@ -4,20 +4,20 @@
  * the bare URL.
  *
  *   Overview   what needs a look, and how far each source reaches
- *   Network    every path, as a graph or a list, with one query; an edge or a
+ *   Topology   every path, as a graph or a list, with one query; an edge or a
  *              row opens the path sheet in place, a node the node sheet
  *   Checks     every check in one list, the editor, the path set, history retention
  *   Incidents  the incidents the server holds
  *
  * One ?window= for the page (1h to 7d, and 14d when fine history is kept that
  * long). Old links keep working: ?view=paths and ?view=latency land on the
- * Network view's list (an old ?pair= on the path sheet), ?view=topology on
- * the Network view, ?view=monitors on Checks, the keepalive spelling on
+ * Topology list (an old ?pair= on the path sheet), ?view=topology (the view's
+ * name for one release) on Topology, ?view=monitors on Checks, the keepalive spelling on
  * Incidents, and a link that names a monitor or a node (?open=, ?node=, the
  * old /monitoring/:id) on Checks.
  *
  * Every count the page shows comes from the one matrix read (design 32 D1):
- * the proof line, Overview and the Network view say the same number.
+ * the proof line, Overview and the Topology view say the same number.
  *
  * The page owns the reads every layer shares (monitors, nodes, incidents and
  * the path reads in usePathsData) and the editors, so Overview and Network
@@ -59,12 +59,13 @@ import RetentionSheet from "./RetentionSheet.vue";
 import WindowControl from "./WindowControl.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
-import { DEFAULT_WINDOW, MONITORING_LAYERS, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
+import { DEFAULT_WINDOW, MONITORING_LAYERS, everyPath, legacyMonitoringRedirect, parseWindow, reachBySource, type MonitoringLayer } from "./pathsModel";
 import { usePathsData } from "./usePathsData";
 import { isReachabilityCheck, replanMissingScopes, replanStep, replanSurface, type BeaconReplanItem } from "./beaconModel";
 import { BEACON_REPLAN } from "./useBeaconReplan";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
+import type { DefinitionFix } from "./definitionsModel";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -172,6 +173,7 @@ const data = usePathsData({
   requested: windowParam,
   canRead: canReadMonitors,
   checkName: (id) => monitorNames.value.get(id),
+  definitionName: (id) => definitions.value.find((d) => d.id === id)?.name,
   nodeName: (id) => nodesQuery.data.value?.find((n) => n.id === id)?.name,
   controlPlane: () => t("fleet.monitoring.result.controlPlane"),
 });
@@ -280,23 +282,30 @@ provide(BEACON_REPLAN, {
   opening: replanOpening,
 });
 
-/** The path set exists and has no source: nothing is measured, and the empty state says why. */
+/** The path set is read and not migrated into check definitions (design 32 R1): only then is its editor offered. */
+const canEditPathSet = computed(() => {
+  const plan = data.planQuery.data.value;
+  return !!plan && !plan.config.migrated;
+});
+
+/** The path set exists, is not migrated, and has no source: nothing is measured, and the empty state says why. */
 const noSources = computed(() => {
   const plan = data.planQuery.data.value;
-  return !!plan && plan.stored && (plan.config.sources ?? []).length === 0;
+  return !!plan && plan.stored && !plan.config.migrated && (plan.config.sources ?? []).length === 0;
 });
 
 /**
- * The node a generated check reaches, by check id, so a path.degraded
- * incident names and opens its path (design 29 D13): the check's own
- * target_node, else the node its generated paths in the matrix reach.
+ * The node a check reaches, by check id, so a path.degraded incident names
+ * and opens its path (design 29 D13): a path to a node is the pair whichever
+ * check measures it (design 32 R1), so any check's own target_node, else the
+ * node its paths in the matrix reach.
  */
 const monitorTargets = computed(() => {
   const fromPaths = new Map<string, string>();
-  for (const p of matrix.value?.paths ?? []) if (p.managed && p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
+  for (const p of matrix.value ? everyPath(matrix.value) : []) if (p.targetNode && p.monitorId) fromPaths.set(p.monitorId, p.targetNode);
   return new Map((monitorsQuery.data.value ?? []).map((m) => {
     const generated = m.managed_by === "latency";
-    return [m.id, { generated, targetNode: generated ? (m.target_node ?? fromPaths.get(m.id)) : undefined }];
+    return [m.id, { generated, targetNode: m.target_node ?? fromPaths.get(m.id) }];
   }));
 });
 
@@ -323,10 +332,10 @@ const monitorsProof = useProof(monitorsQuery);
 const incidentsProof = useProof(incidentsQuery);
 const proof = computed(() => (layer.value === "incidents" ? incidentsProof.value : layer.value === "checks" ? monitorsProof.value : pathsProof.value));
 
-/** The Network view's list under a query: on the Network view already, the mode the operator chose stays. */
+/** The Topology view's list under a query: on the Topology view already, the mode the operator chose stays. */
 function pathsLink(q: string) {
   const query = owned.query();
-  return { name: "monitoring", query: { ...query, view: "network", as: layer.value === "network" ? query.as : "list", "paths.q": q, path: undefined, peek: undefined } };
+  return { name: "monitoring", query: { ...query, view: "topology", as: layer.value === "topology" ? query.as : "list", "paths.q": q, path: undefined, peek: undefined } };
 }
 
 const proofSegments = computed<ProofSegment[]>(() => {
@@ -351,7 +360,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const m = matrix.value;
   if (!m) return [];
   const out: ProofSegment[] = [{ key: "paths", tone: "strong", text: t("fleet.monitoring.paths.proof.paths", { n: m.counts.paths }, m.counts.paths) }];
-  // Nodes that run a path, as the Network view's source picker counts them: the control plane is not one.
+  // Nodes that run a path, as the Topology view's source picker counts them: the control plane is not one.
   const sources = reachBySource(m).filter((r) => r.source && r.total > 0).length;
   if (sources > 1) out.push({ key: "sources", text: t("fleet.monitoring.paths.proof.sources", { n: sources }, sources) });
   if (m.counts.down) out.push({ key: "down", tone: "destructive", text: t("fleet.monitoring.paths.proof.down", { n: m.counts.down }), to: pathsLink("state:down") });
@@ -359,7 +368,6 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (m.judgesDegraded && m.counts.degraded) out.push({ key: "degraded", tone: "warning", text: t("fleet.monitoring.paths.proof.degraded", { n: m.counts.degraded }), to: pathsLink("state:degraded") });
   // Amber means degraded wherever a path state is shown: unknown is muted.
   if (m.counts.unknown) out.push({ key: "unknown", tone: "muted", text: t("fleet.monitoring.paths.proof.unknown", { n: m.counts.unknown }), to: pathsLink("state:unknown") });
-  if (m.counts.paused) out.push({ key: "paused", tone: "muted", text: t("fleet.monitoring.paths.proof.paused", { n: m.counts.paused }), to: pathsLink("state:paused") });
   if (data.source.value === "legacy") out.push({ key: "legacy", tone: "muted", text: t("fleet.monitoring.paths.proof.legacy") });
   return out;
 });
@@ -371,7 +379,7 @@ const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
     count: matrix.value?.counts.down || undefined,
     tone: matrix.value?.counts.down ? "destructive" : "default",
   },
-  { value: "network", label: t("fleet.monitoring.layers.network") },
+  { value: "topology", label: t("fleet.monitoring.layers.topology") },
   {
     value: "checks",
     label: t("fleet.monitoring.layers.checks"),
@@ -418,6 +426,8 @@ const editorType = ref<MonitorType | undefined>();
 const definitionEditorOpen = ref(false);
 const definitionEditing = ref<CheckDefinitionView | undefined>();
 const definitionType = ref<MonitorType | undefined>();
+/** The change a check sheet's fix asked for (design 32 R2): the edit opens with it made. */
+const definitionFix = shallowRef<DefinitionFix>();
 const pathSetOpen = ref(false);
 const retentionOpen = ref(false);
 
@@ -434,7 +444,7 @@ function fromSheet(then: () => void): void {
   const query = owned.query();
   const open = typeof query.open === "string" ? query.open : undefined;
   const path = typeof query.path === "string" ? query.path : undefined;
-  // The Network view's node sheet (?peek=) is one of them: "New check" sits in that view's header.
+  // The Topology view's node sheet (?peek=) is one of them: "New check" sits in that view's header.
   const peek = typeof query.peek === "string" ? query.peek : undefined;
   if (!open && !path && !peek) {
     returnTo = null;
@@ -456,14 +466,16 @@ function backToSheet(): void {
 function openCreate(type?: MonitorType): void {
   fromSheet(() => {
     definitionEditing.value = undefined;
+    definitionFix.value = undefined;
     definitionType.value = type === "http" || type === "tls" || type === "tcp" || type === "icmp" || type === "beacon" ? type : undefined;
     definitionEditorOpen.value = true;
   });
 }
 
-function openEditDefinition(definition: CheckDefinitionView): void {
+function openEditDefinition(definition: CheckDefinitionView, fix?: DefinitionFix): void {
   fromSheet(() => {
     definitionEditing.value = definition;
+    definitionFix.value = fix;
     definitionType.value = undefined;
     definitionEditorOpen.value = true;
   });
@@ -545,7 +557,7 @@ const shortestIntervalSec = computed(() => {
   return list.length ? Math.min(...list) : undefined;
 });
 
-/** Counts the page's refreshes, so the Network view rereads its own chains read with the rest. */
+/** Counts the page's refreshes, so the Topology view rereads its own chains read with the rest. */
 const refreshTick = ref(0);
 function refreshAll(): void {
   refreshTick.value += 1;
@@ -575,7 +587,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
         </Button>
-        <Button v-if="canAdminMonitors && (layer === 'checks' || layer === 'network')" size="sm" type="button" data-testid="check-create" @click="openCreate()">
+        <Button v-if="canAdminMonitors && (layer === 'checks' || layer === 'topology')" size="sm" type="button" data-testid="check-create" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.create') }}
         </Button>
@@ -603,12 +615,13 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :failure-of="failureOf"
         :node-seen="nodeSeen"
         :no-sources="noSources"
+        :can-edit-path-set="canEditPathSet"
         @path-set="openPathSet"
         @create-check="openCreate()"
       />
 
       <NetworkLayer
-        v-if="layer === 'network'"
+        v-if="layer === 'topology'"
         :owned="owned"
         :data="data"
         :nodes-query="nodesQuery"
@@ -619,6 +632,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :offered="data.offered.value"
         :failure-of="failureOf"
         :no-sources="noSources"
+        :can-edit-path-set="canEditPathSet"
         :agent-of="agentOf"
         :refresh-tick="refreshTick"
         @path-set="openPathSet"
@@ -643,6 +657,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :definitions-loading="definitionsQuery.loading.value && definitionsQuery.data.value === undefined"
         :definitions-error="definitionsQuery.error.value?.message ?? null"
         :groups="groups"
+        :can-edit-path-set="canEditPathSet"
         @window="(w) => (windowParam = w)"
         @create="openCreate"
         @edit="openEdit"
@@ -689,6 +704,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       v-if="canAdminMonitors"
       :open="definitionEditorOpen"
       :definition="definitionEditing"
+      :fix="definitionFix"
       :initial-type="definitionType"
       :nodes="nodes"
       :groups="groups"
@@ -699,7 +715,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
       @reload="refreshAll"
     />
     <PathSetSheet
-      v-if="canAdminMonitors && plan"
+      v-if="canAdminMonitors && plan && canEditPathSet"
       :open="pathSetOpen"
       :plan="plan"
       :nodes="nodes"

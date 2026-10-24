@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
- * The Network view's list mode (design 32 D2): every path the page's query
+ * The Topology view's list mode (design 32 D2): every path the page's query
  * keeps, one row each, grouped by the target's region (checks to an address
  * last), worst first. A column header sorts inside the groups and a `sort:`
  * term in the query does the same; a header click hands the order back from
  * the query. A row opens the path sheet (?path=), and Escape brings focus
  * back to it.
  *
- * Each row carries what the matrix response has for the path: the state in
- * words (unknown with its reason), p50, p95, jitter, loss, availability, the
- * last run, the method and the check. A figure column no path of the matrix
+ * Each row is one check's measurement of a path, so a pair two checks measure
+ * has two rows that open the same path sheet. It carries what the matrix
+ * response has: the state in words (unknown with its reason), p50, p95,
+ * jitter, loss, availability, the last run, the method and the check's name
+ * (design 32 R3). A figure column no path of the matrix
  * has (a server from before design 29 keeps no jitter) is not shown. In a
  * view narrower than the table needs (networkModel.ROOMY_W) the rows become a
  * list grouped by target, one line per source, the figures in a second line.
@@ -74,17 +76,20 @@ const columns = computed<DataTableColumn<PathItem>[]>(() => [
 ]);
 
 /** Worst first when sorted ascending, as the list's own order is. */
-const STATE_ORDER: Record<string, number> = { down: 0, degraded: 1, unknown: 2, paused: 3, up: 4 };
+const STATE_ORDER: Record<string, number> = { down: 0, degraded: 1, unknown: 2, paused: 3, skipped: 4, up: 5 };
 const DOT: Record<string, string> = {
   up: "bg-success",
   degraded: "bg-warning",
   down: "bg-destructive",
   unknown: "border border-muted-foreground bg-transparent",
   paused: "bg-muted-foreground/50",
+  skipped: "border border-dashed border-muted-foreground bg-transparent",
 };
-const STATE_INK: Record<string, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground" };
+const STATE_INK: Record<string, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground", skipped: "text-muted-foreground" };
 
-const checkLabel = (p: PathItem) => (p.managed ? t("fleet.monitoring.network.pathSet") : p.checkName || p.monitorId);
+const checkLabel = (p: PathItem) => p.checkName || p.checkId;
+/** The open path's first row: every row of the pair opens the same sheet. */
+const activeRow = computed(() => (props.sheet.openId.value ? props.rows.find((p) => p.key === props.sheet.openId.value)?.id : undefined));
 
 /** The state in words, and the reason beside it: unknown always says why (design 32 D1). */
 function stateWords(p: PathItem): { word: string; why: string; title: string } {
@@ -95,7 +100,6 @@ function stateWords(p: PathItem): { word: string; why: string; title: string } {
     const why = whyText(p, !p.reason ? props.failureOf(p.monitorId, p.source) : undefined);
     return { word: displayLabel(p), why: "", title: why };
   }
-  if (state === "paused") return { word: displayLabel(p), why: reasonShort(p.reason), title: whyText(p) };
   return { word: displayLabel(p), why: reasonShort(p.reason), title: whyText(p) };
 }
 
@@ -143,14 +147,14 @@ const groupCounts = computed(() => {
       data-testid="network-list"
       :columns="columns"
       :rows="rows"
-      :row-key="(p) => p.key"
+      :row-key="(p) => p.id"
       :external-sort="querySorted"
       :has-data="true"
       :searchable="false"
       :expression-filter="false"
       :show-summary="false"
       :row-click="(p, el) => emit('open', p.key, el)"
-      :active-row-id="sheet.openId.value"
+      :active-row-id="activeRow"
       :group-key="listGroup"
       :group-order="LIST_GROUP_ORDER"
       state-key="paths.list"
@@ -166,7 +170,7 @@ const groupCounts = computed(() => {
         <span class="block max-w-52 truncate font-medium" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
         <span class="block max-w-52 truncate font-mono text-xs text-muted-foreground" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
       </template>
-      <!-- The source, and what it measures with: the method and the check, the path set's or an operator's. -->
+      <!-- The source, and what it measures with: the method and the check's name. -->
       <template #cell-source="{ row }">
         <span class="block max-w-42 truncate" :title="row.sourceName">{{ row.sourceName }}</span>
         <span class="flex max-w-42 min-w-0 items-center gap-1.5 text-xs text-muted-foreground" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
@@ -214,7 +218,7 @@ const groupCounts = computed(() => {
               <span v-if="target.detail" class="block truncate font-mono text-xs text-muted-foreground">{{ target.detail }}</span>
             </div>
             <ul class="pb-1.5">
-              <li v-for="p in target.paths" :key="p.key">
+              <li v-for="p in target.paths" :key="p.id">
                 <button
                   type="button"
                   :class="cn('relative grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', sheet.openId.value === p.key && 'bg-muted/50')"
@@ -230,7 +234,7 @@ const groupCounts = computed(() => {
                       <span class="truncate">{{ $t('fleet.monitoring.paths.list.from', { source: p.sourceName }) }}</span>
                     </span>
                     <!-- The method and the check on their own line, so a long source never cuts them mid-word. -->
-                    <span class="block truncate ps-3.5 text-xs text-muted-foreground"><span class="font-mono">{{ p.method.toUpperCase() }}</span><template v-if="!p.managed"> · {{ checkLabel(p) }}</template></span>
+                    <span class="block truncate ps-3.5 text-xs text-muted-foreground"><span class="font-mono">{{ p.method.toUpperCase() }}</span> · {{ checkLabel(p) }}</span>
                     <span v-if="displayState(p) !== 'up'" :class="cn('block text-xs', STATE_INK[displayState(p)])">
                       {{ stateWords(p).why ? `${stateWords(p).word}: ${stateWords(p).why}` : stateWords(p).title ? `${stateWords(p).word}: ${stateWords(p).title}` : stateWords(p).word }}
                     </span>
