@@ -10,9 +10,10 @@
  *     editor open with its draft, and names the compared paths that changed
  *     between the version the editor opened (base) and the server's now;
  *   - any other refusal keeps its message, and when the server named a
- *     field, focuses the control that edits it and marks it invalid,
- *     described by the message, until the operator edits the draft or
- *     clear() runs.
+ *     field, focuses the control that edits it (refusalFocusIndex; never a
+ *     button), marks it invalid and puts the message under it, so the
+ *     reason sits where the eye lands in a tall editor, until the operator
+ *     edits the draft or clear() runs.
  *
  * The editor answers the conflict itself: reload theirs (take latest as the
  * new base and draft) or save mine over it (save the draft naming latest's
@@ -20,7 +21,7 @@
  */
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch, type Ref, type WatchSource } from "vue";
 
-import { changedFields, isVersionConflict, refusalOf, resolveField, type SaveRefusal } from "@/lib/saveRefusal";
+import { changedFields, isVersionConflict, refusalFocusIndex, refusalOf, resolveField, type SaveRefusal } from "@/lib/saveRefusal";
 
 export interface SaveConflict<T> {
   /** The server's version now: what reload takes, and whose version an overwrite names. */
@@ -51,7 +52,24 @@ export interface HandleOptions<T> {
 
 let sequence = 0;
 
-const FOCUSABLE = "input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1'])";
+const FOCUSABLE = "input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
+
+/** The control in holder a refusal focuses, the holder itself when no other fits. */
+function focusTarget(holder: HTMLElement): HTMLElement {
+  if (holder.matches(FOCUSABLE) || holder.getAttribute("tabindex") === "-1") return holder;
+  // A roving group leaves its other options out of the tab order, and a
+  // form library's hidden mirror input is not the operator's control.
+  const controls = Array.from(holder.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.tabIndex >= 0 && el.getAttribute("aria-hidden") !== "true");
+  const at = refusalFocusIndex(
+    controls.map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute("type")?.toLowerCase() ?? undefined,
+      role: el.getAttribute("role") ?? undefined,
+      checked: (el as HTMLInputElement).checked === true || el.getAttribute("aria-checked") === "true",
+    })),
+  );
+  return controls[at] ?? holder;
+}
 
 export function useSaveRefusal<T>(options: SaveRefusalOptions) {
   const refusal = ref<SaveRefusal>();
@@ -69,7 +87,7 @@ export function useSaveRefusal<T>(options: SaveRefusalOptions) {
     marked.value = undefined;
   }
 
-  function mark(field: string | undefined): void {
+  function mark(field: string | undefined, message: string): void {
     unmark();
     const root = options.root.value;
     if (!root || !field) return;
@@ -80,24 +98,35 @@ export function useSaveRefusal<T>(options: SaveRefusalOptions) {
     );
     const holder = holders.find((el) => el.dataset.field === path);
     if (!holder || !path) return;
-    const control = holder.matches(FOCUSABLE) ? holder : holder.querySelector<HTMLElement>(FOCUSABLE);
-    const priorInvalid = control?.getAttribute("aria-invalid");
-    const priorDescribed = control?.getAttribute("aria-describedby");
+    const control = focusTarget(holder);
+    const priorInvalid = control.getAttribute("aria-invalid");
+    const priorDescribed = control.getAttribute("aria-describedby");
+    const priorTabindex = control.getAttribute("tabindex");
+    // The reason under the control, beside the footer's line, which may sit
+    // a screen away. A control that holds no children takes it after itself.
+    const note = document.createElement("p");
+    note.id = `${messageId}-field`;
+    note.className = "basis-full pt-1 text-xs text-destructive";
+    note.dataset.testid = "save-refusal-field";
+    note.textContent = message;
+    if (holder.matches("input, select, textarea, button")) holder.after(note);
+    else holder.append(note);
     holder.dataset.invalid = "true";
-    if (control) {
-      control.setAttribute("aria-invalid", "true");
-      control.setAttribute("aria-describedby", [priorDescribed, messageId].filter(Boolean).join(" "));
-      control.focus({ preventScroll: false });
-      control.scrollIntoView?.({ block: "nearest" });
-    }
+    control.setAttribute("aria-invalid", "true");
+    control.setAttribute("aria-describedby", [priorDescribed, note.id].filter(Boolean).join(" "));
+    if (control === holder && !holder.matches(FOCUSABLE)) control.setAttribute("tabindex", "-1");
+    control.focus({ preventScroll: false });
+    control.scrollIntoView?.({ block: "nearest" });
     marked.value = path;
     undo = () => {
       delete holder.dataset.invalid;
-      if (!control) return;
+      note.remove();
       if (priorInvalid === null) control.removeAttribute("aria-invalid");
-      else control.setAttribute("aria-invalid", priorInvalid ?? "");
+      else control.setAttribute("aria-invalid", priorInvalid);
       if (priorDescribed === null) control.removeAttribute("aria-describedby");
-      else control.setAttribute("aria-describedby", priorDescribed ?? "");
+      else control.setAttribute("aria-describedby", priorDescribed);
+      if (priorTabindex === null) control.removeAttribute("tabindex");
+      else control.setAttribute("tabindex", priorTabindex);
     };
   }
 
@@ -130,7 +159,7 @@ export function useSaveRefusal<T>(options: SaveRefusalOptions) {
     conflict.value = undefined;
     refusal.value = refusalOf(error, how.fallback);
     await nextTick();
-    mark(refusal.value.field);
+    mark(refusal.value.field, refusal.value.message);
     return "refused";
   }
 

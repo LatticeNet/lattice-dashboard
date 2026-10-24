@@ -89,6 +89,43 @@ export function changedFields(base: unknown, current: unknown, paths: readonly s
   return paths.filter((path) => JSON.stringify(comparable(valueAt(base, path))) !== JSON.stringify(comparable(valueAt(current, path))));
 }
 
+/** What a refusal's focus reads of a focusable control inside the marked holder. */
+export interface FocusCandidate {
+  tag: string;
+  type?: string;
+  role?: string;
+  /** A radio, or role="radio", that is the chosen option. */
+  checked?: boolean;
+}
+
+/**
+ * Which of the marked holder's focusable controls, in document order, a
+ * refusal focuses: the chosen option of a choice, else the first control
+ * that takes input, else the first other widget. -1 when only buttons and
+ * links are left, and the holder takes focus itself: in a selector the
+ * first button removes a chip, one keypress from losing it.
+ */
+export function refusalFocusIndex(candidates: readonly FocusCandidate[]): number {
+  const rank = (c: FocusCandidate): number => {
+    const choice = c.role === "radio" || (c.tag === "input" && c.type === "radio");
+    if (choice && c.checked) return 0;
+    if (c.tag === "textarea" || c.tag === "select" || (c.tag === "input" && !choice && c.type !== "checkbox")) return 1;
+    if (c.tag === "input" || c.role) return 2;
+    if (c.tag !== "button" && c.tag !== "a") return 3;
+    return Number.POSITIVE_INFINITY;
+  };
+  let best = -1;
+  let bestRank = Number.POSITIVE_INFINITY;
+  candidates.forEach((c, i) => {
+    const r = rank(c);
+    if (r < bestRank) {
+      best = i;
+      bestRank = r;
+    }
+  });
+  return best;
+}
+
 /** Whether error is a save that lost a race to another save. */
 export function isVersionConflict(error: unknown): boolean {
   return error instanceof ApiError && error.isVersionConflict;

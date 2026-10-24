@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ApiError } from "../api/client.ts";
-import { changedFields, isVersionConflict, pathSteps, refusalOf, resolveField, valueAt } from "../saveRefusal.ts";
+import { changedFields, isVersionConflict, pathSteps, refusalFocusIndex, refusalOf, resolveField, valueAt } from "../saveRefusal.ts";
 
 // Design 32 R6: the server names the deepest field it can; the editor
 // registers the controls it has. The longest registered ancestor wins.
@@ -18,6 +18,23 @@ test("a server path lands on the control that edits it", () => {
   assert.equal(resolveField("names", registered), undefined);
   assert.equal(resolveField("degraded", registered), undefined);
   assert.equal(resolveField(undefined, registered), undefined);
+});
+
+// A refusal focuses the control that edits the field, never a button: in a
+// selector the first button removes a chip, one keypress from losing it.
+test("a refusal focuses the chosen option, else the field that takes input, else a widget, never a button", () => {
+  const remove = { tag: "button" };
+  const search = { tag: "input", type: "search" };
+  assert.equal(refusalFocusIndex([remove, remove, search]), 2);
+  const radio = { tag: "input", type: "radio" };
+  assert.equal(refusalFocusIndex([radio, { ...radio, checked: true }, { tag: "input", type: "number" }]), 1);
+  assert.equal(refusalFocusIndex([{ tag: "button", role: "radio" }, { tag: "button", role: "radio", checked: true }]), 1);
+  assert.equal(refusalFocusIndex([{ tag: "button" }, { tag: "textarea" }, { tag: "select" }]), 1);
+  assert.equal(refusalFocusIndex([remove, { tag: "button", role: "switch" }]), 1);
+  assert.equal(refusalFocusIndex([radio, { tag: "input", type: "checkbox" }]), 0);
+  // Only buttons: the holder itself takes focus.
+  assert.equal(refusalFocusIndex([remove, { tag: "button" }]), -1);
+  assert.equal(refusalFocusIndex([]), -1);
 });
 
 test("paths walk keys and indexes", () => {

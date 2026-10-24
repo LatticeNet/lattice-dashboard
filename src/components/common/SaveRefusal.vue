@@ -4,9 +4,10 @@
  * refusal, naming the field it marked, or the version conflict, naming what
  * changed on the server with the two ways out. The draft is never dropped
  * here; the editor decides what reload and overwrite mean
- * (useSaveRefusal).
+ * (useSaveRefusal). A conflict takes focus when it appears, since the Save
+ * button that had it is now disabled.
  */
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { AlertTriangle, RefreshCw } from "lucide-vue-next";
 
@@ -48,16 +49,28 @@ const changedLabels = computed(() => {
 
 const savedBy = computed(() => {
   if (!props.by && !props.at) return "";
-  if (props.by && props.at) return t("common.saveRefusal.savedByAt", { who: props.by, when: formatRelativeTime(props.at) });
-  if (props.by) return t("common.saveRefusal.savedBy", { who: props.by });
-  return t("common.saveRefusal.savedAt", { when: formatRelativeTime(props.at!) });
+  if (!props.at) return t("common.saveRefusal.savedBy", { who: props.by });
+  // Under a minute reads "just now"; a relative "now" reads as an order in Chinese.
+  const justNow = Math.abs(Date.now() - new Date(props.at).getTime()) < 60_000;
+  if (props.by) return justNow ? t("common.saveRefusal.savedByJustNow", { who: props.by }) : t("common.saveRefusal.savedByAt", { who: props.by, when: formatRelativeTime(props.at) });
+  return justNow ? t("common.saveRefusal.savedJustNow") : t("common.saveRefusal.savedAt", { when: formatRelativeTime(props.at) });
 });
+
+const conflictEl = ref<HTMLElement>();
+watch(
+  () => props.changed,
+  (now, before) => {
+    if (now && !before) void nextTick(() => conflictEl.value?.focus());
+  },
+);
 
 </script>
 
 <template>
   <div
     v-if="changed"
+    ref="conflictEl"
+    tabindex="-1"
     role="alert"
     class="basis-full rounded-md border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs"
     data-testid="save-conflict"
