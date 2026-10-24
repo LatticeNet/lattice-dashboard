@@ -79,3 +79,22 @@ test("every scope the nav gates on can be granted from the scope picker", () => 
     "these scopes gate a page but cannot be selected when issuing a token",
   );
 });
+
+// Design 32 D3: the renamed pages and the Networking order by layer (the two
+// plugin pages are placed around Outbound policy by navigationModel).
+test("networking pages are named by direction and ordered by layer", () => {
+  const networking = NAV.find((section) => section.id === "networking");
+  assert.deepEqual(
+    networking?.items.map((item) => [item.name, item.title, item.path]),
+    [
+      ["network-outbound-policy", "Outbound policy", "/network/outbound"],
+      ["network-dns", "Self-host DNS", "/network/dns"],
+      ["network-ddns", "DDNS", "/network/ddns"],
+      ["network-geo-routing", "Geo-Routing", "/network/geo-routing"],
+      ["network-tunnels", "Tunnels", "/network/tunnels"],
+      ["network-ssh-guard", "SSH Guard", "/network/ssh-guard"],
+    ],
+  );
+  const groups = NAV.flatMap((section) => section.items).find((item) => item.name === "groups");
+  assert.deepEqual([groups?.title, groups?.path], ["Node groups", "/node-groups"]);
+});

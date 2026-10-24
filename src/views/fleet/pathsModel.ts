@@ -247,6 +247,8 @@ export const UNKNOWN_REASONS = [
   "beacon_unknown_epoch",
   "beacon_rate_limited",
   "beacon_no_key",
+  // Design 32 D1: a check definition's pair the control plane paused to keep its source under the packet budget.
+  "packet_budget",
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
 
@@ -649,8 +651,8 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
 /**
  * What a path is said to reach: its target node when it has one (a check to
  * a node is a path between two nodes, design 32 D1), else its row's name (a
- * check to an address is named by the check). The query's `target:` keeps
- * reading the row's name, so the attention list's links find what they did.
+ * check to an address is named by the check). The query's `target:` reads
+ * both, and the attention list's links name their paths by key.
  */
 export function targetLabel(path: Pick<PathItem, "targetNodeName" | "targetName">): string {
   return path.targetNodeName || path.targetName;
@@ -815,32 +817,33 @@ export function quoteQueryValue(value: string): string {
   return /[\s:"(),]/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
 }
 
-function targetList(paths: readonly PathItem[]): string {
-  return [...new Set(paths.map((p) => p.targetName))].map(quoteQueryValue).join(",");
+/** The item's paths by their exact keys, in the item's order. */
+function pathKeyList(paths: readonly PathItem[]): string {
+  return [...new Set(paths.map((p) => p.key))].map(quoteQueryValue).join(",");
 }
 
 /**
- * Show's query lists exactly the paths the item counts, so every name and
- * reason in it matches whole (`:=`): `target:tyo-3` would also find the
- * check "tyo-3 web" from the same source, and `source:hk-edge` a source
- * named "hk-edge-2".
+ * Show's query lists exactly the paths the item counts, by their path keys
+ * (`path:=`), never by a name: a target's name also matches a check named
+ * after it, and since a check to a node is drawn between two nodes (design
+ * 32 D1) `target:` matches the node's name on every check that reaches it.
+ * A re-plan can wait on no path yet (it only narrows NetGuard's allow set);
+ * its query then names the target and the reason, matched whole (`:=`).
  */
 export function attentionQuery(item: PathAttention): string {
   switch (item.kind) {
     case "down":
-      return `state:down target:=${quoteQueryValue(item.targetName)}`;
-    // A source item lists its own targets: the source's other bad paths carry a different verdict
-    // (the target) and sit in another item, so the source alone would list more than the item counts.
     case "downSource":
-      return `state:down source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
+      return `state:down path:=${pathKeyList(item.paths)}`;
     case "degraded":
-      return `state:degraded target:=${quoteQueryValue(item.targetName)}`;
     case "degradedSource":
-      return `state:degraded source:=${quoteQueryValue(item.sourceName)} target:=${targetList(item.paths)}`;
+      return `state:degraded path:=${pathKeyList(item.paths)}`;
     case "offline":
       return `state:unknown source:=${quoteQueryValue(item.sourceName)}`;
     case "replan":
-      return `state:unknown target:=${quoteQueryValue(item.targetName)} reason:=${item.replan.reason}`;
+      return item.paths.length
+        ? `state:unknown path:=${pathKeyList(item.paths)}`
+        : `state:unknown target:=${quoteQueryValue(item.targetName)} reason:=${item.replan.reason}`;
     case "unknown":
       return `state:unknown reason:=${quoteQueryValue(item.reason)}`;
     case "paused":
@@ -952,7 +955,18 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
   };
   const percent = (share: number | undefined) => (share === undefined ? undefined : share * 100);
   const fields: QueryField<PathItem>[] = [
-    { key: "target", aliases: ["to"], type: "string", hint: hint("target"), get: (p) => p.targetName, suggest: (rows) => rows.map((p) => p.targetName) },
+    // The row's name and, on a check to a node, the node's own name: a definition's paths are found by the node they reach.
+    {
+      key: "target",
+      aliases: ["to"],
+      type: "string",
+      hint: hint("target"),
+      get: (p) => (p.targetNodeName && p.targetNodeName !== p.targetName ? [p.targetName, p.targetNodeName] : p.targetName),
+      sort: (p) => p.targetName,
+      suggest: (rows) => rows.flatMap((p) => (p.targetNodeName ? [p.targetName, p.targetNodeName] : [p.targetName])),
+    },
+    // One path by its key, as ?path= names it; the attention list's links list exactly their paths this way.
+    { key: "path", type: "string", hint: hint("path"), get: (p) => p.key, sort: false },
     { key: "source", aliases: ["from"], type: "string", hint: hint("source"), get: (p) => p.sourceName, suggest: (rows) => rows.map((p) => p.sourceName) },
     {
       key: "state",

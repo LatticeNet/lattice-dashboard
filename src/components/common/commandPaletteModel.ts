@@ -303,7 +303,7 @@ const NAV_TERMS: Readonly<Record<string, string>> = {
   tasks: "tasks",
   terminal: "terminal",
   audit: "audit",
-  "network-policy": "networkPolicy",
+  "network-outbound-policy": "networkPolicy",
   "network-ssh-guard": "sshGuard",
   "platform-publishing": "publishing",
   "platform-notifications": "notifications",

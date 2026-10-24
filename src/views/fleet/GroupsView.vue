@@ -16,6 +16,8 @@ import {
   api,
   unwrap,
   ApiError,
+  type GroupUse,
+  type GroupUsedByResponse,
   type GroupSelector,
   type GroupUpsertRequest,
   type GroupView,
@@ -38,6 +40,11 @@ import { bindQueryParam } from "@/composables/useQueryParam";
 import { useListQuery, useQueryText } from "@/composables/useListQuery";
 import { withoutSorts } from "@/lib/query/syntax";
 import { GROUPS_QUERY_EXAMPLES, groupsQuerySchema } from "./groupsQuery";
+import { groupUseCount, groupUseSections } from "./groupUsedByModel";
+import RenameNote from "@/components/common/RenameNote.vue";
+import { usePluginContributions } from "@/composables/usePluginContributions";
+import { NETGUARD_PLUGIN_ID, WIREGUARD_PLUGIN_ID, pluginPagePath } from "@/views/platform/pluginsModel";
+import type { RouteLocationRaw } from "vue-router";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
@@ -133,6 +140,50 @@ const selectedId = computed(() => (creating.value ? undefined : sheet.openId.val
 const selectedGroup = computed<GroupView | undefined>(() =>
   groups.value.find((g) => g.id === selectedId.value),
 );
+
+/* ----------------------------------------------------------------- */
+/* Used by (design 32 D3): every object that names the open group      */
+/* ----------------------------------------------------------------- */
+const usedByQuery = useAsyncData(
+  (signal) => (selectedGroup.value ? api.groups.usedBy(selectedGroup.value.id, { signal }) : Promise.resolve(undefined)),
+  { immediate: false, pollInterval: 0 },
+);
+watch(
+  () => selectedGroup.value?.id,
+  (id) => {
+    if (id) void usedByQuery.refresh();
+  },
+  { immediate: true },
+);
+/** The answer for the open group; a stale one for the previous group reads as loading. */
+const usedBy = computed(() => {
+  const data = usedByQuery.data.value;
+  return data && data.group_id === selectedGroup.value?.id ? data : undefined;
+});
+const usedBySections = computed(() => groupUseSections(usedBy.value?.used_by ?? []));
+const usedByCount = computed(() => groupUseCount(usedBy.value?.used_by ?? [], usedBy.value?.hidden ?? 0));
+
+const { findPlugin } = usePluginContributions();
+function pluginPage(pluginId: string): RouteLocationRaw | null {
+  const plugin = findPlugin(pluginId);
+  return plugin ? pluginPagePath(plugin) : null;
+}
+
+/** Where one use opens: a policy or a check definition in its sheet; the other kinds' pages until they hold group references. */
+function useLink(use: GroupUse): RouteLocationRaw | null {
+  switch (use.kind) {
+    case "outbound_policy":
+      return { name: "network-outbound-policy", query: { policy: use.id } };
+    case "check":
+      return { name: "monitoring", query: { view: "checks", open: use.id } };
+    case "security_group_binding":
+      return pluginPage(NETGUARD_PLUGIN_ID);
+    case "mesh_rule":
+      return pluginPage(WIREGUARD_PLUGIN_ID);
+    default:
+      return null;
+  }
+}
 
 const form = reactive({
   id: undefined as string | undefined,
@@ -474,10 +525,38 @@ const confirmReturn = createConfirmReturn();
 /** The group the confirm names; its own ref, so the editor's draft is never touched. */
 const deleteTarget = ref<GroupView | undefined>();
 
+/**
+ * What names the group the confirm is about, read when the confirm opens so
+ * an in-use group says so before Delete rather than after (design review of
+ * S3a). Unread (no netpolicy:read, or the request failed) leaves the decision
+ * to the server, which refuses with the same list.
+ */
+const deleteUses = ref<GroupUsedByResponse | undefined>();
+const deleteUsesPending = ref(false);
+const deleteUseCount = computed(() => (deleteUses.value ? groupUseCount(deleteUses.value.used_by, deleteUses.value.hidden) : 0));
+
 function requestDelete(group: GroupView): void {
   confirmReturn.remember(group.id);
   deleteTarget.value = group;
+  deleteUses.value = undefined;
+  deleteUsesPending.value = true;
+  void api.groups
+    .usedBy(group.id)
+    .then((res) => {
+      if (deleteTarget.value?.id === group.id) deleteUses.value = res;
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (deleteTarget.value?.id === group.id) deleteUsesPending.value = false;
+    });
   deleteOpen.value = true;
+}
+
+/** From a refused confirm to the open group's Used by list, where each user is a link. */
+function showDeleteUses(): void {
+  const target = deleteTarget.value;
+  deleteOpen.value = false;
+  if (target) unlessDraft(() => sheet.open(target.id));
 }
 
 async function confirmDelete() {
@@ -494,12 +573,14 @@ async function confirmDelete() {
     }
     await refreshAll();
   } catch (error) {
-    // The server rejects (409) when the group has children or is referenced by
-    // a group policy; surface that exact reason rather than a generic message.
+    // The server rejects (409) when the group has children or anything names
+    // it, and the message names every user; surface that exact reason rather
+    // than a generic message, and re-read the Used by list it refers to.
     const message =
       error instanceof ApiError ? error.message : t("fleet.groups.toast.deleteFailed");
     toast.error(message);
     deleteOpen.value = false;
+    if (selectedGroup.value?.id === target.id) void usedByQuery.refresh();
   } finally {
     deleting.value = false;
   }
@@ -640,6 +721,14 @@ function selectorSummary(group: GroupView): string {
 const deleteImpact = computed(() => {
   const target = deleteTarget.value;
   if (!target) return [];
+  // In use: the server refuses, so say who uses it instead of what a delete would do.
+  if (deleteUseCount.value > 0 && deleteUses.value) {
+    const lines = deleteUses.value.used_by.map(
+      (use) => `${t(`fleet.groups.usedBy.kind.${use.kind}`, use.kind)}: ${use.label} (${t(`fleet.groups.usedBy.role.${use.role}`, use.role)})`,
+    );
+    if (deleteUses.value.hidden > 0) lines.push(t("fleet.groups.usedBy.hidden", { n: deleteUses.value.hidden }, deleteUses.value.hidden));
+    return lines;
+  }
   const members = groups.value.find((g) => g.id === target.id)?.resolved_members.length ?? target.resolved_members.length;
   return [t("fleet.groups.deleteImpact", { n: members })];
 });
@@ -664,6 +753,8 @@ const deleteImpact = computed(() => {
         </Button>
       </template>
     </PageHeader>
+
+    <RenameNote id="nodeGroups" />
 
     <EmptyState v-if="!canRead" :icon="FolderTree" :title="$t('fleet.groups.title')" :description="$t('fleet.groups.needRead')" />
 
@@ -814,6 +905,38 @@ const deleteImpact = computed(() => {
             <dd>{{ groups.find((g) => g.id === selectedGroup?.parent_id)?.name ?? selectedGroup.parent_id }}</dd>
           </template>
         </dl>
+        <!-- Used by (design 32 D3): every check, outbound policy, security-group binding and mesh rule naming the group. -->
+        <section class="space-y-2" aria-labelledby="group-used-by" data-testid="group-used-by">
+          <h3 id="group-used-by" class="flex items-baseline gap-2 text-xs font-medium text-muted-foreground">
+            {{ $t('fleet.groups.usedBy.title') }}
+            <span v-if="usedBy" class="tabular">{{ $t('fleet.groups.usedBy.count', { n: usedByCount }, usedByCount) }}</span>
+          </h3>
+          <p v-if="usedByQuery.error.value && !usedBy" class="text-xs text-warning-text">
+            {{ $t('fleet.groups.usedBy.unread', { reason: usedByQuery.error.value.message }) }}
+          </p>
+          <p v-else-if="!usedBy" class="text-xs text-muted-foreground">{{ $t('common.state.loading') }}</p>
+          <dl v-else class="divide-y divide-border rounded-md border border-border">
+            <div v-for="section in usedBySections" :key="section.kind" class="grid grid-cols-1 gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+              <dt class="text-xs text-muted-foreground">{{ $t(`fleet.groups.usedBy.kind.${section.kind}`, section.kind) }}</dt>
+              <dd class="min-w-0 text-xs">
+                <ul v-if="section.uses.length" class="space-y-1">
+                  <li v-for="use in section.uses" :key="use.id" class="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <RouterLink v-if="useLink(use)" :to="useLink(use)!" class="min-w-0 truncate text-primary underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center">{{ use.label }}</RouterLink>
+                    <span v-else class="min-w-0 truncate">{{ use.label }}</span>
+                    <span class="shrink-0 text-muted-foreground">{{ $t(`fleet.groups.usedBy.role.${use.role}`, use.role) }}</span>
+                  </li>
+                </ul>
+                <span v-else class="text-muted-foreground">{{ $t(`fleet.groups.usedBy.none.${section.kind}`, $t('fleet.groups.usedBy.noneGeneric')) }}</span>
+                <RouterLink
+                  v-if="section.kind === 'outbound_policy' && section.uses.some((u) => u.role === 'target' || u.role === 'remote')"
+                  :to="{ name: 'network-outbound-policy', query: { view: 'matrix' } }"
+                  class="mt-1 inline-block text-primary underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+                >{{ $t('fleet.groups.usedBy.matrix') }}</RouterLink>
+              </dd>
+            </div>
+          </dl>
+          <p v-if="usedBy && usedBy.hidden > 0" class="text-xs text-muted-foreground">{{ $t('fleet.groups.usedBy.hidden', { n: usedBy.hidden }, usedBy.hidden) }}</p>
+        </section>
       </div>
 
       <!-- Edit and create. -->
@@ -987,14 +1110,24 @@ const deleteImpact = computed(() => {
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.groups.deleteTitle')"
-      :description="$t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })"
+      :description="
+        deleteUseCount > 0
+          ? $t('fleet.groups.usedBy.blocksDelete', { n: deleteUseCount }, deleteUseCount)
+          : $t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })
+      "
       :impact="deleteImpact"
+      :impact-title="deleteUseCount > 0 ? $t('fleet.groups.usedBy.title') : undefined"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
+      :confirm-disabled="deleteUsesPending || deleteUseCount > 0"
       :return-focus="confirmReturn.target"
       @confirm="confirmDelete"
-    />
+    >
+      <Button v-if="deleteUseCount > 0" variant="link" size="sm" type="button" class="h-auto justify-start px-0" @click="showDeleteUses">
+        {{ $t('fleet.groups.usedBy.openList') }}
+      </Button>
+    </ConfirmDialog>
 
     <!-- Leaving an edited draft: say what is lost, keep editing by default.
          Destructive like every other discard confirm in the console. -->

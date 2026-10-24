@@ -274,16 +274,18 @@ test("golden attention: down, degraded by target, degraded by source, then the u
   assert.equal(bySource.verdict.kind, "source");
   assert.equal(unknown.reason, "icmp_not_permitted");
   const schema = pathsQuerySchema({ reasonText: (r) => r ?? "" });
+  // Down and degraded items name their paths by key (design 32 D1): a name would also find the check "tyo-3 web",
+  // whose path from cd-hs-sh is degraded too, and every check that reaches the node.
+  const keys = (item: (typeof items)[number]) => item.paths.map((p) => p.key).join(",");
   const expected = [
-    "state:down target:=hk-edge",
-    // A substring would also find the check "tyo-3 web", whose path from cd-hs-sh is degraded too.
-    "state:degraded target:=tyo-3",
-    'state:degraded source:=cd-hs-sh target:="tyo-3 web"',
-    "state:unknown reason:=icmp_not_permitted",
+    (item: (typeof items)[number]) => `state:down path:=${keys(item)}`,
+    (item: (typeof items)[number]) => `state:degraded path:=${keys(item)}`,
+    (item: (typeof items)[number]) => `state:degraded path:=${keys(item)}`,
+    () => "state:unknown reason:=icmp_not_permitted",
   ];
   items.forEach((item, i) => {
     const query = attentionQuery(item);
-    assert.equal(query, expected[i]);
+    assert.equal(query, expected[i]!(item));
     const compiled = compileQuery(query, schema);
     assert.ok(compiled.ok, `${query} compiles`);
     assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.key).sort(), item.paths.map((p) => p.key).sort(), `${query} lists exactly the item's paths`);

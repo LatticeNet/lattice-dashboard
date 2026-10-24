@@ -16,6 +16,7 @@ import {
   type PolicyRuleDraft,
 } from "@/views/networking/policyRuleModel";
 import GroupChip from "./GroupChip.vue";
+import PolicyDialogTitle from "./PolicyDialogTitle.vue";
 import PolicyRulesEditor, { type InboundRuleLine, type PolicyRuleError } from "./PolicyRulesEditor.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +26,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogScrollContent,
-  DialogTitle,
   Dialog,
 } from "@/components/ui/dialog";
 
@@ -45,12 +45,20 @@ const props = withDefaults(
     dest: MatrixGroup;
     /** Existing policy scoped to `source`, if one exists. */
     existing?: GroupPolicyView;
+    /** How the page names `existing`, so the dialog says which policy Enabled and Priority belong to. */
+    existingTitle?: string;
     saving?: boolean;
     canAdmin?: boolean;
     /** Where inbound traffic is managed; no link when the firewall page is absent. */
     firewallTo?: RouteLocationRaw | null;
+    /**
+     * Other outbound policies that reach the source group's nodes and hold
+     * rules for this pair. This dialog edits only the source group's own
+     * policy, so it names them rather than hiding them.
+     */
+    alsoFrom?: string[];
   }>(),
-  { existing: undefined, saving: false, canAdmin: false, firewallTo: null },
+  { existing: undefined, existingTitle: undefined, saving: false, canAdmin: false, firewallTo: null, alsoFrom: () => [] },
 );
 
 const emit = defineEmits<{
@@ -174,7 +182,9 @@ function submit() {
   }));
   emit("save", {
     id: props.existing?.id,
-    scope_group_id: props.source.id,
+    // The server replaces the whole record, so the name rides along.
+    name: props.existing?.name,
+    scope: { groups: [props.source.id] },
     rules: [...otherRules.value, ...destRules, ...inboundRules.value],
     enabled: meta.enabled,
     priority: meta.priority,
@@ -186,17 +196,28 @@ function submit() {
   <Dialog :open="open" @update:open="onOpenChange">
     <DialogScrollContent class="sm:max-w-2xl">
       <DialogHeader>
-        <DialogTitle class="flex flex-wrap items-center gap-2">
-          {{ $t("networking.matrix.editorTitle") }}
+        <PolicyDialogTitle :editing="!!existing">
           <GroupChip :name="source.name" :color="source.color" pill />
-          <span class="text-muted-foreground">→</span>
+          <span class="text-muted-foreground" aria-hidden="true">→</span>
+          <span class="sr-only">{{ $t("networking.matrix.to") }}</span>
           <GroupChip :name="dest.name" :color="dest.color" pill />
-        </DialogTitle>
+        </PolicyDialogTitle>
         <DialogDescription>{{ $t("networking.matrix.editorDescription") }}</DialogDescription>
       </DialogHeader>
+      <p v-if="alsoFrom.length" class="text-xs text-muted-foreground" data-testid="cell-also-from">
+        {{ $t("networking.matrix.alsoFrom", { policies: alsoFrom.join(", ") }) }}
+      </p>
 
       <form class="space-y-5" @submit.prevent="submit">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <!-- Enabled and Priority are the whole policy's, not this cell's. -->
+          <p class="text-xs text-muted-foreground sm:col-span-2" data-testid="cell-whole-policy">
+            {{
+              existing
+                ? $t("networking.matrix.wholePolicy", { policy: existingTitle ?? existing.label })
+                : $t("networking.matrix.wholePolicyNew", { group: source.name })
+            }}
+          </p>
           <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
             <input v-model="meta.enabled" type="checkbox" class="size-4 accent-primary" />
             {{ $t("networking.matrix.policyEnabled") }}
