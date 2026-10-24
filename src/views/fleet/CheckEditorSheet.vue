@@ -28,7 +28,7 @@
  * collapsed "Degraded when" disclosure offers the rule's four thresholds. The
  * draft sends `degraded` only when it changed, and `{}` for a reset.
  */
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw, Save } from "lucide-vue-next";
 
@@ -40,6 +40,8 @@ import { cn } from "@/lib/utils";
 
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import SaveRefusal from "@/components/common/SaveRefusal.vue";
+import { useSaveRefusal } from "@/composables/useSaveRefusal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -118,9 +120,16 @@ const { refusalText, reasonShort, methodName } = usePathsCopy();
 
 const draft = ref<CheckDraft>(emptyDraft());
 const base = ref<CheckDraft>(emptyDraft());
-/** The server's refusal of the last save, shown until the form changes. */
-const saveError = ref<string>();
-watch(draft, () => (saveError.value = undefined), { deep: true });
+/**
+ * The stored check the draft edits: the one opened, or the newer one the
+ * operator took or saved over after a conflict (design 32 R6).
+ */
+const stored = shallowRef<MonitorView>();
+const formEl = ref<HTMLFormElement>();
+/** The request fields a conflict compares, in the order it names them. */
+const COMPARED = ["name", "type", "target", "target_node", "assign_all", "node_ids", "paused_node_ids", "packets", "threshold_days", "expect_status", "headers", "interval_sec", "timeout_sec", "alert", "alert_after", "degraded", "enabled"] as const;
+/** The server's refusal of the last save, shown until the form changes, or a conflict, shown until answered. */
+const refusals = useSaveRefusal<MonitorView>({ root: formEl, compared: COMPARED, draft });
 let stash: Parameters<typeof switchDraftKind>[2];
 
 function copyDraft(d: CheckDraft): CheckDraft {
@@ -130,12 +139,13 @@ function copyDraft(d: CheckDraft): CheckDraft {
 watch(
   () => props.open,
   (open) => {
-    saveError.value = undefined;
+    refusals.clear();
     if (!open) {
       // A typed secret leaves with the sheet; the rest of the form stays drawn while it slides out.
       draft.value = { ...draft.value, headers: draft.value.headers.map((h) => (h.secret ? { ...h, value: "" } : h)) };
       return;
     }
+    stored.value = props.monitor;
     const start = props.monitor ? draftFromMonitor(props.monitor) : emptyDraft(props.initialType ?? "http");
     draft.value = copyDraft(start);
     base.value = start;
@@ -147,7 +157,7 @@ watch(
 const m2a = computed(() => !!props.m2a);
 const m2b = computed(() => m2a.value && !!props.m2b);
 const m3 = computed(() => !!props.m3);
-const editing = computed(() => !!props.monitor);
+const editing = computed(() => !!stored.value);
 const isTls = computed(() => isServerEvaluated(draft.value.type));
 const kinds = computed(() => {
   const list = offeredKinds(m2a.value, m2b.value, props.canReadNodes);
@@ -189,7 +199,7 @@ const address = computed(() => (nodeMode.value ? (nodeResolution.value?.state ==
 const sendingIds = computed(() => draftSources(draft.value, props.nodes).filter((id) => !draft.value.pausedNodeIds.includes(id)));
 /** A replacement is created while the check it replaces still runs, so the server counts both. */
 const budget = computed(() => {
-  const editingId = replaces.value ? undefined : props.monitor?.id;
+  const editingId = replaces.value ? undefined : stored.value?.id;
   if (draft.value.type === "icmp") return icmpBudget(address.value, sendingIds.value, draft.value, props.monitors ?? [], editingId);
   if (isBeacon.value) return beaconBudget(draft.value.targetNode, sendingIds.value, draft.value, props.monitors ?? [], editingId);
   return undefined;
@@ -281,13 +291,13 @@ const targetNote = computed(() => {
 
 /* ---- Rules ---- */
 
-const replaces = computed(() => !!props.monitor && identityChanged(props.monitor, draft.value));
-const newCheck = computed(() => !props.monitor || replaces.value);
+const replaces = computed(() => !!stored.value && identityChanged(stored.value, draft.value));
+const newCheck = computed(() => !stored.value || replaces.value);
 const rules = computed(() => ({
   m2a: m2a.value,
   m3: m3.value,
   nodeTarget: nodeResolution.value,
-  budgetPps: budgetRechecked(props.monitor, draft.value, newCheck.value) ? budget.value?.pps : undefined,
+  budgetPps: budgetRechecked(stored.value, draft.value, newCheck.value) ? budget.value?.pps : undefined,
   newCheck: newCheck.value,
 }));
 const problems = computed(() => draftProblems(draft.value, rules.value));
@@ -301,7 +311,7 @@ const destination = computed(() => destinationProblem(draft.value.type, draft.va
 const olderAgents = computed(() => (currentAgent.value ? props.nodes.filter((n) => !agentReportsMethods(n)).length : 0));
 const offerHttp = computed(() => draft.value.type === "tcp" && /^https?:\/\//i.test(draft.value.target.trim()));
 const suggested = computed(() => suggestName(draft.value.type, draft.value.target, nodeMode.value ? targetNode.value?.name || draft.value.targetNode || undefined : undefined));
-const dirty = computed(() => (props.monitor ? draftChanged(props.monitor, draft.value) : JSON.stringify(draft.value) !== JSON.stringify(base.value)));
+const dirty = computed(() => (stored.value ? draftChanged(stored.value, draft.value) : JSON.stringify(draft.value) !== JSON.stringify(base.value)));
 
 const statusSet = computed(() => parseStatusSet(draft.value.expectStatus));
 const headerProblemsNow = computed(() => draftHeaderProblems(draft.value, newCheck.value));
@@ -351,41 +361,93 @@ const replaceOpen = ref(false);
 const discardOpen = ref(false);
 const bodyOptions = computed(() => ({ m2a: m2a.value, m3: m3.value, nodeName: targetNode.value?.name }));
 
-function statusOf(error: unknown): number | undefined {
-  return (error as { status?: number } | null)?.status;
+/** The check as the server holds it now, for a conflict. */
+async function reread(id: string): Promise<MonitorView> {
+  const answer = await api.monitors.list();
+  const found = (Array.isArray(answer) ? answer : answer.monitors).find((m) => m.id === id);
+  if (!found) throw new Error(t("fleet.monitoring.checks.toast.gone"));
+  return found;
 }
 
 async function save(): Promise<void> {
   if (problems.value.length || pending.value) return;
-  if (props.monitor && !dirty.value) return;
+  if (stored.value && !dirty.value) return;
   if (replaces.value) {
     replaceOpen.value = true;
     return;
   }
   pending.value = true;
+  const opened = stored.value;
   try {
-    if (props.monitor) {
-      await api.monitors.update(buildUpdate(props.monitor, draft.value, bodyOptions.value));
+    if (opened) {
+      await api.monitors.update(buildUpdate(opened, draft.value, bodyOptions.value));
       toast.success(t("fleet.monitoring.checks.toast.saved"));
-      emit("saved", props.monitor.id);
+      emit("saved", opened.id);
     } else {
       const created = await api.monitors.create(buildCreate(draft.value, props.withAlert, bodyOptions.value));
       toast.success(t("fleet.monitoring.toast.created"));
       emit("saved", created.id);
     }
+    refusals.clear();
     emit("close");
   } catch (error) {
-    if (statusOf(error) === 409) {
-      toast.error(t("fleet.monitoring.checks.toast.conflict"));
-      emit("reload");
-      emit("close");
-    } else {
-      saveError.value = error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed");
-    }
+    // The sheet stays open with the draft: a refusal marks its field, and a
+    // conflict names what changed and lets the operator choose (R6).
+    const outcome = await refusals.handle(error, {
+      fallback: t("fleet.monitoring.checks.toast.failed"),
+      base: opened,
+      reread: () => (opened ? reread(opened.id) : Promise.reject(error)),
+    });
+    if (outcome === "conflict") emit("reload");
   } finally {
     pending.value = false;
   }
 }
+
+/** Conflict: start again from the server's version, dropping the draft. */
+function reloadTheirs(): void {
+  const latest = refusals.conflict.value?.latest;
+  if (!latest) return;
+  refusals.clear();
+  stored.value = latest;
+  const start = draftFromMonitor(latest);
+  draft.value = copyDraft(start);
+  base.value = start;
+}
+
+/** Conflict: save the draft over the server's version, naming its version. */
+async function saveOverTheirs(): Promise<void> {
+  const latest = refusals.conflict.value?.latest;
+  if (!latest) return;
+  stored.value = latest;
+  refusals.clear();
+  if (!dirty.value) {
+    emit("close");
+    return;
+  }
+  await save();
+}
+
+/** Field labels the footer names a refusal's field and a conflict's changes by. */
+const fieldLabels = computed<Record<string, string>>(() => ({
+  name: t("fleet.monitoring.create.name"),
+  type: t("fleet.monitoring.checks.editor.step.what"),
+  target: t("fleet.monitoring.checks.editor.step.to"),
+  target_node: t("fleet.monitoring.checks.editor.step.to"),
+  assign_all: t("fleet.monitoring.checks.editor.step.from"),
+  node_ids: t("fleet.monitoring.checks.editor.step.from"),
+  paused_node_ids: t("fleet.monitoring.checks.editor.pausedSources"),
+  packets: t("fleet.monitoring.checks.editor.packets"),
+  threshold_days: t("fleet.monitoring.create.thresholdDays"),
+  expect_status: t("fleet.monitoring.checks.editor.expectStatus.label"),
+  headers: t("fleet.monitoring.checkDefs.editor.headers"),
+  interval_sec: t("fleet.monitoring.checks.editor.interval"),
+  timeout_sec: t("fleet.monitoring.checks.editor.timeout"),
+  alert: t("fleet.monitoring.checks.editor.step.fail"),
+  alert_after: t("fleet.monitoring.checks.editor.alertAfter"),
+  degraded: t("fleet.monitoring.checkDefs.editor.degraded"),
+  enabled: t("fleet.monitoring.checks.editor.enabled"),
+}));
 
 /**
  * The method, target or node changed: create the new check, pause on it the
@@ -395,7 +457,7 @@ async function save(): Promise<void> {
  * new check.
  */
 async function replace(): Promise<void> {
-  const old = props.monitor;
+  const old = stored.value;
   if (!old) return;
   replaceOpen.value = false;
   pending.value = true;
@@ -404,7 +466,7 @@ async function replace(): Promise<void> {
     try {
       created = await api.monitors.create(buildCreate(draft.value, props.withAlert, bodyOptions.value));
     } catch (error) {
-      saveError.value = error instanceof Error ? error.message : t("fleet.monitoring.checks.toast.failed");
+      await refusals.handle(error, { fallback: t("fleet.monitoring.checks.toast.failed"), base: undefined, reread: () => Promise.reject(error) });
       return;
     }
     const problems: string[] = [];
@@ -454,11 +516,11 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
 
 <template>
   <ObjectSheet :open="open" :title="title" :subtitle="monitor?.id" @close="requestClose">
-    <form id="check-editor" class="space-y-6 text-sm" data-testid="check-editor" @submit.prevent="save">
+    <form id="check-editor" ref="formEl" class="space-y-6 text-sm" data-testid="check-editor" @submit.prevent="save">
       <!-- 1. What to measure -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
-        <div class="grid gap-1.5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')">
+        <div class="grid gap-1.5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')" data-field="type">
           <label
             v-for="kind in kinds"
             :key="kind"
@@ -482,7 +544,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.from') }}</legend>
         <p v-if="isTls" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.controlPlane') }}</p>
-        <template v-else>
+        <div v-else class="grid min-w-0 gap-2.5" data-field="node_ids">
           <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group" :aria-label="$t('fleet.monitoring.checks.editor.step.from')">
             <button
               type="button"
@@ -525,7 +587,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             </button>
           </div>
           <p v-if="editing && !draft.assignAll" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.pauseHint') }}</p>
-        </template>
+        </div>
       </fieldset>
 
       <!-- 3. To where -->
@@ -540,7 +602,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           </button>
         </div>
         <template v-if="nodeMode">
-          <NodeTargetPicker v-model="draft.targetNode" :nodes="nodes" :kind="draft.type" :plan-nodes="planNodes" :label="$t('fleet.monitoring.checks.editor.step.to')" />
+          <NodeTargetPicker v-model="draft.targetNode" data-field="target_node" :nodes="nodes" :kind="draft.type" :plan-nodes="planNodes" :label="$t('fleet.monitoring.checks.editor.step.to')" />
           <p class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.target.nodeHint.${draft.type}`) }}</p>
           <p v-if="nodeResolution?.state === 'refused'" id="check-target-error" role="alert" class="text-xs text-destructive" data-testid="target-refused">
             {{ $t('fleet.monitoring.checks.editor.target.refused', { name: targetNode?.name || draft.targetNode, reason: resolutionText(draft.type, nodeResolution) }) }}
@@ -602,6 +664,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           <Label for="check-target" class="sr-only">{{ $t('fleet.monitoring.create.target') }}</Label>
           <Input
             id="check-target"
+              data-field="target"
             v-model="draft.target"
             class="font-mono"
             :aria-invalid="!!targetProblem"
@@ -628,6 +691,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <Label for="check-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
             <Input
               id="check-threshold"
+              data-field="threshold_days"
               v-model.number="draft.thresholdDays"
               type="number"
               min="1"
@@ -644,6 +708,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <Label for="check-packets">{{ isBeacon ? $t('fleet.monitoring.checks.editor.packetsBeacon') : $t('fleet.monitoring.checks.editor.packets') }}</Label>
             <Input
               id="check-packets"
+              data-field="packets"
               v-model.number="draft.packets"
               type="number"
               min="1"
@@ -660,6 +725,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <Label for="check-status">{{ $t('fleet.monitoring.checks.editor.expectStatus.label') }}</Label>
             <Input
               id="check-status"
+              data-field="expect_status"
               v-model="draft.expectStatus"
               class="max-w-72 font-mono"
               :placeholder="EXPECT_STATUS_DEFAULT"
@@ -673,7 +739,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             {{ $t('fleet.monitoring.checks.editor.expectStatus.redirects') }}
           </p>
           <p v-else id="check-status-error" role="alert" class="text-xs text-destructive">{{ statusSetText(statusSet.problem) }}</p>
-          <HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="newCheck && editing" />
+          <div data-field="headers"><HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="newCheck && editing" /></div>
           <!-- The server sends such a check only to agents that report their methods (monitorNeedsCurrentAgent); From where marks the others. -->
           <p v-if="olderAgents > 0" class="text-xs text-muted-foreground" data-testid="check-older-agents">{{ $t('fleet.monitoring.checks.editor.expectStatus.olderAgents', { n: olderAgents }, olderAgents) }}</p>
         </template>
@@ -688,6 +754,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <Label for="check-interval">{{ $t('fleet.monitoring.checks.editor.interval') }}</Label>
             <Input
               id="check-interval"
+              data-field="interval_sec"
               v-model.number="draft.intervalSec"
               type="number"
               :min="CHECK_MIN_INTERVAL_SEC"
@@ -700,6 +767,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             <Label for="check-timeout">{{ $t('fleet.monitoring.checks.editor.timeout') }}</Label>
             <Input
               id="check-timeout"
+              data-field="timeout_sec"
               v-model.number="draft.timeoutSec"
               type="number"
               min="1"
@@ -718,7 +786,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       </fieldset>
 
       <!-- 6. When it fails -->
-      <fieldset v-if="withAlert" :class="SECTION" data-testid="check-alert">
+      <fieldset v-if="withAlert" :class="SECTION" data-testid="check-alert" data-field="alert">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.fail') }}</legend>
         <label class="flex cursor-pointer items-center gap-2.5 pointer-coarse:min-h-11">
           <input type="radio" name="check-alert" class="accent-[var(--primary)]" value="off" :checked="draft.alert === 'off'" @change="draft = { ...draft, alert: 'off' }" />
@@ -759,32 +827,43 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             :aria-invalid="problems.includes('alertAfter') || undefined"
             :aria-describedby="problems.includes('alertAfter') ? 'check-alert-error' : undefined"
             data-testid="check-alert-after"
+            data-field="alert_after"
           />
           <span class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.alertRunsBefore') }}</span>
         </div>
         <p v-if="problems.includes('alertAfter')" id="check-alert-error" role="alert" class="text-xs text-destructive">{{ problemOf('alertAfter') }}</p>
         <p v-if="problems.includes('alertTls')" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checks.editor.alertTls') }}</p>
-        <DegradedRuleFields v-if="m3 && !isTls" v-model="draft.degraded" id-prefix="check-degraded" />
+        <div v-if="m3 && !isTls" data-field="degraded"><DegradedRuleFields v-model="draft.degraded" id-prefix="check-degraded" /></div>
       </fieldset>
 
       <!-- 7. Name -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.name') }}</legend>
         <Label for="check-name" class="sr-only">{{ $t('fleet.monitoring.create.name') }}</Label>
-        <Input id="check-name" v-model="draft.name" :placeholder="suggested || $t('fleet.monitoring.create.namePlaceholder')" />
+        <Input id="check-name" data-field="name" v-model="draft.name" :placeholder="suggested || $t('fleet.monitoring.create.namePlaceholder')" />
         <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.nameHint') }}</p>
       </fieldset>
 
       <p v-for="text in problemText" :key="text" role="alert" class="text-xs text-destructive">{{ text }}</p>
     </form>
     <template #actions>
-      <p v-if="saveError" role="alert" class="basis-full text-xs text-destructive" data-testid="check-save-error">{{ $t('fleet.monitoring.checks.editor.refused', { reason: saveError }) }}</p>
+      <SaveRefusal
+        :refusal="refusals.refusal.value"
+        :changed="refusals.conflict.value?.changed"
+        :at="refusals.conflict.value?.latest.updated_at"
+        :labels="fieldLabels"
+        :message-id="refusals.messageId"
+        :pending="pending"
+        :noun="$t('fleet.monitoring.checkDefs.editor.noun')"
+        @reload="reloadTheirs"
+        @overwrite="saveOverTheirs"
+      />
       <p v-if="missing.length" class="me-auto text-xs text-muted-foreground" data-testid="check-missing">
         {{ $t('fleet.monitoring.create.missing', { fields: missing.join($t('fleet.monitoring.create.missingJoin')) }) }}
       </p>
       <p v-else-if="editing && !dirty" class="me-auto text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.unchanged') }}</p>
       <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
-      <Button type="submit" form="check-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty)" data-testid="check-save">
+      <Button type="submit" form="check-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty) || !!refusals.conflict.value" data-testid="check-save">
         <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
         <Save v-else-if="editing" class="size-4" aria-hidden="true" />
         <Plus v-else class="size-4" aria-hidden="true" />

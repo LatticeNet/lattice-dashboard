@@ -5,6 +5,7 @@ import type { CheckDefinitionPreview, CheckDefinitionView, MonitorView } from "@
 
 import {
   addressesOf,
+  applyDefinitionFix,
   buildDefinitionSave,
   checkRowGroup,
   checkRows,
@@ -15,7 +16,12 @@ import {
   missingParts,
   pathsHealth,
   suggestDefinitionName,
+  skippedByReason,
+  measureAgainSave,
+  stopMeasuringSave,
   summarizePreview,
+  takesAddresses,
+  takesTargetNodes,
   withKind,
 } from "../definitionsModel.ts";
 import { rowsFromHeaders } from "../checkHeadersModel.ts";
@@ -153,7 +159,7 @@ test("a definition's health comes from its paths, in the list's vocabulary", () 
   assert.deepEqual(pathsHealth([{ state: "unknown", reason: "source_paused" }], true, now), { kind: "none" });
 });
 
-test("the list holds definitions, single checks and Fleet mesh, never the monitors they generated", () => {
+test("the list holds definitions, single checks and an unmigrated Fleet mesh, never the monitors they generated", () => {
   const monitors = [
     { id: "mon_1", name: "web", type: "http", target: "https://x", interval_sec: 60, timeout_sec: 5, enabled: true },
     { id: "mon_lat_n-jp", name: "Latency to jp", type: "tcp", target: "x", interval_sec: 60, timeout_sec: 5, enabled: true, managed_by: "latency" },
@@ -162,4 +168,93 @@ test("the list holds definitions, single checks and Fleet mesh, never the monito
   const mesh = { name: "Fleet mesh", enabled: true, stored: true, version: 2, method: "auto", sources: 1, targets: 3, paths: 3, paused_targets: 0 };
   const rows = checkRows(monitors, [stored()], mesh);
   assert.deepEqual(rows.map((r) => [r.kind, checkRowGroup(r)]), [["definition", "checks"], ["check", "checks"], ["fleet", "builtin"]]);
+});
+
+/* ---- Design 32 R1, R2 and R3 ---- */
+
+test("R1: a migrated Fleet mesh is an ordinary definition; the list has no built-in group", () => {
+  const monitors = [
+    // An adopted path set monitor keeps managed_by "latency" and names its definition: the definition stands for it.
+    { id: "mon_lat_n-jp", name: "Fleet mesh to jp", type: "tcp", target: "x", interval_sec: 60, timeout_sec: 5, enabled: true, managed_by: "latency", check_definition_id: "chk_fleet_mesh" },
+  ] as MonitorView[];
+  const mesh = { name: "Fleet mesh", enabled: true, stored: true, version: 5, method: "tcp", sources: 0, targets: 0, paths: 0, paused_targets: 0, migrated: true, definitions: ["chk_fleet_mesh"] };
+  const rows = checkRows(monitors, [stored({ id: "chk_fleet_mesh", name: "Fleet mesh" })], mesh);
+  assert.deepEqual(rows.map((r) => [r.kind, r.key, checkRowGroup(r)]), [["definition", "def:chk_fleet_mesh", "checks"]]);
+});
+
+test("R1: auto takes target nodes only, sends packets for its icmp and beacon pairs, and keeps its excluded pairs through an edit", () => {
+  assert.equal(takesTargetNodes("auto"), true);
+  assert.equal(takesAddresses("auto"), false);
+  const def = stored({ id: "chk_fleet_mesh", type: "auto", packets: 3, targets: { all: true, exclude: ["n-sh"] }, excluded_pairs: [{ source: "n-sh", target: "n-us" }] });
+  const draft = draftFromDefinition(def);
+  assert.equal(draft.type, "auto");
+  assert.deepEqual(definitionProblems(draft, { newDefinition: false }), []);
+  const save = buildDefinitionSave(draft, def, def.name);
+  assert.equal(save.type, "auto");
+  assert.equal(save.packets, 3);
+  assert.equal(save.addresses, undefined);
+  assert.deepEqual(save.excluded_pairs, [{ source: "n-sh", target: "n-us" }], "an edit never drops the pairs the operator stopped measuring");
+  assert.equal(definitionDirty(def, draft, def.name), false);
+  // A method that takes no nodes has no pairs to exclude, so a save leaves them out rather than be refused.
+  assert.equal(buildDefinitionSave(withKind(draft, "http"), def, def.name).excluded_pairs, undefined);
+  assert.equal(suggestDefinitionName({ ...emptyDefinitionDraft("auto"), targets: { all: true } }, (id) => id, (id) => id, "whole fleet"), "AUTO whole fleet");
+});
+
+test("R2: a definition's skipped pairs group by reason, each with its fix", () => {
+  const pair = (target: string, reason: string, targetName = target) => ({ key: `sh~${target}`, source: "sh", sourceName: "cd-hs-sh", targetNode: target, targetName, reason, measure: "skipped" as const });
+  const groups = skippedByReason(
+    [pair("bare1", "not_probeable"), pair("bare2", "not_probeable"), pair("jp", "beacon_source_pending"), pair("de", "packet_budget"), pair("old", "agent_too_old"), { ...pair("x", "source_paused"), measure: "paused" as const }],
+    "tcp",
+  );
+  assert.deepEqual(
+    groups.map((g) => [g.reason, g.paths.map((p) => p.targetNode), g.fixes]),
+    [
+      ["not_probeable", ["bare1", "bare2"], ["auto", "exclude"]],
+      // A source that cannot run the method or is over its budget: only those pairs stop, never the
+      // target for every source, whose other pairs may be measured and healthy.
+      ["agent_too_old", ["old"], ["auto", "pairs"]],
+      ["beacon_source_pending", ["jp"], ["approve"]],
+      ["packet_budget", ["de"], ["pairs"]],
+    ],
+  );
+  // An auto check already chooses per pair: excluding is the only fix left for a target it cannot reach.
+  assert.deepEqual(skippedByReason([pair("bare1", "not_probeable")], "auto")[0]!.fixes, ["exclude"]);
+  assert.deepEqual(skippedByReason([pair("old", "icmp_not_permitted")], "auto")[0]!.fixes, ["pairs"]);
+  // A reason the console does not know stops only its pairs.
+  assert.deepEqual(skippedByReason([pair("odd", "something_new")], "tcp")[0]!.fixes, ["pairs"]);
+});
+
+test("R2: a fix opens the editor with the change made: auto as the method, or the targets left out of the set", () => {
+  const def = stored({ type: "tcp", targets: { all: true, exclude: ["n-sh"] } });
+  const auto = applyDefinitionFix(draftFromDefinition(def), { kind: "auto" });
+  assert.equal(auto.type, "auto");
+  const out = applyDefinitionFix(draftFromDefinition(def), { kind: "exclude", targets: ["bare2", "bare1", "n-sh"] });
+  assert.deepEqual(out.targets, { all: true, exclude: ["bare1", "bare2", "n-sh"] });
+  // Named nodes leave the list rather than sit both named and excluded (the picker never shows both).
+  const named = applyDefinitionFix(draftFromDefinition(stored({ targets: { nodes: ["a", "bare1"] } })), { kind: "exclude", targets: ["bare1"] });
+  assert.deepEqual(named.targets, { nodes: ["a"] });
+  assert.equal(definitionDirty(def, out, def.name), true);
+  // Pairs: added to the excluded pairs once each, the targets untouched.
+  const withPair = stored({ type: "icmp", targets: { all: true }, excluded_pairs: [{ source: "n-sh", target: "n-us" }] });
+  const stopped = applyDefinitionFix(draftFromDefinition(withPair), { kind: "pairs", pairs: [{ source: "n-sh", target: "n-us" }, { source: "n-bj", target: "n-jp" }] });
+  assert.deepEqual(stopped.excludedPairs, [{ source: "n-sh", target: "n-us" }, { source: "n-bj", target: "n-jp" }]);
+  assert.deepEqual(stopped.targets, { all: true });
+});
+
+test("R3: Stop measuring this pair is the check's normal save with the pair excluded, at the version read", () => {
+  const def = stored({ type: "auto", packets: 3, targets: { all: true }, excluded_pairs: [{ source: "n-sh", target: "n-us" }] });
+  const save = stopMeasuringSave(def, "n-sh", "n-jp")!;
+  assert.equal(save.id, def.id);
+  assert.equal(save.version, def.version, "a save that lost a race answers version_conflict rather than overwrite");
+  assert.deepEqual(save.excluded_pairs, [{ source: "n-sh", target: "n-us" }, { source: "n-sh", target: "n-jp" }]);
+  // Everything else is the stored spec, unchanged.
+  const { excluded_pairs: _a, ...rest } = save;
+  const { excluded_pairs: _b, ...same } = buildDefinitionSave(draftFromDefinition(def), def, def.name);
+  assert.deepEqual(rest, same);
+  assert.equal(stopMeasuringSave(def, "n-sh", "n-us"), undefined, "a pair already excluded needs no save");
+  // Measuring it again is the same save the other way, and the undo of a stop.
+  const again = measureAgainSave(def, "n-sh", "n-us")!;
+  assert.deepEqual(again.excluded_pairs ?? [], [], "an empty list is left out, which the server reads as none");
+  assert.equal(again.version, def.version);
+  assert.equal(measureAgainSave(def, "n-sh", "n-jp"), undefined, "a pair that is measured needs no save");
 });

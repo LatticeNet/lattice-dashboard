@@ -1,11 +1,12 @@
 /**
- * How the Network view's graph words an edge, a node and a sample, so the
+ * How the Topology view's graph words an edge, a node and a sample, so the
  * drawing, its card and an edge's keyboard label never say different things
  * about one path. The caller passes its `t` and locale; nothing here holds
  * Vue state.
  *
  * One vocabulary (design 32 D1): a path is up, degraded, down, paused or
- * unknown, and unknown always says why.
+ * unknown, and unknown always says why. A pair its check skips is drawn only
+ * when asked for (design 32 R2), and says why too.
  */
 import { formatAge } from "@/lib/format";
 
@@ -30,9 +31,10 @@ export function reasonWords(t: Translate, reason: string | undefined): string {
   return reason || t("fleet.monitoring.paths.reasonShort.unspecified");
 }
 
-/** The state in words; unknown carries its reason ("unknown: agent offline"). */
+/** The state in words; unknown and skipped carry their reason ("unknown: agent offline", "skipped: nothing to dial"). */
 export function stateLabel(t: Translate, edge: Pick<TopoEdge, "kind" | "state" | "reason">): string {
   if (edge.kind === "path" && edge.state === "unknown") return t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, edge.reason) });
+  if (edge.kind === "path" && edge.state === "skipped") return t("fleet.monitoring.paths.state.skippedWhy", { reason: reasonWords(t, edge.reason) });
   if (edge.kind === "path") return t(`fleet.monitoring.paths.state.${edge.state}`);
   return t(`fleet.monitoring.topology.state.${edge.state}`);
 }
@@ -44,6 +46,7 @@ export const PATH_INK: Record<EdgePathState, string> = {
   down: "text-destructive",
   unknown: "text-muted-foreground",
   paused: "text-muted-foreground",
+  skipped: "text-muted-foreground",
 };
 
 /** A path state's mark on a target row: one per drawn source. */
@@ -53,6 +56,7 @@ export const PATH_MARK: Record<EdgePathState, string> = {
   down: "bg-destructive",
   unknown: "border border-muted-foreground bg-[repeating-linear-gradient(135deg,var(--border)_0_1px,transparent_1px_3px)]",
   paused: "bg-muted-foreground/40",
+  skipped: "border border-dashed border-muted-foreground/60 bg-transparent",
 };
 
 /** The short value a row or a card line prints for one edge: p50 when measured, else the state in words. */

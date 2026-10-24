@@ -491,7 +491,7 @@ export function clusterAction(
 
 /* ------------------------------ latency layer ------------------------------ */
 
-/** Where the map's latency layer stands; nosource: the probes have no source configured. */
+/** Where the map's latency layer stands; nosource: no check measures from a node to another. */
 export type LatencyLayerState = "ready" | "loading" | "failed" | "denied" | "nosource";
 
 /** One read as the layer needs it: whether it holds an answer, and whether its last try failed. */
@@ -501,17 +501,15 @@ export interface LayerRead {
 }
 
 /**
- * The latency layer's state from its two reads: the probe plan (which names
- * the source) and the rollups (what was heard). Arcs and readings are drawn
- * only when both have answered. With the plan in and the rollups still on
- * their way, every pair used to read as "nothing heard", drawn as grey arcs
- * as if that had been measured.
+ * The latency layer's state from its one read, the paths matrix (design 32
+ * R1: the path set is a check like any other, so the matrix names the source
+ * and what was heard together). Arcs and readings are drawn only once it has
+ * answered; a failed refresh over an answer still shows the answer.
  */
-export function latencyLayerState(input: { canRead: boolean; plan: LayerRead; rollups: LayerRead; hasSource: boolean }): LatencyLayerState {
+export function latencyLayerState(input: { canRead: boolean; paths: LayerRead; hasSource: boolean }): LatencyLayerState {
   if (!input.canRead) return "denied";
-  if (!input.plan.hasData) return input.plan.failed ? "failed" : "loading";
+  if (!input.paths.hasData) return input.paths.failed ? "failed" : "loading";
   if (!input.hasSource) return "nosource";
-  if (!input.rollups.hasData) return input.rollups.failed ? "failed" : "loading";
   return "ready";
 }
 

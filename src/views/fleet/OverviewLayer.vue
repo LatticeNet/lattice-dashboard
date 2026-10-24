@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button";
 
 import { replanLines, replanNames } from "./beaconModel";
 import { formatLoss } from "./latencyModel";
-import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathDisplay, type PathItem, type SourceReach } from "./pathsModel";
+import { attentionQuery, pathAttention, reachBySource, reachQuery, type PathAttention, type PathItem, type ReachState, type SourceReach } from "./pathsModel";
 import { soleReporter, type Verdict } from "./triangulationModel";
 import { usePathsCopy } from "./pathsCopy";
 import type { PathsData } from "./usePathsData";
@@ -48,6 +48,8 @@ const props = defineProps<{
   nodeSeen: (nodeId: string) => string | undefined;
   /** The path set exists with no source. */
   noSources: boolean;
+  /** The path set is stored and not migrated into checks (design 32 R1): only then is its editor offered. */
+  canEditPathSet: boolean;
 }>();
 
 const emit = defineEmits<{ pathSet: []; createCheck: [] }>();
@@ -60,7 +62,7 @@ const query = props.data.pathsQuery;
 const isEmpty = computed(() => !!matrix.value && matrix.value.paths.length === 0 && props.checkAttention.length === 0);
 
 function showInPaths(q: string, path?: string): void {
-  props.owned.push({ ...props.owned.query(), view: "network", as: "list", "paths.q": q, path, open: undefined });
+  props.owned.push({ ...props.owned.query(), view: "topology", as: "list", "paths.q": q, path, open: undefined });
 }
 
 const NAMES_SHOWN = 4;
@@ -129,7 +131,8 @@ function targetClaim(state: "down" | "degraded", target: string, sources: string
 function itemFor(item: PathAttention): AttentionItem {
   switch (item.kind) {
     case "down": {
-      const sources = item.paths.map((p) => p.sourceName);
+      // Each source once: two checks on one pair are one source (design 32 R1).
+      const sources = [...new Set(item.paths.map((p) => p.sourceName))];
       const lead = item.paths[0]!;
       const claim = targetClaim("down", item.targetName, sources, item.measuredBy);
       return { key: `down:${item.rowKey}`, tone: "danger", claim, proof: downProof(lead), verdict: verdictLine(item.verdict, item.measuredBy), action: show(attentionQuery(item), item.paths.length === 1 ? lead.key : undefined) };
@@ -144,7 +147,8 @@ function itemFor(item: PathAttention): AttentionItem {
         action: show(attentionQuery(item)),
       };
     case "degraded": {
-      const sources = item.paths.map((p) => p.sourceName);
+      // Each source once: two checks on one pair are one source (design 32 R1).
+      const sources = [...new Set(item.paths.map((p) => p.sourceName))];
       const lead = item.paths[0]!;
       const claim = targetClaim("degraded", item.targetName, sources, item.measuredBy);
       // A degraded item's proof is its evidence sentence (D13), the lead path's; over several paths it names whose.
@@ -205,12 +209,12 @@ function itemFor(item: PathAttention): AttentionItem {
 const attention = computed<AttentionItem[]>(() => [...items.value.map(itemFor), ...props.checkAttention]);
 const reach = computed(() => (matrix.value ? reachBySource(matrix.value).filter((r) => r.total > 0) : []));
 /** The counts the strip links, worst first; degraded only from a server that judges it. */
-const reachLinks = computed<PathDisplay[]>(() => (matrix.value?.judgesDegraded ? ["degraded", "down", "unknown", "paused"] : ["down", "unknown", "paused"]));
+const reachLinks = computed<ReachState[]>(() => (matrix.value?.judgesDegraded ? ["degraded", "down", "unknown", "paused"] : ["down", "unknown", "paused"]));
 /** Amber means degraded wherever a path state is shown (D13): unknown keeps its hatch and muted ink. */
-const LINK_TONE: Record<PathDisplay, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground" };
+const LINK_TONE: Record<ReachState, string> = { up: "text-foreground", degraded: "text-warning-text", down: "text-destructive", unknown: "text-muted-foreground", paused: "text-muted-foreground" };
 
 const HATCH = "bg-[repeating-linear-gradient(135deg,var(--border)_0_1.5px,transparent_1.5px_7px)]";
-const SEGMENTS: { state: PathDisplay; bar: string }[] = [
+const SEGMENTS: { state: ReachState; bar: string }[] = [
   { state: "up", bar: "bg-success" },
   { state: "degraded", bar: "bg-warning" },
   { state: "down", bar: "bg-destructive" },
@@ -218,7 +222,7 @@ const SEGMENTS: { state: PathDisplay; bar: string }[] = [
   { state: "paused", bar: "bg-muted-foreground/25" },
 ];
 
-function share(r: SourceReach, state: PathDisplay): string {
+function share(r: SourceReach, state: ReachState): string {
   return `${(r[state] / Math.max(1, r.total)) * 100}%`;
 }
 </script>
@@ -231,14 +235,15 @@ function share(r: SourceReach, state: PathDisplay): string {
           v-if="isEmpty"
           :icon="RouteIcon"
           :title="noSources ? $t('fleet.monitoring.paths.empty.noSourceTitle') : $t('fleet.monitoring.paths.empty.title')"
-          :description="!canAdmin ? $t('fleet.monitoring.paths.empty.readOnly') : noSources ? $t('fleet.monitoring.paths.empty.noSourceDescription') : $t('fleet.monitoring.paths.empty.description')"
+          :description="!canAdmin ? $t(canEditPathSet ? 'fleet.monitoring.paths.empty.readOnly' : 'fleet.monitoring.paths.empty.readOnlyChecks') : noSources ? $t('fleet.monitoring.paths.empty.noSourceDescription') : $t(canEditPathSet ? 'fleet.monitoring.paths.empty.description' : 'fleet.monitoring.paths.empty.descriptionChecks')"
         >
           <div v-if="canAdmin" class="flex flex-wrap justify-center gap-2">
-            <Button size="sm" type="button" @click="emit('pathSet')">
+            <!-- The path set's editor, only while it is not migrated into checks (design 32 R1). -->
+            <Button v-if="canEditPathSet" size="sm" type="button" @click="emit('pathSet')">
               <Settings2 class="size-4" aria-hidden="true" />
               {{ noSources ? $t('fleet.monitoring.paths.empty.noSourceAction') : $t('fleet.monitoring.paths.empty.pathSet') }}
             </Button>
-            <Button size="sm" variant="outline" type="button" @click="emit('createCheck')">{{ $t('fleet.monitoring.paths.empty.check') }}</Button>
+            <Button size="sm" :variant="canEditPathSet ? 'outline' : 'default'" type="button" @click="emit('createCheck')">{{ $t('fleet.monitoring.paths.empty.check') }}</Button>
           </div>
         </EmptyState>
         <template v-else>

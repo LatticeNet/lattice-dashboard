@@ -8,7 +8,7 @@ import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
 import { LIST_GROUP_ORDER, ROOMY_W, defaultPresentation, formatAvailability, formatPresentation, listGroup, listOrder, parsePresentation, presentation, regionGroups, roomy } from "../networkModel.ts";
-import { availability, buildPathsMatrix, countPaths, displayState, measuresNow, pathsQuerySchema, reachBySource, type PathsMatrix } from "../pathsModel.ts";
+import { availability, buildPathsMatrix, countPaths, displayState, everyPath, measuresNow, pathsQuerySchema, reachBySource, type PathsMatrix } from "../pathsModel.ts";
 import { ROW_MARK_W, ROW_SUMMARY_EXTRA_W, buildTopology, layoutTopology } from "../topologyModel.ts";
 
 const names = new Map(GOLDEN_MONITORS.map((m) => [m.id, m.name]));
@@ -106,17 +106,19 @@ test("availability prints one floored decimal, so 99.96% of runs never reads as 
 
 test("a path that does not measure now has no availability and no figures to sort or filter by, never 0%", () => {
   const m = golden();
-  const quiet = m.paths.filter((p) => !measuresNow(p));
-  assert.ok(quiet.length > 0, "the golden set holds unknown or paused paths");
+  // The skipped ping is among them: a reveal or a state:skipped query lists it (design 32 R2).
+  const quiet = everyPath(m).filter((p) => !measuresNow(p));
+  assert.ok(quiet.length > 0, "the golden set holds a pair that does not measure");
   for (const p of quiet) assert.equal(availability(p), undefined, `${p.key} reads ${p.state}`);
   // A path that measures but counted no run has none either.
   const measuring = m.paths.find((p) => measuresNow(p) && p.expected > 0)!;
   assert.equal(availability({ ...measuring, samples: 0 }), undefined);
-  // The query reads the figures the list shows: a filter or a sort never finds a blank cell.
+  // The query reads the figures the list shows: a filter or a sort never finds a blank cell, the revealed pairs included.
+  const revealed = { ...m, paths: everyPath(m) };
   for (const text of ["p50>0", "p95>0", "jitter>=0", "loss>=0%", "availability>=0%"]) {
-    for (const p of keep(m, text)) assert.ok(measuresNow(p), `${text} keeps ${p.key} (${p.state})`);
+    for (const p of keep(revealed, text)) assert.ok(measuresNow(p), `${text} keeps ${p.key} (${p.state})`);
   }
-  const sorted = keep(m, "sort:-p95");
+  const sorted = keep(revealed, "sort:-p95");
   const firstBlank = sorted.findIndex((p) => !measuresNow(p) || p.p95Ms === undefined);
   assert.ok(sorted.slice(firstBlank).every((p) => !measuresNow(p) || p.p95Ms === undefined), "rows with no shown p95 sort last");
 });
@@ -145,9 +147,10 @@ test("for one query the graph and the list show the same count", () => {
   const m = golden();
   for (const text of ["", "state:down", "state:degraded", "target:tyo-3", "source:hk-edge", "method:icmp", "state:unknown", "p50>100", "-managed"]) {
     const rows = keep(m, text);
-    const matching = text ? new Set(rows.map((p) => p.key)) : undefined;
+    // One per check: two checks on one pair are two rows (design 32 R1).
+    const matching = text ? new Set(rows.map((p) => p.id)) : undefined;
     const topo = buildTopology({ plan: GOLDEN_PATH_SET, matrix: m, matching, window: "1h", layer: "all" });
-    const onGraph = topo.edges.filter((e) => e.matched).flatMap((e) => (e.paths ?? []).filter((p) => !matching || matching.has(p.key)));
+    const onGraph = topo.edges.filter((e) => e.matched).flatMap((e) => (e.paths ?? []).filter((p) => !matching || matching.has(p.id)));
     assert.equal(onGraph.length, rows.length, `${text || "(no query)"}: list ${rows.length}, graph ${onGraph.length}`);
   }
 });
@@ -158,11 +161,12 @@ type Messages = Record<string, unknown>;
 const at = (messages: Messages, path: string): unknown => path.split(".").reduce<unknown>((node, part) => (node && typeof node === "object" ? (node as Messages)[part] : undefined), messages);
 const strings = (node: unknown): string[] => (typeof node === "string" ? [node] : node && typeof node === "object" ? Object.values(node as Messages).flatMap(strings) : []);
 
-test("Overview, Network and Checks say up, degraded, down, paused or unknown, and nothing else for a path's state", () => {
+test("Overview, Topology and Checks say up, degraded, down, paused, skipped or unknown, and nothing else for a path's state", () => {
   const en = enFleet as unknown as Messages;
   const zh = zhFleet as unknown as Messages;
-  assert.deepEqual(at(en, "fleet.monitoring.paths.state"), { up: "up", degraded: "degraded", down: "down", unknown: "unknown", unknownWhy: "unknown: {reason}", paused: "paused" });
-  assert.deepEqual(Object.keys(at(zh, "fleet.monitoring.paths.state") as Messages).sort(), ["degraded", "down", "paused", "unknown", "unknownWhy", "up"]);
+  // Design 32 R2 adds skipped: a pair its check does not measure, shown only on request, with its reason.
+  assert.deepEqual(at(en, "fleet.monitoring.paths.state"), { up: "up", degraded: "degraded", down: "down", unknown: "unknown", unknownWhy: "unknown: {reason}", paused: "paused", skipped: "skipped", skippedWhy: "skipped: {reason}" });
+  assert.deepEqual(Object.keys(at(zh, "fleet.monitoring.paths.state") as Messages).sort(), ["degraded", "down", "paused", "skipped", "skippedWhy", "unknown", "unknownWhy", "up"]);
   // The Checks list's states are the same words.
   assert.equal(at(en, "fleet.monitoring.status.up"), at(en, "fleet.monitoring.paths.state.up"));
   assert.equal(at(en, "fleet.monitoring.status.failing"), at(en, "fleet.monitoring.paths.state.down"));
@@ -176,12 +180,13 @@ test("Overview, Network and Checks say up, degraded, down, paused or unknown, an
   }
 });
 
-test("the Network view's copy exists in both locales, and the Paths and Topology tabs are gone", () => {
+test("the Topology view's copy exists in both locales, and the Paths and Network tabs are gone", () => {
   for (const messages of [enFleet, zhFleet] as unknown as Messages[]) {
-    assert.equal(typeof at(messages, "fleet.monitoring.layers.network"), "string");
+    // Design 32 R4: the merged view is named Topology again.
+    assert.equal(typeof at(messages, "fleet.monitoring.layers.topology"), "string");
     assert.equal(at(messages, "fleet.monitoring.layers.paths"), undefined);
-    assert.equal(at(messages, "fleet.monitoring.layers.topology"), undefined);
-    for (const key of ["editCheck", "pathSet", "pair.title", "list.last", "graph.undrawn", "graph.drawAll", "lens.reaches", "lens.reachedBy"]) {
+    assert.equal(at(messages, "fleet.monitoring.layers.network"), undefined);
+    for (const key of ["editCheck", "unmeasured.line", "unmeasured.show", "pair.title", "list.last", "graph.undrawn", "graph.drawAll", "lens.reaches", "lens.reachedBy"]) {
       assert.equal(typeof at(messages, `fleet.monitoring.network.${key}`), "string", key);
     }
   }

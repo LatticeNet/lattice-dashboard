@@ -44,10 +44,10 @@ test("a node's paths split into those that end at it and those that start from i
   ]);
   const lists = nodePaths(m, "jp");
   assert.deepEqual(lists.reachedBy.map((p) => [p.source, p.monitorId]), [
-    ["fsn", "mon_latb_jp"],
-    // Two up paths with the same p50 keep a stable order, by their keys.
-    ["sh", "mon_ping_jp"],
+    // Two up paths on one pair with the same p50 keep a stable order, by their ids. The pair waiting on
+    // fsn's firewall is skipped, so the lens leaves it out like every default view (design 32 R2).
     ["sh", "mon_latb_jp"],
+    ["sh", "mon_ping_jp"],
   ]);
   assert.deepEqual(lists.reaches.map((p) => p.monitorId), ["mon_lat_de", "mon_status", "mon_lat_us"]);
   assert.deepEqual(nodePaths(undefined, "jp"), { reachedBy: [], reaches: [] });
@@ -62,20 +62,23 @@ test("worst first: down, degraded, unknown, paused, up; then the lossiest, then 
     path({ source: "fsn", target_node: "jp", monitor_id: "d", state: "unknown", reason: "beacon_filtered", p50_ms: null }),
     path({ source: "fsn", target_node: "us", monitor_id: "e", state: "down", p50_ms: null }),
   ]);
-  assert.deepEqual([...m.paths].sort(worstFirst).map((p) => p.monitorId), ["e", "f", "d", "c", "b", "a"]);
-  assert.deepEqual(stateCounts(m.paths), { up: 2, degraded: 1, down: 1, unknown: 1, paused: 1 });
+  // The paused pair is not a path (design 32 R2); shown on request it sorts after unknown.
+  assert.deepEqual([...m.paths].sort(worstFirst).map((p) => p.monitorId), ["e", "f", "d", "b", "a"]);
+  assert.deepEqual([...m.paths, ...m.unmeasured].sort(worstFirst).map((p) => p.monitorId), ["e", "f", "d", "c", "b", "a"]);
+  assert.deepEqual(stateCounts(m.paths), { up: 2, degraded: 1, down: 1, unknown: 1, paused: 0, skipped: 0 });
 });
 
 test("the other end is the source when reached, the target when reaching; checks carry their names", () => {
   const m = matrix([path({}), path({ source: "sh", monitor_id: "mon_ping_jp", managed: false, method: "icmp" })]);
   const [generated, check] = [m.paths[0]!, m.paths[1]!];
-  assert.deepEqual(otherEnd(generated, "reachedBy"), { name: "cd-hs-sh", check: undefined });
+  // Every check is named (design 32 R3); the path set's, unmigrated, by the name it goes by.
+  assert.deepEqual(otherEnd(generated, "reachedBy"), { name: "cd-hs-sh", check: "Fleet mesh" });
   assert.deepEqual(otherEnd(check, "reachedBy"), { name: "cd-hs-sh", check: "Ping xuezhang-jp-nat" });
-  assert.deepEqual(otherEnd(generated, "reaches"), { name: "xuezhang-jp-nat", check: undefined });
+  assert.deepEqual(otherEnd(generated, "reaches"), { name: "xuezhang-jp-nat", check: "Fleet mesh" });
   // A check to a node reaches the node (design 32 D1); the check is named beside it.
   assert.deepEqual(otherEnd(check, "reaches"), { name: "xuezhang-jp-nat", check: "Ping xuezhang-jp-nat" });
-  // The check's row is named by the check; its target node keeps its own name for the beacon link.
-  assert.equal(check.targetName, "Ping xuezhang-jp-nat");
+  // The pair sits in the node's row whichever check measures it (design 32 R1).
+  assert.equal(check.targetName, "xuezhang-jp-nat");
   assert.equal(check.targetNodeName, "xuezhang-jp-nat");
 });
 
@@ -87,12 +90,12 @@ test("the Monitoring link filters by target or by source, quoting names the quer
 test("a degraded row shows the evidence its reason is about, never the window's p50", () => {
   // The node card's default window is 24h; the golden week shows the same gap: a 40 ms week beside a slow quarter hour.
   const week = buildPathsMatrix(GOLDEN_PATHS_7D);
-  const path = (key: string) => week.paths.find((p) => p.key === key)!;
+  const path = (key: string, check?: string) => week.paths.find((p) => p.key === key && (!check || p.checkId === check))!;
   const slow = path("node-fra~node-jp");
   assert.equal(slow.p50Ms, 40, "the week's median is the usual figure");
   assert.deepEqual(degradedFigures(slow), { latencyMs: 140 }, "the 15-minute median the reason is about");
   assert.deepEqual(degradedFigures(path("node-sh~node-jp")), { loss: 0.082 }, "the hour's loss the reason is about");
-  assert.deepEqual(degradedFigures(path("node-sh~@mon-web")), { latencyMs: 140, loss: 0.082 });
+  assert.deepEqual(degradedFigures(path("node-sh~node-jp", "mon-web")), { latencyMs: 140, loss: 0.082 });
   assert.deepEqual(degradedFigures(path("node-hk~node-fra")), {}, "an up path has no evidence");
   assert.deepEqual(degradedFigures({ state: "degraded", degraded: undefined }), {}, "no evidence sent: the reason alone");
 });
