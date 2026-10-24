@@ -23,7 +23,7 @@
  * the caller knows about it (a check source whose agent cannot run the chosen
  * method, for example). Nodes without a note look as before.
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Minus, Search, X } from "lucide-vue-next";
 
@@ -205,14 +205,103 @@ function pickOnlyMatch(): void {
 }
 
 const resolvedId = computed(() => `${props.idPrefix}-resolved`);
+
+/* Keyboard (design review of S2b): removing a chip keeps focus in the chips
+ * row, Escape in a non-empty search clears it without closing the sheet or
+ * dialog around the picker, and the list is one Tab stop whose choices the
+ * arrow keys move between, entered with ArrowDown from the search. */
+const chipsEl = ref<HTMLElement>();
+const searchWrap = ref<HTMLElement>();
+const listEl = ref<HTMLElement>();
+
+function focusSearch(): void {
+  searchWrap.value?.querySelector<HTMLInputElement>("input")?.focus();
+}
+
+function removeChip(part: SelectorPart, index: number): void {
+  removePart(part);
+  void nextTick(() => {
+    const buttons = chipsEl.value?.querySelectorAll<HTMLButtonElement>("button[data-chip-remove]");
+    const next = buttons?.[index] ?? buttons?.[index - 1];
+    if (next) next.focus();
+    else focusSearch();
+  });
+}
+
+function clearSearchOnEscape(event: KeyboardEvent): void {
+  if (!query.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  query.value = "";
+}
+
+/** The enabled choices in list order: groups, then each node's tick or its "Leave out". */
+const rovingKeys = computed<string[]>(() => {
+  const keys: string[] = [];
+  if (!value.value.all) for (const group of shownGroups.value) keys.push(`g:${group.id}`);
+  for (const region of regions.value) {
+    for (const node of region.nodes) {
+      if (!coveredElsewhere(node)) keys.push(`n:${node.id}`);
+      if (coveredElsewhere(node) || coverageOf(node).excluded) keys.push(`x:${node.id}`);
+    }
+  }
+  return keys;
+});
+const activeKey = ref("");
+const currentKey = computed(() => (rovingKeys.value.includes(activeKey.value) ? activeKey.value : (rovingKeys.value[0] ?? "")));
+function tabFor(key: string): number {
+  return key === currentKey.value ? 0 : -1;
+}
+function focusKey(key: string): void {
+  activeKey.value = key;
+  void nextTick(() => listEl.value?.querySelector<HTMLElement>(`[data-roving-key="${CSS.escape(key)}"]`)?.focus());
+}
+function onListKeydown(event: KeyboardEvent): void {
+  const keys = rovingKeys.value;
+  if (!keys.length) return;
+  const i = Math.max(0, keys.indexOf(currentKey.value));
+  let next: string | undefined;
+  switch (event.key) {
+    case "ArrowDown":
+      next = keys[Math.min(i + 1, keys.length - 1)];
+      break;
+    case "ArrowUp":
+      if (i === 0) {
+        event.preventDefault();
+        focusSearch();
+        return;
+      }
+      next = keys[i - 1];
+      break;
+    case "Home":
+      next = keys[0];
+      break;
+    case "End":
+      next = keys[keys.length - 1];
+      break;
+    default:
+      return;
+  }
+  event.preventDefault();
+  if (next) focusKey(next);
+}
+function onListFocusin(event: FocusEvent): void {
+  const key = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-roving-key]")?.dataset.rovingKey;
+  if (key) activeKey.value = key;
+}
+function enterList(event: KeyboardEvent): void {
+  if (!currentKey.value) return;
+  event.preventDefault();
+  focusKey(currentKey.value);
+}
 const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.value.length === 0 && unseen.value.length === 0);
 </script>
 
 <template>
   <div class="grid gap-2" data-testid="selector-picker">
     <!-- The choice at a glance; each chip drops its part. -->
-    <ul class="flex min-h-7 flex-wrap items-center gap-1.5" :aria-label="t('selector.chosenLabel', { field: label })">
-      <li v-for="part in parts" :key="`${part.kind}:${'id' in part ? part.id : ''}`" class="max-w-full">
+    <ul ref="chipsEl" class="flex min-h-7 flex-wrap items-center gap-1.5" :aria-label="t('selector.chosenLabel', { field: label })">
+      <li v-for="(part, index) in parts" :key="`${part.kind}:${'id' in part ? part.id : ''}`" class="max-w-full">
         <span
           :class="cn(
             'inline-flex max-w-full items-center gap-1 rounded-full border py-0.5 pe-1 ps-2 text-xs font-medium',
@@ -227,7 +316,8 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
             type="button"
             class="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
             :aria-label="t('selector.remove', { name: partLabel(part) })"
-            @click="removePart(part)"
+            data-chip-remove
+            @click="removeChip(part, index)"
           >
             <X class="size-3" aria-hidden="true" />
           </button>
@@ -252,19 +342,29 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
         />
         {{ t('selector.wholeFleet') }}
       </label>
-      <div class="relative flex-1">
+      <div ref="searchWrap" class="relative flex-1">
         <Search class="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
           v-model="query"
           class="ps-8"
           @keydown.enter.prevent="pickOnlyMatch"
+          @keydown.escape="clearSearchOnEscape"
+          @keydown.down="enterList"
           :placeholder="allowGroups ? t('selector.searchGroupsAndNodes') : t('selector.searchNodes')"
           :aria-label="allowGroups ? t('selector.searchGroupsAndNodes') : t('selector.searchNodes')"
         />
       </div>
     </div>
 
-    <div class="max-h-72 overflow-auto rounded-md border border-border" role="group" :aria-label="label">
+    <!-- On touch the list does not scroll inside the sheet that holds it, so a swipe always moves one surface. -->
+    <div
+      ref="listEl"
+      class="max-h-72 overflow-auto rounded-md border border-border pointer-coarse:max-h-none pointer-coarse:overflow-visible"
+      role="group"
+      :aria-label="label"
+      @keydown="onListKeydown"
+      @focusin="onListFocusin"
+    >
       <template v-if="shownGroups.length">
         <p class="sticky top-0 z-[1] bg-muted px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {{ t('selector.groupsHeading') }}
@@ -281,6 +381,8 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
           <Checkbox
             :model-value="(value.groups ?? []).includes(group.id)"
             :disabled="value.all === true"
+            :tabindex="tabFor(`g:${group.id}`)"
+            :data-roving-key="`g:${group.id}`"
             @update:model-value="(v) => emit(toggleGroup(value, group.id, v === true))"
           />
           <GroupChip :name="group.name" :color="group.color" class="min-w-0 flex-1" />
@@ -305,6 +407,8 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
               :model-value="coverageOf(node).targeted"
               :disabled="coveredElsewhere(node)"
               :aria-describedby="describedBy(node)"
+              :tabindex="tabFor(`n:${node.id}`)"
+              :data-roving-key="`n:${node.id}`"
               @update:model-value="(v) => emit(toggleNode(value, node.id, v === true))"
             />
             <span class="min-w-0 flex-1">
@@ -320,6 +424,8 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
             <Checkbox
               :model-value="coverageOf(node).excluded"
               :aria-label="t('selector.leaveOutNode', { name: node.name || node.id })"
+              :tabindex="tabFor(`x:${node.id}`)"
+              :data-roving-key="`x:${node.id}`"
               @update:model-value="(v) => emit(toggleExclude(value, node.id, v === true))"
             />
             {{ t('selector.leaveOut') }}
@@ -339,8 +445,8 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
     </p>
 
     <!-- The live answer to "which nodes is that", one click from the list. -->
-    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" aria-live="polite">
-      <span :class="cn('tabular', resolved.length === 0 && 'text-warning-text')" data-testid="selector-resolves">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+      <span :class="cn('tabular', resolved.length === 0 && 'text-warning-text')" aria-live="polite" data-testid="selector-resolves">
         {{ t('selector.resolves', { n: resolved.length }, resolved.length) }}
       </span>
       <button
