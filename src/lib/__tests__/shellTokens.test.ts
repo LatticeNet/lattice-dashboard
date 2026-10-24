@@ -389,18 +389,53 @@ test("lossless on every input: random strings drawn from the shell's special cha
   }
 });
 
+// fastestMs is the least CPU time of a few runs. CPU time, not wall time: the
+// suite runs its files in parallel, often beside Go race suites, and a process
+// waiting for a core reads as slow on the clock while doing no more work. The
+// minimum drops what is left of that noise.
+function fastestMs(run: () => void, runs = 5): number {
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const started = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(started);
+    best = Math.min(best, (used.user + used.system) / 1000);
+  }
+  return best;
+}
+
+// growthOf reports how many times longer the tokenizer takes on eight times
+// the input. One pass grows about eight times and a quadratic one about
+// sixty-four. A ratio of two sizes measured in the same process keeps the
+// check about the tokenizer rather than about the machine, which a fixed
+// millisecond budget never was. The wide step leaves room for noise both ways.
+function growthOf(make: (n: number) => string, n: number): number {
+  const small = make(n);
+  const large = make(8 * n);
+  tokenizeShell(small);
+  return fastestMs(() => tokenizeShell(large)) / Math.max(fastestMs(() => tokenizeShell(small)), 0.5);
+}
+
+const LINEAR_GROWTH_MAX = 24;
+
 test("a deep nest of substitutions neither overflows the stack nor loses text", () => {
   const source = "echo " + "$(".repeat(20000) + "x" + ")".repeat(20000);
   assert.equal(rejoin(tokenizeShell(source)), source);
   // A storm of `((`, each one arithmetic until a lone `)` says otherwise: one pass, no lookahead.
-  for (const storm of ["((".repeat(50000), "((x) ".repeat(20000), "`#`".repeat(30000)]) {
-    const started = performance.now();
+  const storms: Array<[string, (n: number) => string, number]> = [
+    ["((", (n) => "((".repeat(n), 24000],
+    ["((x) ", (n) => "((x) ".repeat(n), 10000],
+    ["`#`", (n) => "`#`".repeat(n), 16000],
+  ];
+  for (const [name, make, n] of storms) {
+    const storm = make(8 * n);
     assert.equal(rejoin(tokenizeShell(storm)), storm);
-    assert.ok(performance.now() - started < 150, `${storm.slice(0, 6)}... took too long`);
+    const growth = growthOf(make, n);
+    assert.ok(growth < LINEAR_GROWTH_MAX, `a storm of ${name} grew ${growth.toFixed(1)} times on eight times the input`);
   }
 });
 
-test("a very long script: lossless, one line per line, and fast enough for a sheet (200 KB under 150 ms)", () => {
+test("a very long script: lossless, one line per line, and linear in its length", () => {
   const block = [
     "#!/bin/sh",
     "set -eu",
@@ -414,14 +449,14 @@ test("a very long script: lossless, one line per line, and fast enough for a she
     'n=$(( $(wc -l < /etc/hosts) + 1 )) # count',
     'case "${MODE:-apply}" in apply) systemctl daemon-reload ;; *) : ;; esac',
   ].join("\n");
-  let source = "";
-  while (source.length < 200 * 1024) source += block + "\n";
-  const started = performance.now();
+  const script = (blocks: number) => (block + "\n").repeat(blocks);
+  const blocks = Math.ceil((200 * 1024) / (block.length + 1));
+  const source = script(blocks);
   const lines = tokenizeShell(source);
-  const elapsed = performance.now() - started;
   assert.equal(rejoin(lines), source);
   assert.equal(lines.length, source.split("\n").length);
-  assert.ok(elapsed < 150, `tokenized ${source.length} characters in ${elapsed.toFixed(1)} ms`);
+  const growth = growthOf(script, Math.ceil(blocks / 4));
+  assert.ok(growth < LINEAR_GROWTH_MAX, `a 50 KB script grew ${growth.toFixed(1)} times at 400 KB`);
 });
 
 test("the language: sh and bash are shell, the other interpreters are plain", () => {

@@ -232,19 +232,22 @@ class Lexer {
       return;
     }
     if (c === "#" && (this.i === frame.start || isBoundary(src[this.i - 1]))) {
-      const nl = src.indexOf("\n", this.i);
-      let end = nl === -1 ? this.n : nl;
-      // The shell finds a backquoted command's closing backquote before it
-      // reads the comment inside, so the comment ends there, and whatever
-      // follows the backquote runs.
+      let end: number;
       if (this.backquotes > 0) {
-        for (let k = this.i + 1; k < end; k++) {
-          if (src[k] === "\\") k++;
-          else if (src[k] === "`") {
-            end = k;
-            break;
-          }
+        // The shell finds a backquoted command's closing backquote before it
+        // reads the comment inside, so the comment ends there, and whatever
+        // follows the backquote runs. One forward scan to whichever comes
+        // first: looking for the newline first would read the rest of a long
+        // line for every such comment. A comment still ends at a newline
+        // even when a backslash precedes it.
+        let k = this.i + 1;
+        while (k < this.n && src[k] !== "\n" && src[k] !== "`") {
+          k += src[k] === "\\" && src[k + 1] !== "\n" ? 2 : 1;
         }
+        end = Math.min(k, this.n);
+      } else {
+        const nl = src.indexOf("\n", this.i);
+        end = nl === -1 ? this.n : nl;
       }
       this.take("comment", end - this.i);
       return;
