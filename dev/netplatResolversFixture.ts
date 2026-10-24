@@ -124,6 +124,8 @@ export const DNS_DEPLOYMENTS: DNSDeploymentView[] =
           enable_tcp: false,
           exposure: "public",
           zones: [{ suffix: "edge.roobli.org", mode: "forward", upstreams: ["1.1.1.1", "8.8.8.8"] }],
+          // Stored before the server refused this shape; the server flags it.
+          open_resolver: true,
           hostname: "ns-fsn.roobli.org",
           publish_ipv4: true,
           publish_ipv6: true,
