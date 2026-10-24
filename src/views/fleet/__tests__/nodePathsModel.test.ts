@@ -72,6 +72,8 @@ test("the other end is the source when reached, the target when reaching; checks
   assert.deepEqual(otherEnd(generated, "reachedBy"), { name: "cd-hs-sh", check: undefined });
   assert.deepEqual(otherEnd(check, "reachedBy"), { name: "cd-hs-sh", check: "Ping xuezhang-jp-nat" });
   assert.deepEqual(otherEnd(generated, "reaches"), { name: "xuezhang-jp-nat", check: undefined });
+  // A check to a node reaches the node (design 32 D1); the check is named beside it.
+  assert.deepEqual(otherEnd(check, "reaches"), { name: "xuezhang-jp-nat", check: "Ping xuezhang-jp-nat" });
   // The check's row is named by the check; its target node keeps its own name for the beacon link.
   assert.equal(check.targetName, "Ping xuezhang-jp-nat");
   assert.equal(check.targetNodeName, "xuezhang-jp-nat");

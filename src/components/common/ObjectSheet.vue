@@ -115,6 +115,13 @@ function onOpenAutoFocus(event: Event): void {
 }
 
 function onCloseAutoFocus(event: Event): void {
+  // A sheet that closed to hand over to another (an editor opened from it)
+  // finishes sliding out after the next one took focus; leave focus there.
+  const holder = document.activeElement?.closest<HTMLElement>("[data-testid='object-sheet']");
+  if (holder?.dataset.state === "open") {
+    event.preventDefault();
+    return;
+  }
   const target = props.returnFocus?.();
   if (!target) return;
   event.preventDefault();

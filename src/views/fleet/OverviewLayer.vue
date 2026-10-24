@@ -60,7 +60,7 @@ const query = props.data.pathsQuery;
 const isEmpty = computed(() => !!matrix.value && matrix.value.paths.length === 0 && props.checkAttention.length === 0);
 
 function showInPaths(q: string, path?: string): void {
-  props.owned.push({ ...props.owned.query(), view: "paths", "paths.q": q, path, open: undefined });
+  props.owned.push({ ...props.owned.query(), view: "network", as: "list", "paths.q": q, path, open: undefined });
 }
 
 const NAMES_SHOWN = 4;

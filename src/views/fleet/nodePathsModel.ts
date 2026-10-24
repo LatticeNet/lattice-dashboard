@@ -6,7 +6,7 @@
  * Kept free of Vue so `node --test` covers it directly.
  */
 import { isReachabilityCheck } from "@/views/fleet/beaconModel";
-import { displayState, quoteQueryValue, type PathDisplay, type PathItem, type PathsMatrix } from "@/views/fleet/pathsModel";
+import { displayState, quoteQueryValue, targetLabel, type PathDisplay, type PathItem, type PathsMatrix } from "@/views/fleet/pathsModel";
 
 /** The windows the card offers: an hour, a day and a week, which every server answers. */
 export const NODE_PATH_WINDOWS = ["1h", "24h", "7d"] as const;
@@ -58,7 +58,7 @@ export function nodePaths(matrix: Pick<PathsMatrix, "paths"> | undefined, nodeId
 /** The other end of a path as the node's list names it: the source for "reached by", the target (node or check) for "reaches". */
 export function otherEnd(path: PathItem, side: "reachedBy" | "reaches"): { name: string; check?: string } {
   if (side === "reachedBy") return { name: path.sourceName || path.source, check: !path.managed ? path.checkName || path.monitorId : undefined };
-  return { name: path.targetName, check: !path.managed && path.targetNode ? path.checkName : undefined };
+  return { name: targetLabel(path), check: !path.managed && path.targetNode ? path.checkName : undefined };
 }
 
 /** The Paths layer query that lists all of a list's paths: by target name, or by source name. */
