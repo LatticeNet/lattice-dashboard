@@ -168,8 +168,9 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; titl
       return { text: t("fleet.monitoring.checks.paused"), textClass: "text-muted-foreground" };
     case "unread":
       return { text: t("overview.read.failed"), textClass: "text-muted-foreground" };
+    // Unknown always says why (design 32 D1): no result yet, results that stopped, or what the runs measured.
     case "none":
-      return { text: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
+      return { text: t("fleet.monitoring.paths.state.unknown"), detail: t("fleet.monitoring.status.none"), title: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
     case "failing":
       // "down", as Paths and Overview say it.
       return {
@@ -186,7 +187,8 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; titl
         textClass: "text-warning-text font-medium",
       };
     case "stale":
-      return { text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), tone: "warning", textClass: "text-warning-text" };
+      // Muted, as unknown is everywhere: amber means degraded (design 29 D13).
+      return { text: t("fleet.monitoring.paths.state.unknown"), detail: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }), title: t("fleet.monitoring.paths.reason.results_stopped"), textClass: "text-muted-foreground" };
     case "unmeasured":
       // Every source's newest run measured nothing (design 29 M2a): unknown with the reason, never down.
       return state.reasons

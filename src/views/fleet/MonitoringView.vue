@@ -1,22 +1,27 @@
 <script setup lang="ts">
 /**
- * Monitoring (design 29 D7): five layers on ?view=, Overview the bare URL.
+ * Monitoring (design 29 D7, design 32 D2): four layers on ?view=, Overview
+ * the bare URL.
  *
  *   Overview   what needs a look, and how far each source reaches
- *   Paths      the source by target matrix; a cell opens the path sheet and its chart
+ *   Network    every path, as a graph or a list, with one query; an edge or a
+ *              row opens the path sheet in place, a node the node sheet
  *   Checks     every check in one list, the editor, the path set, history retention
- *   Topology   every path the console knows, drawn once
  *   Incidents  the incidents the server holds
  *
  * One ?window= for the page (1h to 7d, and 14d when fine history is kept that
- * long). Old links keep working: ?view=latency lands on Paths (its ?pair= on
- * the path sheet), ?view=monitors on Checks, the keepalive spelling on
+ * long). Old links keep working: ?view=paths and ?view=latency land on the
+ * Network view's list (an old ?pair= on the path sheet), ?view=topology on
+ * the Network view, ?view=monitors on Checks, the keepalive spelling on
  * Incidents, and a link that names a monitor or a node (?open=, ?node=, the
  * old /monitoring/:id) on Checks.
  *
+ * Every count the page shows comes from the one matrix read (design 32 D1):
+ * the proof line, Overview and the Network view say the same number.
+ *
  * The page owns the reads every layer shares (monitors, nodes, incidents and
- * the path reads in usePathsData) and the editors, so Overview and Paths can
- * open the path set or a new check without leaving for Checks first.
+ * the path reads in usePathsData) and the editors, so Overview and Network
+ * can open the path set or a check's editor without leaving for Checks first.
  */
 import { computed, onBeforeUnmount, provide, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -48,9 +53,8 @@ import CheckEditorSheet from "./CheckEditorSheet.vue";
 import ChecksLayer from "./ChecksLayer.vue";
 import OverviewLayer from "./OverviewLayer.vue";
 import PathSetSheet from "./PathSetSheet.vue";
-import PathsLayer from "./PathsLayer.vue";
+import NetworkLayer from "./NetworkLayer.vue";
 import RetentionSheet from "./RetentionSheet.vue";
-import TopologyLayer from "./TopologyLayer.vue";
 import WindowControl from "./WindowControl.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "./monitorHealthModel";
@@ -105,7 +109,7 @@ const layerFallback = (): MonitoringLayer => {
 };
 const layer = bindLayer<MonitoringLayer>(owned, () => MONITORING_LAYERS, layerFallback);
 
-// ?view=latency, ?view=monitors and the keepalive spelling, rewritten once.
+// ?view=paths, ?view=topology, ?view=latency, ?view=monitors and the keepalive spelling, rewritten once.
 watch(
   () => owned.query(),
   (query) => {
@@ -155,7 +159,7 @@ const windowModel = computed<MonitorWindow>({
   get: () => data.window.value,
   set: (value) => (windowParam.value = value),
 });
-/** Every layer reads the same matrix, Topology included (design 29 D13), so all of them offer the same windows. */
+/** Every layer reads the same matrix (design 29 D13), so all of them offer the same windows. */
 const windowsOffered = computed(() => data.offered.value);
 const matrix = computed(() => data.matrix.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -291,8 +295,10 @@ const monitorsProof = useProof(monitorsQuery);
 const incidentsProof = useProof(incidentsQuery);
 const proof = computed(() => (layer.value === "incidents" ? incidentsProof.value : layer.value === "checks" ? monitorsProof.value : pathsProof.value));
 
+/** The Network view's list under a query: on the Network view already, the mode the operator chose stays. */
 function pathsLink(q: string) {
-  return { name: "monitoring", query: { ...owned.query(), view: "paths", "paths.q": q, path: undefined } };
+  const query = owned.query();
+  return { name: "monitoring", query: { ...query, view: "network", as: layer.value === "network" ? query.as : "list", "paths.q": q, path: undefined, peek: undefined } };
 }
 
 const proofSegments = computed<ProofSegment[]>(() => {
@@ -334,14 +340,13 @@ const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
     count: matrix.value?.counts.down || undefined,
     tone: matrix.value?.counts.down ? "destructive" : "default",
   },
-  { value: "paths", label: t("fleet.monitoring.layers.paths") },
+  { value: "network", label: t("fleet.monitoring.layers.network") },
   {
     value: "checks",
     label: t("fleet.monitoring.layers.checks"),
     count: failingChecks.value.length || undefined,
     tone: failingChecks.value.length ? "destructive" : "default",
   },
-  { value: "topology", label: t("fleet.monitoring.layers.topology") },
   {
     value: "incidents",
     label: t("fleet.monitoring.layers.incidents"),
@@ -503,18 +508,18 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
     <PageHeader :title="$t('fleet.monitoring.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
-        <ProofLine v-if="canReadMonitors && layer !== 'topology'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template v-if="canReadMonitors" #actions>
         <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="openPathSet">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
         </Button>
-        <Button v-if="canAdminMonitors && layer === 'checks'" size="sm" type="button" data-testid="check-create" @click="openCreate()">
+        <Button v-if="canAdminMonitors && (layer === 'checks' || layer === 'network')" size="sm" type="button" data-testid="check-create" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.create') }}
         </Button>
-        <Button v-if="layer !== 'topology'" variant="outline" size="sm" type="button" :disabled="refreshing" @click="refreshAll">
+        <Button variant="outline" size="sm" type="button" :disabled="refreshing" @click="refreshAll">
           <RefreshCw :class="cn('size-4', refreshing && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
@@ -542,11 +547,13 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         @create-check="openCreate()"
       />
 
-      <PathsLayer
-        v-if="layer === 'paths'"
+      <NetworkLayer
+        v-if="layer === 'network'"
         :owned="owned"
         :data="data"
+        :nodes-query="nodesQuery"
         :monitors="monitorsQuery.data.value ?? []"
+        :incidents-query="incidentsQuery"
         :can-admin="canAdminMonitors"
         :window="data.window.value"
         :offered="data.offered.value"
@@ -555,6 +562,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :agent-of="agentOf"
         @path-set="openPathSet"
         @create-check="openCreate()"
+        @edit-check="openEdit"
         @open-check="openCheck"
         @changed="refreshAll"
         @window="(w) => (windowParam = w)"
@@ -575,18 +583,6 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         @path-set="openPathSet"
         @retention="openRetention"
         @changed="refreshAll"
-      />
-
-      <TopologyLayer
-        v-if="layer === 'topology'"
-        :owned="owned"
-        :data="data"
-        :nodes-query="nodesQuery"
-        :monitors-query="monitorsQuery"
-        :incidents-query="incidentsQuery"
-        @layer="(next) => (layer = next)"
-        @refresh-page="refreshAll"
-        @open-monitor="(id) => openCheck(id)"
       />
 
       <KeepaliveLayer

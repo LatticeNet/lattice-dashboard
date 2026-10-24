@@ -31,7 +31,7 @@ import type {
 } from "@/lib/api/types";
 import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
 import type { QueryField, QuerySchema } from "@/lib/query/engine";
-import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
+import { regionOf, type RegionKey } from "@/lib/regions";
 
 import { isReachabilityCheck, readBeaconReplans, type BeaconReplanItem } from "@/views/fleet/beaconModel";
 import { triangulate, verdictFor, type Triangulation, type Verdict } from "@/views/fleet/triangulationModel";
@@ -97,14 +97,20 @@ export function legacyWindow(window: MonitorWindow): LatencyWindow {
 /* Layers and old links                                                 */
 /* ------------------------------------------------------------------ */
 
-export type MonitoringLayer = "overview" | "paths" | "checks" | "topology" | "incidents";
-export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "paths", "checks", "topology", "incidents"];
+export type MonitoringLayer = "overview" | "network" | "checks" | "incidents";
+export const MONITORING_LAYERS: readonly MonitoringLayer[] = ["overview", "network", "checks", "incidents"];
 
-/** Layer names links used before design 29, and where they land now. */
-export const LEGACY_LAYERS: Readonly<Record<string, MonitoringLayer>> = {
-  latency: "paths",
-  monitors: "checks",
-  keepalive: "incidents",
+/**
+ * Layer names links used before, and where they land now (design 32 D2):
+ * Paths and the old Latency layer open the Network view in list mode, the
+ * old Topology the Network view as it opens by default.
+ */
+export const LEGACY_LAYERS: Readonly<Record<string, { view: MonitoringLayer; as?: "list" }>> = {
+  latency: { view: "network", as: "list" },
+  paths: { view: "network", as: "list" },
+  topology: { view: "network" },
+  monitors: { view: "checks" },
+  keepalive: { view: "incidents" },
 };
 
 function first(raw: QueryValue | undefined): string | undefined {
@@ -114,28 +120,33 @@ function first(raw: QueryValue | undefined): string | undefined {
 
 /**
  * The current spelling of an old Monitoring link, or null when the query is
- * already current. `?view=latency` becomes `?view=paths` (and its `?pair=`
- * becomes `?path=`), `?view=monitors` becomes `?view=checks`, and the
- * keepalive spelling of Incidents becomes `?view=incidents`; the old `?tab=`
- * key is read the same way. Applied once with `replace`.
+ * already current. `?view=paths` and `?view=latency` become
+ * `?view=network&as=list`, `?view=topology` becomes `?view=network`,
+ * `?view=monitors` becomes `?view=checks`, and the keepalive spelling of
+ * Incidents becomes `?view=incidents`; the old `?tab=` key is read the same
+ * way, and an old `?pair=` becomes `?path=`. Every other parameter is kept
+ * as it was, `?path=` and an `?as=` the link already names included.
+ * Applied once with `replace`.
  */
 export function legacyMonitoringRedirect(query: QueryRecord): Record<string, QueryValue> | null {
   const view = first(query.view);
   const tab = first(query.tab);
   const pair = first(query.pair);
-  const mappedView = view ? LEGACY_LAYERS[view] : undefined;
-  const mappedTab = !view && tab ? LEGACY_LAYERS[tab] : undefined;
-  if (!mappedView && !mappedTab && !pair) return null;
+  const mapped = view ? LEGACY_LAYERS[view] : !view && tab ? LEGACY_LAYERS[tab] : undefined;
+  if (!mapped && !pair) return null;
   const next = { ...query } as Record<string, QueryValue>;
-  if (mappedView) next.view = mappedView;
-  if (mappedTab) {
-    next.view = mappedTab;
-    delete next.tab;
+  if (mapped) {
+    next.view = mapped.view;
+    if (mapped.as && !first(query.as)) next.as = mapped.as;
+    if (!view) delete next.tab;
   }
   if (pair) {
     if (!first(query.path)) next.path = pair;
     delete next.pair;
-    if (!first(next.view)) next.view = "paths";
+    if (!first(next.view)) {
+      next.view = "network";
+      if (!first(query.as)) next.as = "list";
+    }
   }
   return next;
 }
@@ -483,6 +494,17 @@ export interface PathCounts {
   paused: number;
 }
 
+/**
+ * The one count rule (design 32 D1): every count the page shows is this,
+ * over the matrix's paths or over the paths a query keeps, so the proof line,
+ * Overview and both Network modes say the same number for the same set.
+ */
+export function countPaths(paths: readonly Pick<PathItem, "state" | "reason">[]): PathCounts {
+  const counts: PathCounts = { paths: paths.length, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
+  for (const path of paths) counts[displayState(path)] += 1;
+  return counts;
+}
+
 export interface PathsMatrix {
   window: string;
   observedAt?: number;
@@ -608,8 +630,7 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
     if (!held || stateRank(item.state) < stateRank(held.state)) cells.set(key, item);
     paths.push(item);
   }
-  const counts: PathCounts = { paths: paths.length, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0 };
-  for (const path of paths) counts[displayState(path)] += 1;
+  const counts = countPaths(paths);
   return {
     window: String(response.window ?? ""),
     observedAt: epoch(response.observed_at),
@@ -628,84 +649,6 @@ export function buildPathsMatrix(response: PathsResponse, names: MatrixNames = {
 /** Down first, then degraded, then unknown, then up (design 29 D13). */
 export function stateRank(state: PathState): number {
   return state === "down" ? 0 : state === "degraded" ? 1 : state === "unknown" ? 2 : 3;
-}
-
-export interface PathRowGroup {
-  group: RegionKey | "checks";
-  rows: PathRow[];
-}
-
-/**
- * Rows by region (src/lib/regions.ts), near first, then by country and name,
- * as the Latency layer grouped them; operator checks last, by name.
- */
-export function groupPathRows(rows: readonly PathRow[]): PathRowGroup[] {
-  const rank = (row: PathRow) => (row.group === "checks" ? 1000 : regionRank(row.group));
-  const sorted = [...rows].sort(
-    (a, b) =>
-      rank(a) - rank(b) ||
-      (a.country ?? "~").toUpperCase().localeCompare((b.country ?? "~").toUpperCase()) ||
-      a.name.localeCompare(b.name) ||
-      a.key.localeCompare(b.key),
-  );
-  const groups: PathRowGroup[] = [];
-  for (const row of sorted) {
-    const last = groups[groups.length - 1];
-    if (last && last.group === row.group) last.rows.push(row);
-    else groups.push({ group: row.group, rows: [row] });
-  }
-  return groups;
-}
-
-/**
- * What the matrix shows under a query: the rows and columns that hold a
- * matching path, and which cells match. With no query every row and column
- * shows, a target without paths included.
- */
-export function visibleMatrix(
-  matrix: PathsMatrix,
-  matching: ReadonlySet<string> | undefined,
-): { rows: PathRow[]; sources: PathColumn[]; matches: (path: PathItem) => boolean } {
-  if (!matching) return { rows: matrix.rows, sources: matrix.sources, matches: () => true };
-  const rowKeys = new Set<string>();
-  const sourceKeys = new Set<string>();
-  for (const path of matrix.paths) {
-    if (!matching.has(path.key)) continue;
-    rowKeys.add(path.rowKey);
-    sourceKeys.add(path.source);
-  }
-  return {
-    rows: matrix.rows.filter((row) => rowKeys.has(row.key)),
-    sources: matrix.sources.filter((source) => sourceKeys.has(source.nodeId)),
-    matches: (path) => matching.has(path.key),
-  };
-}
-
-export interface MatrixSection {
-  /** Node targets by region, or the operator checks. */
-  kind: "nodes" | "checks";
-  /** The sources with a path in this section: a check's sources do not widen the node matrix. */
-  sources: PathColumn[];
-  groups: PathRowGroup[];
-}
-
-/**
- * The matrix as the page draws it: the node targets in one table whose
- * columns are the sources probing them, and the operator checks in a second
- * table whose columns are the checks' own sources. One table for both left
- * a column per check source that was empty on every node row.
- */
-export function matrixSections(matrix: PathsMatrix, shown: { rows: PathRow[]; sources: PathColumn[] }): MatrixSection[] {
-  const groups = groupPathRows(shown.rows);
-  const out: MatrixSection[] = [];
-  for (const kind of ["nodes", "checks"] as const) {
-    const mine = groups.filter((g) => (g.group === "checks") === (kind === "checks"));
-    if (!mine.length) continue;
-    const rows = mine.flatMap((g) => g.rows);
-    const sources = shown.sources.filter((s) => rows.some((r) => matrix.cells.has(cellKey(r.key, s.nodeId))));
-    out.push({ kind, sources, groups: mine });
-  }
-  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -837,16 +780,16 @@ export interface SourceReach {
 }
 
 /**
- * For each source, how many of its paths to nodes are up, degraded, down and
- * unknown. Operator checks to a URL or an address are not reach into the
- * fleet, so they are left out, and a source that runs only such checks has no
- * line.
+ * For each source, how many of its paths are up, degraded, down, unknown and
+ * paused: every path it runs, a check to an address included, so the lines
+ * add up to the page's one count (design 32 D1) and the Network view's
+ * source picker says what Overview says.
  */
 export function reachBySource(matrix: Pick<PathsMatrix, "sources" | "paths">): SourceReach[] {
   return matrix.sources.map((column) => {
     const reach: SourceReach = { source: column.nodeId, name: column.name, up: 0, degraded: 0, down: 0, unknown: 0, paused: 0, total: 0 };
     for (const path of matrix.paths) {
-      if (path.source !== column.nodeId || path.rowKey.startsWith("@")) continue;
+      if (path.source !== column.nodeId) continue;
       reach[displayState(path)] += 1;
       reach.total += 1;
     }
@@ -983,6 +926,7 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
     const code = reasonCode(p.reason);
     return [p.reason, code ?? "", options.reasonText(p.reason)].filter(Boolean);
   };
+  const percent = (share: number | undefined) => (share === undefined ? undefined : share * 100);
   const fields: QueryField<PathItem>[] = [
     { key: "target", aliases: ["to"], type: "string", hint: hint("target"), get: (p) => p.targetName, suggest: (rows) => rows.map((p) => p.targetName) },
     { key: "source", aliases: ["from"], type: "string", hint: hint("source"), get: (p) => p.sourceName, suggest: (rows) => rows.map((p) => p.sourceName) },
@@ -1003,7 +947,8 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
     { key: "p50", type: "number", hint: hint("p50"), get: (p) => p.p50Ms },
     { key: "p95", type: "number", hint: hint("p95"), get: (p) => p.p95Ms },
     { key: "jitter", type: "number", hint: hint("jitter"), get: (p) => p.jitterMs },
-    { key: "loss", type: "number", unit: "percent", hint: hint("loss"), get: (p) => (p.loss === undefined ? undefined : p.loss * 100) },
+    { key: "loss", type: "number", unit: "percent", hint: hint("loss"), get: (p) => percent(p.loss) },
+    { key: "availability", aliases: ["avail"], type: "number", unit: "percent", hint: hint("availability"), get: (p) => percent(availability(p)) },
     { key: "managed", aliases: ["generated"], type: "bool", flag: true, hint: hint("managed"), get: (p) => p.managed, sort: false },
   ];
   return {

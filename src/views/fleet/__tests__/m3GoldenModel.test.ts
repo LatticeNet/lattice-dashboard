@@ -288,17 +288,19 @@ test("golden attention: down, degraded by target, degraded by source, then the u
     assert.ok(compiled.ok, `${query} compiles`);
     assert.deepEqual(applyQuery(m.paths, compiled.query).map((p) => p.key).sort(), item.paths.map((p) => p.key).sort(), `${query} lists exactly the item's paths`);
   });
-  // Reach into the fleet: the certificate check is not reach, so the control plane has no line.
+  // Every path counts once, the certificate check's from the control plane included (design 32 D1): the lines add up to the page's count.
   const reach = reachBySource(m).filter((r) => r.total > 0);
   assert.deepEqual(
     reach.map((r) => [r.name, r.up, r.degraded, r.down, r.unknown, r.total]),
     [
-      ["cd-hs-sh", 1, 1, 1, 0, 3],
-      ["fra-2", 1, 1, 0, 0, 2],
-      ["hk-edge", 1, 1, 0, 0, 2],
+      ["control plane", 1, 0, 0, 0, 1],
+      ["cd-hs-sh", 1, 2, 1, 0, 4],
+      ["fra-2", 1, 1, 0, 1, 3],
+      ["hk-edge", 3, 1, 0, 0, 4],
     ],
   );
-  assert.equal(reachQuery(reach[0]!, "degraded"), "source:=cd-hs-sh state:degraded");
+  assert.equal(reach.reduce((n, r) => n + r.total, 0), m.counts.paths);
+  assert.equal(reachQuery(reach[1]!, "degraded"), "source:=cd-hs-sh state:degraded");
 });
 
 /* ---- The series ---- */
@@ -458,50 +460,44 @@ test("golden path set: the editor reads its alert and thresholds, and a save sen
 
 /* ---- Topology ---- */
 
-test("golden topology: fans per source in the path set's order, edges in their path's state, a degraded check edge in warning", () => {
+test("golden topology: every path drawn once between real nodes; three checks on one pair are one edge; the certificate ends at its address", () => {
   const m = matrixOf();
-  const topo = buildTopology({ plan: GOLDEN_PATH_SET, matrix: m, monitors: GOLDEN_MONITORS, window: "1h", layer: "all", now: NOW });
+  const topo = buildTopology({ plan: GOLDEN_PATH_SET, matrix: m, window: "1h", layer: "all" });
   assert.deepEqual(topo.drawnSourceIds, ["node-fra", "node-hk", "node-sh"]);
   assert.deepEqual(topo.sources.map((s) => s.name), ["fra-2", "hk-edge", "cd-hs-sh"]);
+  // The picker's reach is Overview's: every path of the source, its checks included.
   assert.deepEqual(
-    topo.sourceChoices.map((c) => [c.node.id, c.reach.up, c.reach.degraded, c.reach.down, c.reach.total]),
+    topo.sourceChoices.map((c) => [c.node.id, c.reach.up, c.reach.degraded, c.reach.down, c.reach.unknown, c.reach.total]),
     [
-      ["node-fra", 1, 1, 0, 2],
-      ["node-hk", 1, 1, 0, 2],
-      ["node-sh", 1, 1, 1, 3],
+      ["node-fra", 1, 1, 0, 1, 3],
+      ["node-hk", 3, 1, 0, 0, 4],
+      ["node-sh", 1, 2, 1, 0, 4],
     ],
   );
-  assert.equal(topo.counts.paths, 7);
-  assert.equal(topo.counts.down, 1);
-  assert.equal(topo.counts.degraded, 3);
-  assert.equal(topo.counts.unknown, 0);
-  const probes = topo.edges.filter((e) => e.kind === "probe").map((e) => [e.id, e.state, edgeStyle(e).color]);
-  assert.deepEqual(probes, [
-    ["probe:node-hk~node-fra", "up", "--success"],
-    ["probe:node-sh~node-fra", "up", "--success"],
-    ["probe:node-fra~node-hk", "up", "--success"],
-    ["probe:node-sh~node-hk", "down", "--destructive"],
-    ["probe:node-fra~node-jp", "degraded", "--warning"],
-    ["probe:node-hk~node-jp", "degraded", "--warning"],
-    ["probe:node-sh~node-jp", "degraded", "--warning"],
+  // The drawing holds what the page counts.
+  assert.equal(topo.counts.drawn, m.counts.paths);
+  assert.equal(topo.counts.undrawn, 0);
+  const edges = topo.edges.map((e) => [e.id, e.state, edgeStyle(e).color, e.paths?.length]);
+  assert.deepEqual(edges, [
+    ["path:node-hk>node-fra", "up", "--success", 1],
+    ["path:node-sh>node-fra", "up", "--success", 1],
+    ["path:node-fra>node-hk", "up", "--success", 1],
+    ["path:node-sh>node-hk", "down", "--destructive", 1],
+    // The ICMP check that cannot run from fra-2 (unknown) does not grey the pair the path set measures.
+    ["path:node-fra>node-jp", "degraded", "--warning", 2],
+    ["path:node-hk>node-jp", "degraded", "--warning", 3],
+    ["path:node-sh>node-jp", "degraded", "--warning", 2],
+    ["path:@cp>@addr:lattice.example.net:443", "up", "--success", 1],
   ]);
+  // No pseudo-node for a check: tyo-3 is one row, the address one terminal.
+  assert.deepEqual(topo.members.map((n) => n.id), ["node-jp"]);
+  assert.deepEqual(topo.addresses.map((a) => [a.address, a.methods, a.counts.paths]), [["lattice.example.net:443", ["tls"], 1]]);
   assert.deepEqual(rowMarks(topo, "node-jp"), [
     { source: "node-fra", state: "degraded" },
     { source: "node-hk", state: "degraded" },
     { source: "node-sh", state: "degraded" },
   ]);
   assert.deepEqual(rowSummary(topo, "node-hk"), { state: "down", n: 1, of: 2 });
-  assert.deepEqual(rowSummary(topo, "node-jp"), { state: "degraded", n: 3, of: 3 });
-  // Operator checks: cd-hs-sh's newest run to tyo-3 web passes, but its path is degraded, so its edge is too.
-  const checks = topo.edges.filter((e) => e.kind === "check").map((e) => [e.id, e.state, edgeStyle(e).color]);
-  assert.deepEqual(checks, [
-    ["check:mon-web:node-hk", "up", "--success"],
-    ["check:mon-web:node-sh", "degraded", "--warning"],
-    ["check:mon-ping-jp:node-fra", "none", "--muted-foreground"],
-    ["check:mon-ping-jp:node-hk", "up", "--success"],
-    ["check:mon-cert:@cp", "up", "--success"],
-  ]);
-  assert.deepEqual(topo.checks.find((c) => c.monitorId === "mon-web")?.summary, { up: 1, degraded: 1, failing: 0, stale: 0, none: 0 });
 });
 
 /* ---- Notifications ---- */

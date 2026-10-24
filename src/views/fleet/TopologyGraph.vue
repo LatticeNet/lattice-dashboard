@@ -1,16 +1,22 @@
 <script setup lang="ts">
 /**
- * The Topology layer's drawing (topologyModel holds every rule; this file
- * only places and words what it says).
+ * The Network view's drawing (topologyModel holds every rule; this file only
+ * places and words what it says).
  *
- * Edges are one SVG under the boxes; every node, source, check and the
- * control plane is an HTML button over it, so text stays crisp, every box
- * takes focus and the screen reader reads a list of buttons rather than a
- * picture. Hovering or focusing anything lights it and everything one edge
- * away and dims the rest; a card says the numbers and when they were heard.
- * Edges answer the pointer through a 14 px transparent stroke. The keyboard
- * reaches every path through the boxes (a focused box's card lists its
- * paths) and through the List presentation.
+ * Edges are one SVG under the boxes; every node, source, address and the
+ * control plane is an HTML button over it, so text stays crisp and every box
+ * takes focus. Hovering or focusing anything lights it and everything one
+ * edge away and dims the rest; a card says the numbers and when they were
+ * heard. Edges answer the pointer through a 14 px transparent stroke.
+ *
+ * Every edge is also a button for the keyboard (design 32 D2): a source's
+ * edges follow its box in the tab order, top to bottom by where they end, and
+ * each is labelled with what its card says. Enter or a click opens the path
+ * sheet in place (`openPath`); the sheet gives focus back to the edge on
+ * close. The edge whose path is open is drawn with a ring.
+ *
+ * The page's query fades what it does not keep: matching edges and their
+ * ends keep full strength, the rest take the muted tone.
  *
  * The card lives outside the scrolling frame, in a host that does not
  * scroll, so a card near the bottom or the right edge is moved, never cut.
@@ -25,27 +31,29 @@ import { cn } from "@/lib/utils";
 
 import { formatLoss, formatMs } from "./latencyModel";
 import { usePathsCopy } from "./pathsCopy";
-import { LOSS_TEXT, lossTone } from "./pathsModel";
+import { LOSS_TEXT, displayState, lossTone } from "./pathsModel";
 import {
   CONTROL_PLANE,
   edgeStyle,
   edgesOf,
+  endMatched,
+  keyboardOrder,
   layoutTopology,
   neighbourhood,
   rowMarks,
-  rowProbe,
+  rowPath,
   rowSummary,
   worstLive,
+  type EdgePathState,
   type LayoutEdge,
-  type ProbeState,
   type LayoutRow,
-  type TopoCheck,
+  type TopoAddress,
   type TopoEdge,
   type TopoNode,
   type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
-import { PROBE_INK, PROBE_MARK, checkLineValue, edgeValue, freshnessDot, freshnessText, lastSampleText, rowSummaryValue, stateLabel } from "./topologyCopy";
+import { PATH_INK, PATH_MARK, addressLineValue, edgeValue, freshnessDot, freshnessText, lastSampleText, reasonWords, rowSummaryValue, stateLabel } from "./topologyCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -56,19 +64,20 @@ const props = withDefaults(
     nodesState?: TopoReadState;
     /** Why the node list read failed, when it never landed. */
     nodesReason?: string | null;
+    /** The path the sheet has open (`?path=`): its edge carries a ring. */
+    openPath?: string | null;
   }>(),
-  { nodesState: "read", nodesReason: null },
+  { nodesState: "read", nodesReason: null, openPath: null },
 );
 
 const emit = defineEmits<{
   openNode: [id: string, el: HTMLElement | null];
-  openPair: [source: string, target: string];
-  openMonitor: [id: string, el: HTMLElement | null];
+  openPath: [key: string, el: HTMLElement | null];
   retryNodes: [];
 }>();
 
 const { t, locale } = useI18n();
-const { reasonText } = usePathsCopy();
+const { reasonText, methodName } = usePathsCopy();
 
 const PAD = 16;
 /** The card's frame of reference: wraps the scrolling frame and does not scroll itself. */
@@ -94,6 +103,14 @@ function toggleCountry(code: string): void {
 }
 
 const layout = computed(() => layoutTopology(props.model, { width: frameWidth.value - PAD * 2, expanded: expanded.value }));
+/** The keyboard's edges, by the box they follow. */
+const keyed = computed(() => keyboardOrder(layout.value));
+const keyedFrom = (key: string) => keyed.value.get(key) ?? [];
+/** Lines that start from no box of their own (a chain out of a row inside a folded country). */
+const keyedRest = computed(() => {
+  const boxes = new Set([CONTROL_PLANE, ...layout.value.sources.map((s) => `source:${s.node.id}`)]);
+  return layout.value.edges.filter((le) => !boxes.has(le.fromKey)).sort((a, b) => a.end.y - b.end.y || a.key.localeCompare(b.key));
+});
 
 /* ---- Hover and focus ---- */
 
@@ -103,15 +120,20 @@ const layout = computed(() => layoutTopology(props.model, { width: frameWidth.va
  */
 type Target =
   | { type: "edge"; key: string; x: number; y: number }
-  | { type: "node" | "source" | "check" | "cp" | "country"; key: string; x: number; y: number; w: number; h: number; anchored: true };
+  | { type: "node" | "source" | "address" | "cp" | "country"; key: string; x: number; y: number; w: number; h: number; anchored: true };
 
 const hover = ref<Target | null>(null);
+/** The edge the keyboard is on: drawn with a ring until it leaves. */
+const focusedEdge = ref<string | null>(null);
 // A layer or window switch rebuilds everything under the pointer.
-watch(() => [props.model.layer, props.model.window], () => (hover.value = null));
+watch(() => [props.model.layer, props.model.window], () => {
+  hover.value = null;
+  focusedEdge.value = null;
+});
 
 const edgeByKey = computed(() => new Map(layout.value.edges.map((e) => [e.key, e])));
 const rowByKey = computed(() => new Map(layout.value.rows.map((r) => [r.key, r])));
-const checkById = computed(() => new Map(props.model.checks.map((c) => [c.id, c])));
+const addressById = computed(() => new Map(props.model.addresses.map((a) => [a.id, a])));
 
 /** The endpoints a hover lights, or null when nothing is hovered. */
 const lit = computed<Set<string> | null>(() => {
@@ -127,10 +149,6 @@ const lit = computed<Set<string> | null>(() => {
     for (const node of props.model.nodes.values()) if (node.freshness && node.freshness !== "fresh") out.add(node.id);
     for (const edge of props.model.edges) if (edge.from === CONTROL_PLANE) out.add(edge.to);
     return out;
-  }
-  if (h.type === "check") {
-    const check = checkById.value.get(h.key);
-    return new Set([h.key, ...(check?.sourceIds ?? [])]);
   }
   if (h.type === "country") {
     const row = rowByKey.value.get(h.key);
@@ -149,16 +167,17 @@ function edgeLit(le: LayoutEdge): boolean {
   const set = lit.value;
   if (!set) return true;
   if (h.type === "cp") return le.bundle.some((e) => e.from === CONTROL_PLANE);
-  if (h.type === "check") return le.bundle.some((e) => e.to === h.key);
   if (h.type === "country") return le.bundle.some((e) => set.has(e.from) && set.has(e.to));
   return le.bundle.some((e) => e.from === h.key || e.to === h.key);
 }
 
-const dimmed = (id: string) => !!lit.value && !lit.value.has(id);
+/** The query keeps the line: one of its edges matches (always, without a query). */
+const edgeMatched = (le: LayoutEdge) => le.bundle.some((e) => e.matched);
+/** Faded by the query, or by a hover elsewhere. */
+const dimmed = (id: string) => (!!lit.value && !lit.value.has(id)) || !endMatched(props.model, id);
 const rowDimmed = (row: LayoutRow) => {
-  if (!lit.value) return false;
-  if (row.type === "node") return !lit.value.has(row.node.id);
-  if (row.type === "country") return !row.members.some((m) => lit.value!.has(m.id));
+  if (row.type === "node") return dimmed(row.node.id);
+  if (row.type === "country") return (!!lit.value && !row.members.some((m) => lit.value!.has(m.id))) || !row.members.some((m) => endMatched(props.model, m.id));
   return false;
 };
 
@@ -176,7 +195,18 @@ function onEdgeLeave(le: LayoutEdge): void {
   if (hover.value?.type === "edge" && hover.value.key === le.key) hover.value = null;
 }
 
-function onBoxEnter(type: "node" | "source" | "check" | "cp" | "country", key: string, event: Event): void {
+/** The keyboard on an edge: its card at the line's end, as the pointer would show it. */
+function onEdgeFocus(le: LayoutEdge): void {
+  focusedEdge.value = le.key;
+  hover.value = { type: "edge", key: le.key, x: le.end.x + PAD - (frame.value?.scrollLeft ?? 0), y: le.end.y + PAD };
+}
+
+function onEdgeBlur(le: LayoutEdge): void {
+  if (focusedEdge.value === le.key) focusedEdge.value = null;
+  onEdgeLeave(le);
+}
+
+function onBoxEnter(type: "node" | "source" | "address" | "cp" | "country", key: string, event: Event): void {
   const el = event.currentTarget as HTMLElement;
   const box = el.getBoundingClientRect();
   const origin = host.value?.getBoundingClientRect();
@@ -190,8 +220,8 @@ function onBoxLeave(key: string): void {
 }
 
 /**
- * The folded country a bundle touches, and from which side: probes go into
- * one; checks, and chains between countries, come out of one.
+ * The folded country a bundle touches, and from which side: paths go into
+ * one; chains between countries come out of one.
  */
 function bundleCountry(le: LayoutEdge): { row: Extract<LayoutRow, { type: "country" }>; side: "into" | "out" } | undefined {
   for (const [id, side] of [[le.edge.to, "into"], [le.edge.from, "out"]] as const) {
@@ -202,18 +232,23 @@ function bundleCountry(le: LayoutEdge): { row: Extract<LayoutRow, { type: "count
 }
 
 /** The state a bundle's members count as healthy, by kind. */
-const HEALTHY = { probe: "up", check: "up", chain: "converged" } as const;
+const HEALTHY = { path: "up", chain: "converged" } as const;
 
-function onEdgeClick(le: LayoutEdge): void {
+function onEdgeClick(le: LayoutEdge, el: Element | null): void {
   const edge = le.edge;
   if (le.bundle.length > 1) {
     const hit = bundleCountry(le);
     if (hit) toggleCountry(hit.row.country);
     return;
   }
-  if (edge.kind === "probe") emit("openPair", edge.from, edge.to);
-  else if (edge.kind === "check" && edge.monitorId) emit("openMonitor", edge.monitorId, null);
+  if (edge.kind === "path" && edge.pathKey) emit("openPath", edge.pathKey, el as HTMLElement | null);
   else if (edge.kind === "chain") emit("openNode", edge.from, null);
+}
+
+/** An address box opens the worst path into it: its card lists the others. */
+function openAddress(address: TopoAddress, el: HTMLElement): void {
+  const into = props.model.edges.filter((e) => e.to === address.id && e.pathKey);
+  if (into.length) emit("openPath", worstLive(into).pathKey!, el);
 }
 
 /* ---- Drawing helpers ---- */
@@ -231,17 +266,25 @@ function edgeWidth(le: LayoutEdge): number {
   return le.bundle.length > 1 ? base + 1 : base;
 }
 
-/** Chains and checks end in an arrow; a probe's direction is the layout's (source left). */
+/** A line the query does not keep takes the muted tone; the state's tone otherwise. */
+function edgeColor(le: LayoutEdge): string {
+  return edgeMatched(le) ? edgeStyle(le.edge).color : "--muted-foreground";
+}
+
+/** Chains and addresses end in an arrow; a path's direction to a node is the layout's (source left). */
 function arrow(le: LayoutEdge): string | undefined {
-  if (le.edge.kind === "probe") return undefined;
+  if (le.edge.kind === "path" && le.toColumn !== "address") return undefined;
   const { x, y, dir } = le.end;
   const back = x - dir * 7;
   return `M${x} ${y} L${back} ${y - 4} L${back} ${y + 4} Z`;
 }
 
+/** The ring around the line whose path is open, or that the keyboard is on. */
+const ringed = (le: LayoutEdge) => focusedEdge.value === le.key || (!!props.openPath && le.bundle.length === 1 && le.edge.paths?.some((p) => p.key === props.openPath));
+
 const nodeName = (id: string) => {
   if (id === CONTROL_PLANE) return t("fleet.monitoring.topology.cp.title");
-  return props.model.nodes.get(id)?.name ?? checkById.value.get(id)?.name ?? id;
+  return props.model.nodes.get(id)?.name ?? addressById.value.get(id)?.address ?? id;
 };
 
 interface RowValue {
@@ -249,28 +292,28 @@ interface RowValue {
   tone: string;
   loss?: string;
   /** One state mark per drawn source, in the picker's order; empty with a single source, whose value says it all. */
-  marks: { source: string; name: string; state?: ProbeState }[];
+  marks: { source: string; name: string; state?: EdgePathState }[];
 }
 
 /** Each drawn node's value, worked out once per model rather than once per binding. */
 const rowValues = computed(() => {
   const out = new Map<string, RowValue>();
-  const probes = props.model.layer === "all" || props.model.layer === "probes";
   const several = props.model.drawnSourceIds.length > 1;
   for (const row of layout.value.rows) {
     if (row.type !== "node") continue;
     const node = row.node;
-    const probe = rowProbe(props.model, node.id);
-    const marks = several && probe ? rowMarks(props.model, node.id).map((m) => ({ ...m, name: nodeName(m.source) })) : [];
+    const path = rowPath(props.model, node.id);
+    if (!path) continue;
+    const marks = several ? rowMarks(props.model, node.id).map((m) => ({ ...m, name: nodeName(m.source) })) : [];
     // Several sources: the row summarises across them; one source: its edge's own value (p50 or state).
     const summary = rowSummary(props.model, node.id);
-    if (probe) out.set(node.id, { ...(summary ? rowSummaryValue(t, summary) : edgeValue(t, probe.edge)), marks });
-    else if (node.probeTarget === "not_probeable" && probes) out.set(node.id, { text: t("fleet.monitoring.topology.value.notProbed"), tone: "text-muted-foreground", marks: [] });
+    out.set(node.id, { ...(summary ? rowSummaryValue(t, summary) : edgeValue(t, path.edge)), marks });
   }
   return out;
 });
 /** A row's marks in words, for its label and the mark's tooltip. */
-const markText = (m: { name: string; state?: ProbeState }) => `${m.name}: ${m.state ? t(`fleet.monitoring.topology.state.${m.state}`) : t("fleet.monitoring.topology.value.noPath")}`;
+const markText = (m: { name: string; state?: EdgePathState }) =>
+  m.state ? `${m.name}: ${t(`fleet.monitoring.paths.state.${m.state}`)}` : t("fleet.monitoring.topology.value.notMeasured", { source: m.name });
 const rowValue = (node: TopoNode): RowValue | undefined => rowValues.value.get(node.id);
 
 /**
@@ -287,7 +330,7 @@ const countrySummary = (row: Extract<LayoutRow, { type: "country" }>) => country
 
 function summarizeCountry(row: Extract<LayoutRow, { type: "country" }>) {
   const ids = new Set(row.members.map((m) => m.id));
-  const into = props.model.edges.filter((e) => e.kind === "probe" && ids.has(e.to));
+  const into = props.model.edges.filter((e) => e.kind === "path" && ids.has(e.to));
   if (into.length === 0) return undefined;
   const measured = into.filter((e) => (e.state === "up" || e.state === "degraded") && e.p50Ms !== undefined).map((e) => e.p50Ms!).sort((a, b) => a - b);
   const problems = into.filter((e) => e.state === "down" || e.state === "degraded").length;
@@ -300,17 +343,15 @@ function summarizeCountry(row: Extract<LayoutRow, { type: "country" }>) {
 }
 
 function sourcePaths(node: TopoNode): number {
-  return props.model.edges.filter((e) => e.kind === "probe" && e.from === node.id).length;
+  return props.model.edges.filter((e) => e.kind === "path" && e.from === node.id).reduce((n, e) => n + (e.paths?.length ?? 1), 0);
 }
 
-function checkLine(check: TopoCheck): { text: string; tone: string } {
-  return checkLineValue(t, check);
+function addressLine(address: TopoAddress): { text: string; tone: string } {
+  return addressLineValue(t, address);
 }
 
-function checkFrom(check: TopoCheck): string {
-  if (check.serverEvaluated) return t("fleet.monitoring.topology.check.control");
-  if (check.assignAll) return t("fleet.monitoring.topology.check.every");
-  return t("fleet.monitoring.topology.check.from", { n: check.sourceIds.length }, check.sourceIds.length);
+function addressFrom(address: TopoAddress): string {
+  return address.checks.length === 1 ? address.checks[0]! : t("fleet.monitoring.topology.address.checks", { n: address.checks.length }, address.checks.length);
 }
 
 const cpLine = computed(() => {
@@ -335,11 +376,12 @@ const quietAge = (node: TopoNode) =>
 function rowLabel(node: TopoNode): string {
   const parts = [node.name, node.country ?? "", freshnessText(t, locale.value, node, props.now)];
   const value = rowValue(node);
-  if (value) parts.push(value.text + (value.loss ? `, ${t("fleet.monitoring.latency.cell.loss", { loss: value.loss })}` : ""));
+  if (value) parts.push(value.text + (value.loss ? `, ${t("fleet.monitoring.paths.cell.loss", { loss: value.loss })}` : ""));
   if (value?.marks.length) parts.push(value.marks.map(markText).join("; "));
   if (node.relay) parts.push(t("fleet.monitoring.topology.role.relay"));
   if (node.exit) parts.push(t("fleet.monitoring.topology.role.exit"));
   if (node.incidents) parts.push(t("fleet.monitoring.topology.incidents", { n: node.incidents }, node.incidents));
+  parts.push(t("fleet.monitoring.network.graph.nodeHint"));
   return parts.filter(Boolean).join(", ");
 }
 
@@ -362,15 +404,15 @@ interface Card {
   hint?: string;
 }
 
-function probeRows(edge: TopoEdge): CardRow[] {
+function pathRows(edge: TopoEdge): CardRow[] {
   const rows: CardRow[] = [];
-  rows.push({ label: t("fleet.monitoring.topology.card.p50"), value: formatMs(edge.p50Ms) || t("common.misc.none"), tone: PROBE_INK[edge.state as ProbeState] });
+  rows.push({ label: t("fleet.monitoring.topology.card.p50"), value: formatMs(edge.p50Ms) || t("common.misc.none"), tone: PATH_INK[edge.state as EdgePathState] });
   rows.push({ label: t("fleet.monitoring.topology.card.p95"), value: formatMs(edge.p95Ms) || t("common.misc.none") });
   rows.push({
     label: t("fleet.monitoring.topology.card.loss"),
     value: edge.loss !== undefined ? formatLoss(edge.loss) : t("common.misc.none"),
     // A loss takes the path's state tone (down red, degraded amber); an up path's is a plain figure (D13).
-    tone: (edge.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(edge.state as ProbeState)] || undefined : undefined,
+    tone: (edge.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(edge.state as EdgePathState)] || undefined : undefined,
   });
   if (edge.expected) rows.push({ label: t("fleet.monitoring.topology.card.heard"), value: t("fleet.monitoring.topology.card.heardValue", { heard: edge.samples ?? 0, expected: edge.expected, window: props.windowLabel }) });
   rows.push({ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last?.ok === false ? "text-destructive" : undefined });
@@ -387,28 +429,43 @@ function edgeCard(le: LayoutEdge): Card {
     return {
       title: t(hit?.side === "out" ? "fleet.monitoring.topology.card.bundleOut" : "fleet.monitoring.topology.card.bundle", { n: le.bundle.length, country }),
       subtitle: `${stateLabel(t, edge)} · ${nodeName(hit?.side === "out" ? edge.from : edge.to)}`,
-      rows: edge.kind === "probe" ? probeRows(edge) : [],
+      rows: edge.kind === "path" ? pathRows(edge) : [],
       lines: [{ text: t(`fleet.monitoring.topology.card.bundleCounts.${edge.kind}`, { healthy, other }) }],
       hint: t("fleet.monitoring.topology.card.hint.country"),
     };
   }
   const title = t("fleet.monitoring.topology.card.pair", { from: nodeName(edge.from), to: nodeName(edge.to) });
-  if (edge.kind === "probe") {
+  if (edge.kind === "path") {
     const lines: Card["lines"] = [];
     // Why it is not up, in the server's own reason: unknown, paused or degraded.
     if (edge.state !== "up" && edge.reason) lines.push({ text: reasonText(edge.reason), tone: edge.state === "degraded" ? "text-warning-text" : undefined });
-    if (edge.method) lines.push({ text: t("fleet.monitoring.topology.card.method", { method: edge.method.toUpperCase() }) });
-    return { title, subtitle: `${stateLabel(t, edge)} · ${props.windowLabel}`, rows: probeRows(edge), lines, hint: t("fleet.monitoring.topology.card.hint.probe") };
+    const several = (edge.paths?.length ?? 0) > 1;
+    if (edge.method && !several) lines.push({ text: t("fleet.monitoring.topology.card.method", { method: methodName(edge.method) }) });
+    const card: Card = { title, subtitle: `${stateLabel(t, edge)} · ${props.windowLabel}`, rows: pathRows(edge), lines, hint: t("fleet.monitoring.topology.card.hint.path") };
+    // Several checks on one pair: the card names each, the sheet lists them.
+    if (several) {
+      card.pathsTitle = t("fleet.monitoring.network.pair.title", { n: edge.paths!.length }, edge.paths!.length);
+      card.paths = edge.paths!.map((p) => {
+        const state = displayState(p);
+        const value = state === "up" || state === "degraded" ? formatMs(p.p50Ms) || t(`fleet.monitoring.paths.state.${state}`) : state === "unknown" ? t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonWords(t, p.reason) }) : t(`fleet.monitoring.paths.state.${state}`);
+        return { key: p.key, text: `${methodName(p.method)} · ${p.managed ? t("fleet.monitoring.network.pathSet") : p.checkName || p.monitorId}`, value, tone: PATH_INK[state] };
+      });
+    }
+    return card;
   }
-  if (edge.kind === "chain") {
-    const lines: Card["lines"] = [];
-    if (edge.chain?.targetLine) lines.push({ text: t("fleet.monitoring.topology.card.chainLines", { source: edge.chain.sourceLine.slice(0, 8), target: edge.chain.targetLine.slice(0, 8) }) });
-    if (edge.chain?.error) lines.push({ text: t("fleet.monitoring.topology.card.chainError", { error: edge.chain.error }), tone: "text-destructive" });
-    return { title, subtitle: stateLabel(t, edge), rows: [], lines, hint: t("fleet.monitoring.topology.card.hint.chain") };
-  }
-  const rows: CardRow[] = [{ label: t("fleet.monitoring.topology.card.last"), value: lastSampleText(t, locale.value, edge.last, props.now), tone: edge.last && !edge.last.ok ? "text-destructive" : undefined }];
-  const lines = edge.last?.error ? [{ text: edge.last.error, tone: "text-destructive" }] : [];
-  return { title, subtitle: stateLabel(t, edge), rows, lines, hint: t("fleet.monitoring.topology.card.hint.check") };
+  const lines: Card["lines"] = [];
+  if (edge.chain?.targetLine) lines.push({ text: t("fleet.monitoring.topology.card.chainLines", { source: edge.chain.sourceLine.slice(0, 8), target: edge.chain.targetLine.slice(0, 8) }) });
+  if (edge.chain?.error) lines.push({ text: t("fleet.monitoring.topology.card.chainError", { error: edge.chain.error }), tone: "text-destructive" });
+  return { title, subtitle: stateLabel(t, edge), rows: [], lines, hint: t("fleet.monitoring.topology.card.hint.chain") };
+}
+
+/** An edge's keyboard label: what its card says, in one line. */
+function edgeLabel(le: LayoutEdge): string {
+  const card = edgeCard(le);
+  const parts = [card.title, card.subtitle ?? "", ...card.rows.map((r) => `${r.label} ${r.value}`), ...card.lines.map((l) => l.text)];
+  if (card.paths?.length) parts.push(`${card.pathsTitle}: ${card.paths.map((p) => `${p.text} ${p.value}`).join("; ")}`);
+  if (card.hint) parts.push(card.hint);
+  return parts.filter(Boolean).join(", ");
 }
 
 function pathList(id: string): Pick<Card, "paths" | "more"> {
@@ -444,13 +501,11 @@ const card = computed<Card | null>(() => {
       more: Math.max(0, quiet.length - 8),
     };
   }
-  if (h.type === "check") {
-    const check = checkById.value.get(h.key);
-    if (!check) return null;
-    const line = checkLine(check);
-    const lines = [{ text: line.text, tone: line.tone }];
-    if (check.fannedOut && check.summary.up) lines.push({ text: t("fleet.monitoring.topology.check.fanned", { n: check.summary.up }), tone: "text-muted-foreground" });
-    return { title: check.name, subtitle: `${check.type.toUpperCase()} · ${check.target}`, rows: [], lines, ...pathList(check.id), hint: t("fleet.monitoring.topology.card.hint.check") };
+  if (h.type === "address") {
+    const address = addressById.value.get(h.key);
+    if (!address) return null;
+    const line = addressLine(address);
+    return { title: address.address, subtitle: [address.methods.map(methodName).join(", "), addressFrom(address)].filter(Boolean).join(" · "), rows: [], lines: [{ text: line.text, tone: line.tone }], ...pathList(address.id), hint: t("fleet.monitoring.topology.card.hint.path") };
   }
   if (h.type === "country") {
     const row = rowByKey.value.get(h.key);
@@ -526,6 +581,12 @@ const cardStyle = computed(() => {
   }
   return { left: `${Math.max(MARGIN, x)}px`, top: `${Math.max(MARGIN, y)}px`, width: `${CARD_W}px` };
 });
+
+function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  onEdgeClick(le, event.currentTarget as Element);
+}
 </script>
 
 <template>
@@ -555,15 +616,17 @@ const cardStyle = computed(() => {
             :key="le.key"
             :data-edge="le.edge.id"
             :data-state="le.edge.state"
-            :class="cn('transition-opacity duration-150', !edgeLit(le) && 'opacity-[0.12]')"
+            :data-matched="edgeMatched(le) ? undefined : 'false'"
+            :class="cn('transition-opacity duration-150', !edgeLit(le) ? 'opacity-[0.12]' : !edgeMatched(le) && 'opacity-40')"
           >
+            <path v-if="ringed(le)" :d="le.d" fill="none" stroke-linecap="round" :stroke-width="edgeWidth(le) + 5" style="stroke: var(--ring); opacity: 0.55" />
             <path
               :d="le.d"
               fill="none"
               :stroke-linecap="edgeStyle(le.edge).double ? 'butt' : 'round'"
               :stroke-width="edgeWidth(le)"
               :stroke-dasharray="dash(le)"
-              :style="{ stroke: `var(${edgeStyle(le.edge).color})` }"
+              :style="{ stroke: `var(${edgeColor(le)})` }"
             />
             <!-- A chain's second rail: the card's colour down the middle of the stroke. -->
             <path
@@ -574,7 +637,7 @@ const cardStyle = computed(() => {
               :stroke-dasharray="dash(le)"
               style="stroke: var(--card)"
             />
-            <path v-if="arrow(le)" :d="arrow(le)" :style="{ fill: `var(${edgeStyle(le.edge).color})` }" />
+            <path v-if="arrow(le)" :d="arrow(le)" :style="{ fill: `var(${edgeColor(le)})` }" />
             <path
               :d="le.d"
               fill="none"
@@ -584,7 +647,7 @@ const cardStyle = computed(() => {
               class="cursor-pointer"
               @pointermove="(e) => onEdgeMove(le, e)"
               @pointerleave="onEdgeLeave(le)"
-              @click="onEdgeClick(le)"
+              @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
             />
           </g>
         </g>
@@ -624,39 +687,77 @@ const cardStyle = computed(() => {
             <span v-for="part in cpLine.slice(1)" :key="part.key" :class="part.tone">{{ part.text }}</span>
           </span>
         </div>
+        <!-- The control plane's own paths (certificate checks), right after its box for the keyboard. -->
+        <svg v-if="keyedFrom(CONTROL_PLANE).length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
+          <g
+            v-for="le in keyedFrom(CONTROL_PLANE)"
+            :key="le.key"
+            role="button"
+            tabindex="0"
+            class="outline-none"
+            :aria-label="edgeLabel(le)"
+            :data-edge-key="le.edge.id"
+            :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
+            @focus="onEdgeFocus(le)"
+            @blur="onEdgeBlur(le)"
+            @keydown="(e) => onEdgeKey(le, e)"
+            @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+          >
+            <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
+          </g>
+        </svg>
 
-        <!-- Probe sources. -->
-        <button
-          v-for="s in layout.sources"
-          :key="s.node.id"
-          type="button"
-          class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-          :class="[dimmed(s.node.id) && 'opacity-35', s.node.freshness === 'quiet' || s.node.freshness === 'never' ? 'border-destructive/50' : 'border-border']"
-          :style="{ left: `${s.box.x}px`, top: `${s.box.y}px`, width: `${s.box.w}px`, height: `${s.box.h}px` }"
-          :data-node="s.node.id"
-          data-testid="topology-source"
-          :aria-label="rowLabel(s.node)"
-          @pointerenter="(e) => onBoxEnter('source', s.node.id, e)"
-          @pointerleave="onBoxLeave(s.node.id)"
-          @focus="(e) => onBoxEnter('source', s.node.id, e)"
-          @blur="onBoxLeave(s.node.id)"
-          @click="(e) => emit('openNode', s.node.id, e.currentTarget as HTMLElement)"
-        >
-          <span class="flex min-w-0 items-center gap-2">
-            <span :class="cn('size-2 shrink-0 rounded-full', freshnessDot(s.node))" aria-hidden="true" />
-            <span class="truncate text-sm font-medium" :title="s.node.name">{{ s.node.name }}</span>
-            <!-- Its place in the row marks, when more than one source draws. -->
-            <span v-if="model.drawnSourceIds.length > 1" class="ms-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular" :title="$t('fleet.monitoring.topology.source.markOrder', { n: model.drawnSourceIds.indexOf(s.node.id) + 1 })">{{ model.drawnSourceIds.indexOf(s.node.id) + 1 }}</span>
-          </span>
-          <span v-if="s.node.freshness === 'quiet'" class="truncate ps-4 text-[11px] text-destructive">
-            {{ $t('fleet.monitoring.topology.source.quiet', { age: quietAge(s.node) }) }}
-          </span>
-          <span v-else-if="s.node.freshness === 'never'" class="truncate ps-4 text-[11px] text-muted-foreground">{{ $t('fleet.monitoring.topology.source.never') }}</span>
-          <span v-else class="truncate ps-4 text-[11px] text-muted-foreground">
-            {{ $t('fleet.monitoring.topology.source.role') }}<template v-if="s.node.country"> · <span class="font-mono">{{ s.node.country }}</span></template>
-            · <span class="font-mono tabular">{{ $t('fleet.monitoring.topology.source.paths', { n: sourcePaths(s.node) }, sourcePaths(s.node)) }}</span>
-          </span>
-        </button>
+        <!-- Sources, each followed by its paths for the keyboard. -->
+        <template v-for="s in layout.sources" :key="s.node.id">
+          <button
+            type="button"
+            class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+            :class="[dimmed(s.node.id) && 'opacity-35', s.node.freshness === 'quiet' || s.node.freshness === 'never' ? 'border-destructive/50' : 'border-border']"
+            :style="{ left: `${s.box.x}px`, top: `${s.box.y}px`, width: `${s.box.w}px`, height: `${s.box.h}px` }"
+            :data-node="s.node.id"
+            :data-row-key="s.node.id"
+            data-testid="topology-source"
+            :aria-label="rowLabel(s.node)"
+            @pointerenter="(e) => onBoxEnter('source', s.node.id, e)"
+            @pointerleave="onBoxLeave(s.node.id)"
+            @focus="(e) => onBoxEnter('source', s.node.id, e)"
+            @blur="onBoxLeave(s.node.id)"
+            @click="(e) => emit('openNode', s.node.id, e.currentTarget as HTMLElement)"
+          >
+            <span class="flex min-w-0 items-center gap-2">
+              <span :class="cn('size-2 shrink-0 rounded-full', freshnessDot(s.node))" aria-hidden="true" />
+              <span class="truncate text-sm font-medium" :title="s.node.name">{{ s.node.name }}</span>
+              <!-- Its place in the row marks, when more than one source draws. -->
+              <span v-if="model.drawnSourceIds.length > 1" class="ms-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular" :title="$t('fleet.monitoring.topology.source.markOrder', { n: model.drawnSourceIds.indexOf(s.node.id) + 1 })">{{ model.drawnSourceIds.indexOf(s.node.id) + 1 }}</span>
+            </span>
+            <span v-if="s.node.freshness === 'quiet'" class="truncate ps-4 text-[11px] text-destructive">
+              {{ $t('fleet.monitoring.topology.source.quiet', { age: quietAge(s.node) }) }}
+            </span>
+            <span v-else-if="s.node.freshness === 'never'" class="truncate ps-4 text-[11px] text-muted-foreground">{{ $t('fleet.monitoring.topology.source.never') }}</span>
+            <span v-else class="truncate ps-4 text-[11px] text-muted-foreground">
+              {{ $t('fleet.monitoring.topology.source.role') }}<template v-if="s.node.country"> · <span class="font-mono">{{ s.node.country }}</span></template>
+              · <span class="font-mono tabular">{{ $t('fleet.monitoring.topology.source.paths', { n: sourcePaths(s.node) }, sourcePaths(s.node)) }}</span>
+            </span>
+          </button>
+          <svg v-if="keyedFrom(`source:${s.node.id}`).length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
+            <g
+              v-for="le in keyedFrom(`source:${s.node.id}`)"
+              :key="le.key"
+              role="button"
+              tabindex="0"
+              class="outline-none"
+              :aria-label="edgeLabel(le)"
+              :data-edge-key="le.edge.id"
+              :data-row-key="le.bundle.length === 1 ? le.edge.pathKey : undefined"
+              @focus="onEdgeFocus(le)"
+              @blur="onEdgeBlur(le)"
+              @keydown="(e) => onEdgeKey(le, e)"
+              @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+            >
+              <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
+            </g>
+          </svg>
+        </template>
 
         <!-- Every other node, by region. -->
         <template v-for="row in layout.rows" :key="row.key">
@@ -717,48 +818,68 @@ const cardStyle = computed(() => {
             <span v-if="row.node.incidents" class="shrink-0 rounded-sm bg-destructive/12 px-1 font-mono text-[10px] font-semibold text-destructive tabular" aria-hidden="true">{{ row.node.incidents }}</span>
             <span v-if="row.node.relay" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.relay') }}</span>
             <span v-if="row.node.exit" class="shrink-0 rounded-sm border border-primary/40 px-1 text-[10px] text-muted-foreground">{{ $t('fleet.monitoring.topology.role.exit') }}</span>
-            <span v-if="rowValue(row.node)" class="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular">
+            <span v-if="rowValue(row.node)" class="flex min-w-0 shrink items-center gap-1.5 font-mono text-xs tabular">
               <span v-if="rowValue(row.node)!.loss" class="text-[11px] text-muted-foreground">{{ rowValue(row.node)!.loss }}</span>
-              <span :class="rowValue(row.node)!.tone">{{ rowValue(row.node)!.text }}</span>
+              <span :class="cn('truncate', rowValue(row.node)!.tone)" :title="rowValue(row.node)!.text">{{ rowValue(row.node)!.text }}</span>
               <!-- One mark per drawn source, in the picker's order, so overlapping fans stay readable. -->
-              <span v-if="rowValue(row.node)!.marks.length" class="flex items-center gap-0.5" aria-hidden="true" data-testid="topology-row-marks">
+              <span v-if="rowValue(row.node)!.marks.length" class="flex shrink-0 items-center gap-0.5" aria-hidden="true" data-testid="topology-row-marks">
                 <span
                   v-for="m in rowValue(row.node)!.marks"
                   :key="m.source"
                   :title="markText(m)"
                   :data-mark="m.state ?? 'none'"
-                  :class="cn('size-2 rounded-[2px]', m.state ? PROBE_MARK[m.state] : 'border border-dashed border-muted-foreground/50')"
+                  :class="cn('size-2 rounded-[2px]', m.state ? PATH_MARK[m.state] : 'border border-dashed border-muted-foreground/50')"
                 />
               </span>
             </span>
           </button>
         </template>
 
-        <!-- Checks an operator made. -->
+        <!-- One terminal per address the checks dial. -->
         <button
-          v-for="c in layout.checks"
-          :key="c.check.id"
+          v-for="a in layout.addresses"
+          :key="a.address.id"
           type="button"
           class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-          :class="[dimmed(c.check.id) && 'opacity-35', !c.check.enabled ? 'border-border' : c.check.summary.failing ? 'border-destructive/50' : c.check.summary.degraded ? 'border-warning/50' : 'border-border']"
-          :style="{ left: `${c.box.x}px`, top: `${c.box.y}px`, width: `${c.box.w}px`, height: `${c.box.h}px` }"
-          data-testid="topology-check"
-          :aria-label="`${c.check.name}, ${c.check.type}, ${c.check.target}, ${checkLine(c.check).text}`"
-          @pointerenter="(e) => onBoxEnter('check', c.check.id, e)"
-          @pointerleave="onBoxLeave(c.check.id)"
-          @focus="(e) => onBoxEnter('check', c.check.id, e)"
-          @blur="onBoxLeave(c.check.id)"
-          @click="(e) => emit('openMonitor', c.check.monitorId, e.currentTarget as HTMLElement)"
+          :class="[dimmed(a.address.id) && 'opacity-35', a.address.counts.down ? 'border-destructive/50' : a.address.counts.degraded ? 'border-warning/50' : 'border-border']"
+          :style="{ left: `${a.box.x}px`, top: `${a.box.y}px`, width: `${a.box.w}px`, height: `${a.box.h}px` }"
+          data-testid="topology-address"
+          :data-address="a.address.address"
+          :aria-label="`${a.address.address}, ${a.address.methods.map(methodName).join(', ')}, ${addressFrom(a.address)}, ${addressLine(a.address).text}`"
+          @pointerenter="(e) => onBoxEnter('address', a.address.id, e)"
+          @pointerleave="onBoxLeave(a.address.id)"
+          @focus="(e) => onBoxEnter('address', a.address.id, e)"
+          @blur="onBoxLeave(a.address.id)"
+          @click="(e) => openAddress(a.address, e.currentTarget as HTMLElement)"
         >
           <span class="flex min-w-0 items-center gap-1.5">
-            <span class="shrink-0 font-mono text-[10px] uppercase text-muted-foreground">{{ c.check.type }}</span>
-            <span class="truncate text-sm font-medium" :title="c.check.name">{{ c.check.name }}</span>
+            <span class="shrink-0 font-mono text-[10px] uppercase text-muted-foreground">{{ a.address.methods.join(' ') }}</span>
+            <span class="truncate font-mono text-xs font-medium" :title="a.address.address">{{ a.address.address }}</span>
           </span>
           <span class="flex min-w-0 items-center gap-1.5 text-[11px]">
-            <span class="min-w-0 truncate text-muted-foreground">{{ checkFrom(c.check) }}</span>
-            <span :class="cn('ms-auto shrink-0 tabular', checkLine(c.check).tone)">{{ checkLine(c.check).text }}</span>
+            <span class="min-w-0 truncate text-muted-foreground">{{ addressFrom(a.address) }}</span>
+            <span :class="cn('ms-auto shrink-0 tabular', addressLine(a.address).tone)">{{ addressLine(a.address).text }}</span>
           </span>
         </button>
+
+        <!-- Lines that start from a row (chains): last for the keyboard, top to bottom. -->
+        <svg v-if="keyedRest.length" class="pointer-events-none absolute start-0 top-0 overflow-visible" :width="layout.width" :height="layout.height" data-testid="topology-edge-keys">
+          <g
+            v-for="le in keyedRest"
+            :key="le.key"
+            role="button"
+            tabindex="0"
+            class="outline-none"
+            :aria-label="edgeLabel(le)"
+            :data-edge-key="le.edge.id"
+            @focus="onEdgeFocus(le)"
+            @blur="onEdgeBlur(le)"
+            @keydown="(e) => onEdgeKey(le, e)"
+            @click="(e) => onEdgeClick(le, e.currentTarget as Element)"
+          >
+            <path :d="le.d" fill="none" stroke="transparent" stroke-width="2" />
+          </g>
+        </svg>
       </div>
     </div>
   </div>
@@ -766,7 +887,7 @@ const cardStyle = computed(() => {
       <!--
         What the pointer or focus is on, with when it was heard. Outside the
         scrolling frame, so it is never clipped; no live region, since the
-        focused box already carries its label and the List view every path.
+        focused box or edge already carries its label.
       -->
       <div
         v-if="card"

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * Topology's source picker (design 29 D13): which sources draw their fan.
- * Every path set source is listed in the path set's order with its reach
- * counts (up, degraded, down of its paths), so the operator picks the ones
+ * The Network graph's source picker (design 29 D13, design 32 D2): which
+ * sources draw their fan. Every source with a path is listed, the path set's
+ * first in its order, with its reach counts (up, degraded, down of its
+ * paths, the same counts Overview gives), so the operator picks the ones
  * worth drawing; the control reads "4 of 9 sources". The choice lives in
- * ?topo.sources= (the layer writes it); the menu stays open while ticking, and
+ * ?topo.sources= (the view writes it); the menu stays open while ticking, and
  * the last drawn source cannot be unticked, so the drawing is never empty.
  */
 import { computed } from "vue";
@@ -34,8 +35,8 @@ function toggle(id: string, on: boolean): void {
 function reach(choice: TopoSourceChoice): { key: string; text: string; tone: string }[] {
   const r = choice.reach;
   const parts = [{ key: "up", text: t("fleet.monitoring.topology.sources.reach", { up: r.up, total: r.total }), tone: "text-muted-foreground" }];
-  if (r.degraded) parts.push({ key: "degraded", text: t("fleet.monitoring.topology.proof.degraded", { n: r.degraded }), tone: "text-warning-text" });
-  if (r.down) parts.push({ key: "down", text: t("fleet.monitoring.topology.proof.down", { n: r.down }), tone: "text-destructive" });
+  if (r.degraded) parts.push({ key: "degraded", text: t("fleet.monitoring.paths.proof.degraded", { n: r.degraded }), tone: "text-warning-text" });
+  if (r.down) parts.push({ key: "down", text: t("fleet.monitoring.paths.proof.down", { n: r.down }), tone: "text-destructive" });
   return parts;
 }
 </script>
