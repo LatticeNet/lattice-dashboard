@@ -9,7 +9,6 @@ import {
   checkRowGroup,
   checkRows,
   definitionDirty,
-  definitionMonitorIds,
   definitionProblems,
   draftFromDefinition,
   emptyDefinitionDraft,
@@ -46,10 +45,13 @@ test("a new definition needs sources and a target, and says so as what is still 
   assert.deepEqual(definitionProblems(ready, { newDefinition: true }), []);
   // A tls check runs on the control plane: no sources needed, an address is.
   const tls = withKind(ready, "tls");
-  assert.deepEqual(tls.sources, {});
-  assert.deepEqual(tls.targets, {});
   assert.deepEqual(missingParts(definitionProblems(tls, { newDefinition: true })), ["target"]);
   assert.deepEqual(definitionProblems({ ...tls, addressText: "example.com:443" }, { newDefinition: true }), []);
+  // The sets stay in the draft but a tls save sends none, and coming back finds them (design review: a method change wiped them).
+  const tlsSave = buildDefinitionSave({ ...tls, addressText: "example.com:443" }, undefined, "certs");
+  assert.deepEqual([tlsSave.sources, tlsSave.targets], [{}, {}]);
+  assert.deepEqual(withKind(withKind(ready, "http"), "tcp").targets, ready.targets);
+  assert.deepEqual(withKind(tls, "icmp").sources, ready.sources);
 });
 
 test("addresses are one per line or comma separated, checked by the method's rules", () => {
@@ -57,8 +59,10 @@ test("addresses are one per line or comma separated, checked by the method's rul
   const http = { ...emptyDefinitionDraft("http"), sources: { nodes: ["n-sh"] } };
   assert.ok(definitionProblems({ ...http, addressText: "not a url" }, { newDefinition: true }).includes("address"));
   assert.ok(definitionProblems({ ...http, addressText: "http://10.0.0.1/" }, { newDefinition: true }).includes("destination"));
-  // A beacon names nodes only: typed addresses are cleared with the method.
-  assert.equal(withKind({ ...http, addressText: "https://a.example" }, "beacon").addressText, "");
+  // A beacon names nodes only: typed addresses stay in the draft and are not sent.
+  const beacon = withKind({ ...http, addressText: "https://a.example", targets: { nodes: ["n-jp"] } }, "beacon");
+  assert.equal(beacon.addressText, "https://a.example");
+  assert.equal(buildDefinitionSave(beacon, undefined, "b").addresses, undefined);
 });
 
 test("secret headers refuse a group or whole-fleet source, as the server does", () => {
@@ -97,8 +101,14 @@ test("an unchanged selector echoed in another order is not an edit", () => {
 
 test("the suggested name names the method and the first targets", () => {
   const draft = { ...emptyDefinitionDraft("tcp"), targets: { groups: ["grp_edge"], nodes: ["n-jp", "n-us"] } };
-  assert.equal(suggestDefinitionName(draft, (id) => id.slice(2), () => "edge"), "TCP edge, jp +1");
-  assert.equal(suggestDefinitionName(emptyDefinitionDraft("tcp"), (id) => id, (id) => id), "");
+  assert.equal(suggestDefinitionName(draft, (id) => id.slice(2), () => "edge", "the whole fleet"), "TCP edge, jp +1");
+  assert.equal(suggestDefinitionName(emptyDefinitionDraft("tcp"), (id) => id, (id) => id, "the whole fleet"), "");
+  // Names are counted in bytes, as the server counts them: 41 Chinese characters are 123 bytes.
+  const cjk = "节".repeat(41);
+  assert.ok(definitionProblems({ ...draft, name: cjk }, { newDefinition: true }).includes("name"));
+  assert.ok(!definitionProblems({ ...draft, name: "节".repeat(40) }, { newDefinition: true }).includes("name"));
+  const long = suggestDefinitionName({ ...emptyDefinitionDraft("tcp"), targets: { nodes: ["n1"] } }, () => "节".repeat(60), () => "", "");
+  assert.ok(new TextEncoder().encode(long).length <= 80 && long.startsWith("TCP 节"), "a suggestion is cut at a whole character");
 });
 
 test("the dry run reads as paths, dead targets and pairs by reason, without counting a dead target's pairs twice", () => {
@@ -136,6 +146,9 @@ test("a definition's health comes from its paths, in the list's vocabulary", () 
   const degraded = pathsHealth([{ state: "degraded" }, { state: "up" }, { state: "unknown", reason: "agent_offline" }], true, now);
   assert.deepEqual(degraded, { kind: "degraded", degraded: 1, total: 2, lastAt: now });
   assert.deepEqual(pathsHealth([{ state: "unknown", reason: "not_probeable" }], true, now), { kind: "unmeasured", total: 1, reason: "not_probeable", lastAt: now });
+  // Up on how many of all its paths, and no latency: the p50s of different pairs make no one figure.
+  const up = pathsHealth([{ state: "up", p50Ms: 40 }, { state: "up", p50Ms: 120 }, { state: "unknown", reason: "agent_offline" }], true, now);
+  assert.deepEqual(up, { kind: "up", total: 2, of: 3, lastAt: now });
   // A pause is a choice, not a reason the check measures nothing.
   assert.deepEqual(pathsHealth([{ state: "unknown", reason: "source_paused" }], true, now), { kind: "none" });
 });
@@ -149,5 +162,4 @@ test("the list holds definitions, single checks and Fleet mesh, never the monito
   const mesh = { name: "Fleet mesh", enabled: true, stored: true, version: 2, method: "auto", sources: 1, targets: 3, paths: 3, paused_targets: 0 };
   const rows = checkRows(monitors, [stored()], mesh);
   assert.deepEqual(rows.map((r) => [r.kind, checkRowGroup(r)]), [["definition", "checks"], ["check", "checks"], ["fleet", "builtin"]]);
-  assert.deepEqual([...definitionMonitorIds("chk_a", monitors)], ["mon_chk_a_1"]);
 });

@@ -17,7 +17,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMediaQuery } from "@vueuse/core";
-import { Activity, Globe, History, LockKeyhole, Network, Pencil, RadioTower, Settings2, Trash2, Waypoints, X } from "lucide-vue-next";
+import { Activity, CircleAlert, Globe, History, LockKeyhole, Network, Pencil, RadioTower, Settings2, Trash2, Waypoints, X } from "lucide-vue-next";
 
 import { api, type CheckDefinitionView, type CheckFleetMesh, type GroupView, type MonitorSettings, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
 import { formatBytes, formatRelativeTime, shortId } from "@/lib/format";
@@ -69,6 +69,8 @@ const props = defineProps<{
   definitions: CheckDefinitionView[];
   fleetMesh?: CheckFleetMesh;
   definitionsLoading: boolean;
+  /** Why the definitions read failed, while it has not answered since. */
+  definitionsError?: string | null;
   groups: GroupView[];
 }>();
 
@@ -80,6 +82,7 @@ const emit = defineEmits<{
   retention: [];
   changed: [];
   window: [window: MonitorWindow];
+  retryDefinitions: [];
 }>();
 
 const { t } = useI18n();
@@ -211,8 +214,9 @@ function rowFacts(row: CheckRow): CheckRowFacts {
         type: row.mesh.method,
         targets: [...new Set(meshPaths.value.map((p) => p.targetName))],
         nodes: rowNodes(row),
-        interval: 0,
-        timeout: 0,
+        // Fleet mesh's schedule lives in its own editor; the list does not claim one.
+        interval: undefined,
+        timeout: undefined,
         enabled: row.mesh.enabled,
         managed: true,
         all: false,
@@ -258,7 +262,10 @@ const listed = computed(() => {
 
 /* ---- The query field (?monitors.q=, as before) ---- */
 
-const querySchema = checkRowsQuerySchema<CheckRow>(rowFacts);
+// Each row's facts once per change: the query reads about a dozen fields per row, and a
+// definition's health walks all of its paths.
+const factsByKey = computed(() => new Map(listed.value.map((r) => [r.key, rowFacts(r)])));
+const querySchema = checkRowsQuerySchema<CheckRow>((row) => factsByKey.value.get(row.key) ?? rowFacts(row));
 const storedQuery = bindQueryParam<string>(props.owned, "monitors.q", {
   parse: (raw) => (typeof raw === "string" ? raw : ""),
   format: (value) => (value.trim() ? value : undefined),
@@ -341,6 +348,15 @@ function statusView(row: CheckRow): { text: string; detail?: string; title?: str
         : { text: t("fleet.monitoring.checks.unmeasured"), detail: reasonShort(state.reason), title: reasonText(state.reason), textClass: "text-muted-foreground" };
     case "up": {
       // A certificate check leads with the days left, the reason it exists; others with the newest latency.
+      // A definition or Fleet mesh says how many of its paths are up and how many measure nothing yet.
+      if (state.of !== undefined && state.of > state.total) {
+        return {
+          text: t("fleet.monitoring.checks.upOn", { n: state.total, total: state.of }),
+          detail: t("fleet.monitoring.checks.unknownCount", { n: state.of - state.total }),
+          tone: "success",
+          textClass: "text-foreground",
+        };
+      }
       const days = monitor ? certDaysLeft(monitor) : undefined;
       const detail = days !== undefined ? (days < 0 ? t("fleet.monitoring.checks.certExpired") : t("fleet.monitoring.checks.certLeft", { n: days })) : state.latencyMs !== undefined ? formatMs(state.latencyMs) : undefined;
       return { text: t("fleet.monitoring.status.up"), detail, tone: "success", textClass: "text-foreground" };
@@ -448,7 +464,8 @@ function assignmentLabel(monitor: MonitorView): string {
 }
 
 const columns = computed<DataTableColumn<CheckRow>[]>(() => [
-  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, value: (r) => checkRowName(r) },
+  // A long name wraps inside a capped column rather than squeezing To and From.
+  { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, class: "max-w-80", value: (r) => checkRowName(r) },
   { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (r) => healthRank(rowHealth(r)) },
   { key: "type", label: t("fleet.monitoring.checks.table.method"), sortable: true, searchable: true, value: (r) => checkRowMethod(r) },
   { key: "target", label: t("fleet.monitoring.checkDefs.list.to"), searchable: true, value: (r) => rowTarget(r) },
@@ -641,7 +658,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
 
     <!-- Nothing at all yet: one sentence and the watches worth starting with. -->
     <section
-      v-if="monitorsQuery.data.value !== undefined && !definitionsLoading && rows.length === 0"
+      v-if="monitorsQuery.data.value !== undefined && !definitionsLoading && !definitionsError && rows.length === 0"
       class="rounded-lg border border-dashed border-border px-5 py-8 text-center"
       aria-labelledby="checks-empty"
     >
@@ -692,8 +709,19 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :examples="queryExamples"
     />
 
+    <div
+      v-if="definitionsError && !definitions.length"
+      role="alert"
+      class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border px-3 py-2 text-sm"
+      data-testid="definitions-failed"
+    >
+      <CircleAlert class="size-4 shrink-0 text-destructive" aria-hidden="true" />
+      <span class="min-w-0 flex-1 break-words">{{ $t('fleet.monitoring.checkDefs.list.failed') }} <span class="text-muted-foreground">{{ definitionsError }}</span></span>
+      <Button variant="outline" size="sm" type="button" @click="emit('retryDefinitions')">{{ $t('common.actions.retry') }}</Button>
+    </div>
+
     <DataTable
-      v-if="!(monitorsQuery.data.value !== undefined && !definitionsLoading && rows.length === 0)"
+      v-if="!(monitorsQuery.data.value !== undefined && !definitionsLoading && !definitionsError && rows.length === 0)"
       state-key="monitors"
       :columns="columns"
       :rows="query.rows.value"
@@ -781,6 +809,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :definition="openDefinition"
       :open-id="sheet.openId.value"
       :list-loading="definitionsLoading"
+      :list-error="definitionsError && !definitions.length ? definitionsError : null"
       :paths="openDefinitionPaths"
       :nodes="nodes"
       :groups="groups"
@@ -789,6 +818,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
       @edit="(d) => emit('editDefinition', d)"
+      @retry="emit('retryDefinitions')"
       @changed="emit('changed')"
     />
 

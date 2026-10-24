@@ -39,6 +39,8 @@ import {
   draftFromDefinition,
   emptyDefinitionDraft,
   missingParts,
+  DEFINITION_ADDRESSES_MAX,
+  DEFINITION_NAME_MAX,
   selectorIsBroad,
   suggestDefinitionName,
   summarizePreview,
@@ -102,6 +104,8 @@ watch(
 );
 
 const editing = computed(() => !!props.definition);
+/** A tls check runs on the control plane, which a session with a node allowlist cannot target. */
+const kinds = computed(() => (props.allowBroad || props.definition?.type === "tls" ? DEFINITION_KINDS : DEFINITION_KINDS.filter((k) => k !== "tls")));
 const isTls = computed(() => draft.value.type === "tls");
 const nodeTargets = computed(() => takesTargetNodes(draft.value.type));
 const addressTargets = computed(() => takesAddresses(draft.value.type));
@@ -125,7 +129,7 @@ function groupName(id: string): string {
   return props.groups.find((g) => g.id === id)?.name || id;
 }
 
-const suggested = computed(() => suggestDefinitionName(draft.value, nodeName, groupName));
+const suggested = computed(() => suggestDefinitionName(draft.value, nodeName, groupName, t("selector.wholeFleetInline")));
 const problems = computed<DefinitionProblem[]>(() => definitionProblems(draft.value, { newDefinition: !editing.value, m3: props.m3 }));
 const missing = computed(() => missingParts(problems.value));
 const dirty = computed(() => (props.definition ? definitionDirty(props.definition, draft.value, suggested.value) : true));
@@ -162,7 +166,9 @@ watch(
   () => [previewable.value, JSON.stringify(previewable.value ? body() : null)] as const,
   ([ready]) => {
     if (previewTimer) clearTimeout(previewTimer);
+    // The aborted request must not settle `previewPending`: its finally sees no controller of its own.
     previewAbort?.abort();
+    previewAbort = undefined;
     previewError.value = undefined;
     if (!ready) {
       preview.value = undefined;
@@ -198,6 +204,14 @@ onBeforeUnmount(() => {
 });
 
 const summary = computed(() => (preview.value ? summarizePreview(preview.value) : undefined));
+/** The dry run's headline: every path, or how many of them will measure (design review: "9 paths" hid that 3 would). */
+const headline = computed(() => {
+  const s = summary.value;
+  if (!s) return "";
+  return s.measured === s.paths
+    ? t("fleet.monitoring.checkDefs.preview.paths", { n: s.paths }, s.paths)
+    : t("fleet.monitoring.checkDefs.preview.measures", { n: s.measured, total: s.paths }, s.paths);
+});
 
 /** The proof line's segments after the path count: dead targets, then pairs by reason. */
 const segments = computed(() => {
@@ -280,11 +294,11 @@ function problemOf(p: DefinitionProblem): string {
     case "destination":
       return t("fleet.monitoring.checkDefs.problem.destination");
     case "tooManyAddresses":
-      return t("fleet.monitoring.checkDefs.problem.tooManyAddresses", { max: 64 });
+      return t("fleet.monitoring.checkDefs.problem.tooManyAddresses", { max: DEFINITION_ADDRESSES_MAX });
     case "secretSources":
       return t("fleet.monitoring.checkDefs.problem.secretSources");
     case "name":
-      return t("fleet.monitoring.checkDefs.problem.name", { max: 120 });
+      return t("fleet.monitoring.checkDefs.problem.name", { max: DEFINITION_NAME_MAX });
     case "headers":
       return t("fleet.monitoring.checkDefs.problem.headers");
     case "expectStatus":
@@ -369,20 +383,21 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <!-- 1. What to measure -->
       <fieldset :class="SECTION">
         <legend :class="STEP" class="mb-2.5">{{ $t('fleet.monitoring.checks.editor.step.what') }}</legend>
-        <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')">
+        <!-- The single-check editor's method cards, so both editors read alike. -->
+        <div class="grid gap-1.5" role="radiogroup" :aria-label="$t('fleet.monitoring.checks.editor.step.what')">
           <label
-            v-for="kind in DEFINITION_KINDS"
+            v-for="kind in kinds"
             :key="kind"
-            :class="cn('flex cursor-pointer flex-col gap-0.5 rounded-md border px-2.5 py-2 transition-colors pointer-coarse:min-h-11', draft.type === kind ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/40')"
+            :class="cn('flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2 transition-colors pointer-coarse:min-h-11', draft.type === kind ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/40')"
             :data-kind="kind"
           >
-            <span class="flex items-center gap-2">
-              <input type="radio" name="definition-kind" class="accent-[var(--primary)]" :value="kind" :checked="draft.type === kind" @change="setKind(kind)" />
-              <span class="font-mono text-xs font-medium uppercase">{{ kind }}</span>
+            <input type="radio" name="definition-kind" class="mt-1 accent-[var(--primary)]" :value="kind" :checked="draft.type === kind" @change="setKind(kind)" />
+            <span>
+              <span class="block font-mono text-xs font-medium uppercase">{{ kind }}</span>
+              <span class="block text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.kind.${kind}`) }}</span>
             </span>
           </label>
         </div>
-        <p class="text-xs text-muted-foreground" data-testid="definition-kind-hint">{{ $t(`fleet.monitoring.checks.editor.kind.${draft.type}`) }}</p>
         <p v-if="editing && definition && draft.type !== definition.type" class="rounded-md bg-warning/10 px-2.5 py-2 text-xs text-warning-text" role="status">
           {{ $t('fleet.monitoring.checkDefs.editor.methodChange') }}
         </p>
@@ -448,12 +463,12 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         </div>
 
         <!-- What a save would measure, from the server's own dry run. -->
-        <section class="rounded-md border border-border bg-muted/30 px-3 py-2.5" aria-live="polite" data-testid="definition-preview" :aria-label="$t('fleet.monitoring.checkDefs.preview.label')">
+        <section class="rounded-md border border-border bg-muted/30 px-3 py-2.5" data-testid="definition-preview" :aria-label="$t('fleet.monitoring.checkDefs.preview.label')">
           <p v-if="missing.length" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.preview.waiting') }}</p>
           <p v-else-if="previewError" class="text-xs text-destructive" role="alert" data-testid="definition-preview-refused">{{ $t('fleet.monitoring.checkDefs.preview.refused', { reason: previewError }) }}</p>
           <template v-else-if="summary">
-            <p :class="cn('flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-sm', previewPending && 'opacity-60')" data-testid="definition-preview-line">
-              <span class="font-medium tabular">{{ $t('fleet.monitoring.checkDefs.preview.paths', { n: summary.paths }, summary.paths) }}</span>
+            <p :class="cn('flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-sm', previewPending && 'opacity-60')" aria-live="polite" data-testid="definition-preview-line">
+              <span :class="cn('font-medium tabular', summary.paths > 0 && summary.measured === 0 && 'text-warning-text')">{{ headline }}</span>
               <template v-for="segment in segments" :key="segment.key">
                 <span class="text-muted-foreground" aria-hidden="true">·</span>
                 <span :class="segment.tone === 'warning' ? 'text-warning-text' : 'text-muted-foreground'">{{ segment.text }}</span>
@@ -575,12 +590,16 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
     </form>
     <template #actions>
       <p v-if="saveError" role="alert" class="basis-full text-xs text-destructive" data-testid="definition-save-error">{{ $t('fleet.monitoring.checks.editor.refused', { reason: saveError }) }}</p>
-      <p v-if="missing.length" class="me-auto text-xs text-muted-foreground" data-testid="definition-missing">
+      <p v-if="missing.length" class="me-auto basis-full text-xs text-muted-foreground sm:basis-auto" data-testid="definition-missing">
         {{ $t('fleet.monitoring.create.missing', { fields: missing.map((m) => $t(`fleet.monitoring.checkDefs.editor.missing.${m}`)).join($t('fleet.monitoring.create.missingJoin')) }) }}
       </p>
       <p v-else-if="editing && !dirty" class="me-auto text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.unchanged') }}</p>
+      <!-- What the save will do, beside the button that does it; the full line sits under the targets. -->
+      <p v-else-if="previewable" class="me-auto basis-full text-xs text-muted-foreground sm:basis-auto" aria-hidden="true" data-testid="definition-footer-preview">
+        {{ previewPending || !summary ? $t('fleet.monitoring.checkDefs.preview.checking') : headline }}
+      </p>
       <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
-      <Button type="submit" form="definition-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty)" data-testid="definition-save">
+      <Button type="submit" form="definition-editor" size="sm" :disabled="pending || problems.length > 0 || (editing && !dirty) || (previewable && previewPending)" data-testid="definition-save">
         <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
         <Save v-else-if="editing" class="size-4" aria-hidden="true" />
         <Plus v-else class="size-4" aria-hidden="true" />

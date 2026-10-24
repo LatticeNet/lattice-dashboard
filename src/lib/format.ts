@@ -27,6 +27,11 @@ export function formatBytesPerSec(bytes?: number): string {
   return `${formatBytes(bytes)}/s`;
 }
 
+/** A count in the reader's locale: 26,954 or 26 954, never 26954. */
+export function formatCount(value: number): string {
+  return new Intl.NumberFormat(activeLocale).format(value);
+}
+
 export function formatPercent(value?: number, digits = 0): string {
   if (value === undefined || value === null || Number.isNaN(value)) return NO_VALUE;
   return `${value.toFixed(digits)}%`;

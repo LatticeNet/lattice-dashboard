@@ -56,8 +56,24 @@ export const DEFINITION_KINDS: readonly MonitorType[] = ["tcp", "icmp", "beacon"
 
 /** The bounds lattice-sdk model.CheckDefinition* sets; the server refuses past them. */
 export const DEFINITION_NAME_MAX = 120;
+
+const encoder = new TextEncoder();
+/** A string's length as the server counts it: bytes of UTF-8. */
+function utf8Bytes(text: string): number {
+  return encoder.encode(text).length;
+}
+
+/** A suggested name stays well under the limit, cut at a whole character. */
+const SUGGESTED_NAME_BYTES = 80;
+function truncateBytes(text: string, max: number): string {
+  let out = "";
+  for (const ch of text) {
+    if (utf8Bytes(out + ch) > max) break;
+    out += ch;
+  }
+  return out;
+}
 export const DEFINITION_ADDRESSES_MAX = 64;
-export const DEFINITION_PAIRS_MAX = 4096;
 
 /** tcp, icmp and beacon reach target nodes. */
 export function takesTargetNodes(kind: string): boolean {
@@ -137,10 +153,10 @@ export function draftFromDefinition(def: CheckDefinitionView): DefinitionDraft {
 
 /** The draft with another method: fields the method does not take are cleared, so a save never carries them. */
 export function withKind(draft: DefinitionDraft, type: MonitorType): DefinitionDraft {
+  // The sets and addresses stay in the draft whatever the method: a save and
+  // the rules leave out what a method does not take, so trying TLS and coming
+  // back loses nothing the operator chose.
   const next = { ...draft, type };
-  if (!takesSources(type)) next.sources = {};
-  if (!takesTargetNodes(type)) next.targets = {};
-  if (!takesAddresses(type)) next.addressText = "";
   if ((type === "tls") !== (draft.type === "tls")) {
     next.intervalSec = type === "tls" ? TLS_DEFAULT_INTERVAL_SEC : AGENT_DEFAULT_INTERVAL_SEC;
     next.timeoutSec = type === "tls" ? TLS_DEFAULT_TIMEOUT_SEC : AGENT_DEFAULT_TIMEOUT_SEC;
@@ -184,7 +200,7 @@ export function definitionProblems(draft: DefinitionDraft, options: { newDefinit
   if (addresses.some((a) => targetError(draft.type, a))) out.push("address");
   else if (addresses.some((a) => destinationProblem(draft.type, a))) out.push("destination");
   if (addresses.length > DEFINITION_ADDRESSES_MAX) out.push("tooManyAddresses");
-  if (draft.name.trim().length > DEFINITION_NAME_MAX) out.push("name");
+  if (utf8Bytes(draft.name.trim()) > DEFINITION_NAME_MAX) out.push("name");
   const interval = Number(draft.intervalSec);
   const timeout = Number(draft.timeoutSec);
   if (!Number.isInteger(interval) || interval < CHECK_MIN_INTERVAL_SEC || interval > CHECK_MAX_INTERVAL_SEC) out.push("interval");
@@ -221,13 +237,13 @@ export function missingParts(problems: readonly DefinitionProblem[]): ("sources"
 }
 
 /** The name a definition gets when the operator leaves it empty. */
-export function suggestDefinitionName(draft: DefinitionDraft, nodeName: (id: string) => string, groupName: (id: string) => string): string {
+export function suggestDefinitionName(draft: DefinitionDraft, nodeName: (id: string) => string, groupName: (id: string) => string, wholeFleet: string): string {
   const method = draft.type.toUpperCase();
   const addresses = takesAddresses(draft.type) ? addressesOf(draft.addressText) : [];
   const t = draft.targets;
   const parts: string[] = [];
   if (takesTargetNodes(draft.type)) {
-    if (t.all) parts.push("whole fleet");
+    if (t.all) parts.push(wholeFleet);
     for (const id of t.groups ?? []) parts.push(groupName(id));
     for (const id of t.nodes ?? []) parts.push(nodeName(id));
   }
@@ -245,7 +261,7 @@ export function suggestDefinitionName(draft: DefinitionDraft, nodeName: (id: str
   }
   if (!parts.length) return "";
   const shown = parts.length > 2 ? `${parts.slice(0, 2).join(", ")} +${parts.length - 2}` : parts.join(", ");
-  return `${method} ${shown}`.slice(0, 80);
+  return truncateBytes(`${method} ${shown}`, SUGGESTED_NAME_BYTES);
 }
 
 /**
@@ -348,10 +364,6 @@ export function summarizePreview(preview: CheckDefinitionPreview): PreviewSummar
 
 /* ---- A definition read from the matrix ---- */
 
-/** The monitors a definition expanded into, by the definition id the monitors list carries. */
-export function definitionMonitorIds(definitionId: string, monitors: readonly Pick<MonitorView, "id" | "check_definition_id">[]): Set<string> {
-  return new Set(monitors.filter((m) => m.check_definition_id === definitionId).map((m) => m.id));
-}
 
 /**
  * A set of paths as one check's health, in the vocabulary the Checks list
@@ -367,10 +379,9 @@ export function pathsHealth(paths: readonly { state: string; reason?: string; la
   const degraded = paths.filter((p) => p.state === "degraded").length;
   const up = paths.filter((p) => p.state === "up");
   if (degraded) return { kind: "degraded", degraded, total: degraded + up.length, lastAt };
-  if (up.length) {
-    const p50s = up.map((p) => p.p50Ms).filter((v): v is number => v !== undefined && Number.isFinite(v));
-    return { kind: "up", total: up.length, latencyMs: p50s.length ? p50s.reduce((s, v) => s + v, 0) / p50s.length : undefined, lastAt };
-  }
+  // Up on how many of all its paths, never an average latency: the p50s of
+  // different pairs do not add up to one figure.
+  if (up.length) return { kind: "up", total: up.length, of: paths.length, lastAt };
   const reasons = [...new Set(paths.map((p) => p.reason).filter((r): r is string => !!r && !isChosenUnknown(r)))];
   if (!reasons.length) return { kind: "none" };
   return reasons.length === 1
@@ -388,7 +399,7 @@ export type CheckRow =
 /** Your checks (definitions and single checks together), then the built-in one. */
 export type CheckRowGroup = "checks" | "builtin";
 export const CHECK_ROW_GROUP_ORDER: readonly CheckRowGroup[] = ["checks", "builtin"];
-export const FLEET_MESH_KEY = "fleet-mesh";
+const FLEET_MESH_KEY = "fleet-mesh";
 
 export function checkRowGroup(row: CheckRow): CheckRowGroup {
   return row.kind === "fleet" ? "builtin" : "checks";

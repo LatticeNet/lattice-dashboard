@@ -1626,9 +1626,11 @@ export default {
       // Design 32 D1: check definitions, one check with a source set and a target set.
       checkDefs: {
         proof: {
+          unread: "检查定义未读到",
           definitions: "{n} 项带源集合与目标集合",
         },
         list: {
+          failed: "无法读取检查定义和 Fleet mesh。",
           to: "目标",
           paths: "{n} 条路径",
           paused: "{n} 个已暂停的目标",
@@ -1639,7 +1641,7 @@ export default {
           group: {
             checks: "你的检查",
             builtin: "内置",
-            builtinNote: "节点之间的路径集，有自己的编辑器",
+            builtinNote: "节点之间的网状测量，有自己的编辑器",
           },
         },
         editor: {
@@ -1671,6 +1673,7 @@ export default {
           },
         },
         preview: {
+          measures: "{total} 条路径中 {n} 条会测量",
           label: "保存后会测量什么",
           waiting: "选好从哪里运行、测量哪些目标后，这里会显示将要测量的内容。",
           checking: "正在向控制面确认将要测量的内容",
@@ -1694,7 +1697,7 @@ export default {
           destination: "有地址是回环、链路本地、私网或云元数据地址；请改为指定节点，或使用公网地址。",
           tooManyAddresses: "最多 {max} 个地址。",
           secretSources: "带密钥请求头的检查必须点名源节点；请从源里去掉节点组或全网。",
-          name: "名称最多 {max} 个字符。",
+          name: "名称最多 {max} 字节，一个汉字算 3 个字节。",
           headers: "请先修正上面的请求头。",
           expectStatus: "状态码请写成代码和区间，例如 200-299,301。",
           degraded: "有降级阈值超出范围。",
@@ -1718,15 +1721,16 @@ export default {
           goneTitle: "此检查已不存在",
           goneDescription: "它已被删除，或当前会话无法读取它涉及的全部节点。",
           detailFailed: "未能读取它的监测项：{reason}",
-          monitorRuns: "{name}，{n} 次运行",
+          monitorRuns: "{name}，{runs} 次运行",
+          unknownPaths: "{n} 条路径",
           moreMonitors: "还有 {n} 项",
         },
         confirm: {
           forgetTitle: "清除已暂停的目标？",
-          forget: "将删除 {n} 项已暂停的检查及其 {runs} 次运行记录。",
+          forget: "将删除 {n} 个已暂停的目标及其 {runs} 次运行记录。",
           forgetConfirm: "清除",
           deleteTitle: "删除此检查？",
-          delete: "将删除 {name}、它的 {n} 项检查及 {runs} 次运行记录。",
+          delete: "将删除 {name}：它的 {n} 个目标（{paths} 条路径）及 {runs} 次运行记录。",
           impactTitle: "将被删除的内容",
         },
         toast: {
@@ -1756,10 +1760,12 @@ export default {
         actions: {
           create: "新建检查",
           edit: "编辑",
-          pathSet: "路径集",
+          pathSet: "Fleet mesh",
         },
         paused: "已暂停",
         downOn: "{total} 个中 {n} 个不通",
+        upOn: "{total} 个中 {n} 个正常",
+        unknownCount: "{n} 个未知",
         degradedOn: "{total} 个中 {n} 个劣化",
         certLeft: "剩 {n} 天",
         certExpired: "已到期",

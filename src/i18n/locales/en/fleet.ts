@@ -1649,9 +1649,11 @@ export default {
       // Design 32 D1: check definitions, one check with a source set and a target set.
       checkDefs: {
         proof: {
+          unread: "check definitions not read",
           definitions: "{n} with a source and a target set | {n} with source and target sets",
         },
         list: {
+          failed: "Check definitions and Fleet mesh could not be read.",
           to: "To",
           paths: "{n} path | {n} paths",
           paused: "{n} paused target | {n} paused targets",
@@ -1662,7 +1664,7 @@ export default {
           group: {
             checks: "Your checks",
             builtin: "Built in",
-            builtinNote: "the path set between your nodes, with its own editor",
+            builtinNote: "the mesh between your nodes, with its own editor",
           },
         },
         editor: {
@@ -1694,6 +1696,7 @@ export default {
           },
         },
         preview: {
+          measures: "{n} of {total} path will measure | {n} of {total} paths will measure",
           label: "What a save would measure",
           waiting: "Choose where it runs from and what it reaches to see what it would measure.",
           checking: "Asking the control plane what it would measure",
@@ -1717,7 +1720,7 @@ export default {
           destination: "An address is loopback, link-local, private or a cloud metadata address; name the node instead, or use a public address.",
           tooManyAddresses: "At most {max} addresses.",
           secretSources: "A check with a secret header must name its source nodes; remove the group or the whole fleet from From.",
-          name: "A name is at most {max} characters.",
+          name: "A name is at most {max} bytes; a Chinese character counts as three.",
           headers: "Fix the headers above.",
           expectStatus: "Write the statuses as codes and ranges, such as 200-299,301.",
           degraded: "A degraded threshold is out of range.",
@@ -1741,15 +1744,16 @@ export default {
           goneTitle: "This check is gone",
           goneDescription: "It was deleted, or this session cannot read every node it names.",
           detailFailed: "Its monitors were not read: {reason}",
-          monitorRuns: "{name}, {n} run | {name}, {n} runs",
+          monitorRuns: "{name}, {runs} run | {name}, {runs} runs",
+          unknownPaths: "{n} path | {n} paths",
           moreMonitors: "and {n} more",
         },
         confirm: {
           forgetTitle: "Forget paused targets?",
-          forget: "This deletes {n} paused check and its {runs} runs. | This deletes {n} paused checks and their {runs} runs.",
+          forget: "This deletes {n} paused target and its {runs} runs. | This deletes {n} paused targets and their {runs} runs.",
           forgetConfirm: "Forget them",
           deleteTitle: "Delete this check?",
-          delete: "This deletes {name}, its {n} check and its {runs} runs. | This deletes {name}, its {n} checks and their {runs} runs.",
+          delete: "This deletes {name}: its {n} target ({paths} paths) and its {runs} runs. | This deletes {name}: its {n} targets ({paths} paths) and their {runs} runs.",
           impactTitle: "What is deleted",
         },
         toast: {
@@ -1779,10 +1783,12 @@ export default {
         actions: {
           create: "New check",
           edit: "Edit",
-          pathSet: "Path set",
+          pathSet: "Fleet mesh",
         },
         paused: "paused",
         downOn: "down on {n} of {total}",
+        upOn: "up on {n} of {total}",
+        unknownCount: "{n} unknown",
         // Design 29 D13: the newest runs pass, but the control plane judges some of the check's paths degraded.
         degradedOn: "degraded on {n} of {total}",
         certLeft: "{n} d left",

@@ -80,8 +80,8 @@ export interface CheckRowFacts {
   type: string;
   targets: string[];
   nodes?: string[];
-  interval: number;
-  timeout: number;
+  interval?: number;
+  timeout?: number;
   enabled: boolean;
   managed: boolean;
   all: boolean;

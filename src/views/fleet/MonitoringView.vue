@@ -99,6 +99,8 @@ const definitionsQuery = useAsyncData<CheckDefinitionList>(
   { pollInterval: canReadMonitors.value ? 15000 : 0, immediate: canReadMonitors.value },
 );
 const definitions = computed<CheckDefinitionView[]>(() => definitionsQuery.data.value?.definitions ?? []);
+/** The definitions read failed before it ever answered: the list and the proof line must not read as if there were none. */
+const definitionsUnread = computed(() => !!definitionsQuery.error.value && definitionsQuery.data.value === undefined);
 // Node groups, for the target selector's group choices and names (design 32 D5).
 const canReadGroups = computed(() => auth.can("group:read"));
 const groupsQuery = useAsyncData<GroupView[]>((signal) => (canReadGroups.value ? api.groups.list({ signal }).then((r) => r.groups ?? []) : Promise.resolve([])), {
@@ -340,7 +342,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
     // Rows as the list draws them: definitions and single checks; Fleet mesh is the built-in one beside them.
     const checks = definitions.value.length + operatorChecks.value.length;
     const out: ProofSegment[] = [{ key: "checks", text: t("fleet.monitoring.checks.proof.checks", { n: checks }, checks) }];
-    if (definitions.value.length) out.push({ key: "definitions", text: t("fleet.monitoring.checkDefs.proof.definitions", { n: definitions.value.length }, definitions.value.length) });
+    if (definitionsUnread.value) out.push({ key: "definitions", tone: "warning", text: t("fleet.monitoring.checkDefs.proof.unread") });
+    else if (definitions.value.length) out.push({ key: "definitions", text: t("fleet.monitoring.checkDefs.proof.definitions", { n: definitions.value.length }, definitions.value.length) });
     const failing = failingChecks.value.length + failingDefinitions.value;
     if (failing) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing }) });
     return out;
@@ -553,6 +556,8 @@ function refreshAll(): void {
     data.refresh();
   }
   if (canReadNodes.value) void nodesQuery.refresh();
+  // Group edits change what a selector resolves to and how the picker reads it.
+  if (canReadGroups.value) void groupsQuery.refresh();
 }
 
 const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQuery.refreshing.value);
@@ -636,6 +641,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         :definitions="definitions"
         :fleet-mesh="definitionsQuery.data.value?.fleet_mesh"
         :definitions-loading="definitionsQuery.loading.value && definitionsQuery.data.value === undefined"
+        :definitions-error="definitionsQuery.error.value?.message ?? null"
         :groups="groups"
         @window="(w) => (windowParam = w)"
         @create="openCreate"
@@ -644,6 +650,7 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         @path-set="openPathSet"
         @retention="openRetention"
         @changed="refreshAll"
+        @retry-definitions="definitionsQuery.refresh"
       />
 
       <KeepaliveLayer
