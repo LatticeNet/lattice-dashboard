@@ -31,9 +31,9 @@ import {
 
 const node = (id: string, over: Partial<Node> = {}): Node => ({ id, name: id, online: true, status: "online", ...over } as Node);
 
-test("the default columns are node, address, agent, last seen, CPU, network and tags; status is not a column", () => {
+test("the default columns are node, address, agent, last seen, CPU, upload, download and tags; status is not a column", () => {
   const shown = NODE_COLUMNS.filter((column) => !DEFAULT_HIDDEN_COLUMNS.has(column.id)).map((column) => column.id);
-  assert.deepEqual(shown, ["name", "address", "agent", "lastSeen", "cpu", "network", "tags"]);
+  assert.deepEqual(shown, ["name", "address", "agent", "lastSeen", "cpu", "upload", "download", "tags"]);
   assert.ok(!NODE_COLUMNS.some((column) => column.id === "status"));
 });
 
@@ -182,19 +182,28 @@ test("a node with no reading ranks below every real reading, a real 0% included"
   assert.equal(metricSortValue({ metrics: { collected_at: "0001-01-01T00:00:00Z" } as Node["metrics"] }, 0), -1);
 });
 
-// Design 32 D6: the list could not show traffic. The Network column carries
-// the rates, sorts by their sum, and a typed sort:rx or sort:tx marks it.
-test("the network column reads rates from a sample, sorts by their sum, and owns sort:rx and sort:tx", () => {
+// Design 32 D6 and R5: the list could not show traffic, then showed both
+// rates in one cell that sorted by their sum. Upload and Download are two
+// columns, each sorting by its own rate, and sort:tx and sort:rx mark them.
+test("upload and download are two columns, each sorting by its own rate and owning sort:tx or sort:rx", () => {
   const SAMPLE = { collected_at: "2026-10-17T09:30:00Z", net_rx_speed: 1200, net_tx_speed: 300, net_rx_bytes: 9e9, net_tx_bytes: 4e9 } as Node["metrics"];
   assert.deepEqual(networkReading({ metrics: SAMPLE }), { rx: 1200, tx: 300, rxTotal: 9e9, txTotal: 4e9 });
-  assert.equal(networkSortValue({ metrics: SAMPLE }), 1500);
+  assert.equal(networkSortValue({ metrics: SAMPLE }, "rx"), 1200);
+  assert.equal(networkSortValue({ metrics: SAMPLE }, "tx"), 300);
   for (const metrics of [{} as Node["metrics"], { collected_at: "0001-01-01T00:00:00Z", net_rx_speed: 0 } as Node["metrics"]]) {
     assert.equal(networkReading({ metrics }), undefined);
-    assert.equal(networkSortValue({ metrics }), -1);
+    assert.equal(networkSortValue({ metrics }, "rx"), -1);
+    assert.equal(networkSortValue({ metrics }, "tx"), -1);
   }
-  assert.equal(NODE_SORT_COLUMN.rx, "network");
-  assert.equal(NODE_SORT_COLUMN.tx, "network");
-  assert.ok(NODE_COLUMNS.some((column) => column.id === "network" && column.optional));
+  assert.equal(NODE_SORT_COLUMN.rx, "download");
+  assert.equal(NODE_SORT_COLUMN.tx, "upload");
+  for (const id of ["upload", "download"]) assert.ok(NODE_COLUMNS.some((column) => column.id === id && column.optional));
+  assert.ok(!NODE_COLUMNS.some((column) => column.id === "network"));
+});
+
+test("a stored choice that hid the one Network column hides both rate columns", () => {
+  assert.deepEqual([...parseHiddenColumns("network,tags")].sort(), ["download", "tags", "upload"]);
+  assert.deepEqual([...parseHiddenColumns("download")], ["download"]);
 });
 
 test("a stale reading's age comes from its sample, else the last beat", () => {
