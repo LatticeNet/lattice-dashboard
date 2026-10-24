@@ -63,7 +63,7 @@ function ownerName(kind: string): string {
 
 function ownersLine(table: NodeNetworkTable): string {
   return orderedOwners(table.owners)
-    .map((owner) => `${ownerName(owner.kind)} ${t(`fleet.nodeNetwork.rules.ownerState.${owner.state}`, owner.state)}`)
+    .map((owner) => t("fleet.nodeNetwork.rules.ownerWithState", { owner: ownerName(owner.kind), state: t(`fleet.nodeNetwork.rules.ownerState.${owner.state}`, owner.state) }))
     .join(" · ");
 }
 

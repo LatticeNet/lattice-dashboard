@@ -1544,7 +1544,7 @@ export default {
       saveCell: "保存策略",
       toastSaved: "分组策略已保存",
       toastSaveFailed: "保存分组策略失败",
-      toastConflict: "你编辑期间有人保存了这条策略。你的规则还在编辑器里;关闭后重新打开这个单元格可以看到对方的版本。",
+      toastConflict: "你编辑期间有人保存了这条策略。你的规则还在编辑器里；关闭后重新打开这个单元格可以看到对方的版本。",
       toastPlanned: "已为 {n} 个节点生成计划。逐一批准之后节点才会应用。",
       toastPlannedPartial: "已为 {n} 个节点生成计划。另有 {c} 个节点没能生成计划，已列为冲突。",
       planResultTitle: "分组策略计划",

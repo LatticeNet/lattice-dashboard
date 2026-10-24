@@ -48,6 +48,7 @@ export function useNodeNetwork(nodeId: () => string | null | undefined) {
 /** The one-line wording of each section, shared by the sheet summary and the node page. */
 export function useNodeNetworkText() {
   const { t } = useI18n();
+  const list = (items: string[]) => items.join(t("fleet.nodeNetwork.join"));
 
   function refused(section: { scope?: string }): string {
     return t("fleet.nodeNetwork.refused", { scope: section.scope ?? "" });
@@ -67,9 +68,9 @@ export function useNodeNetworkText() {
         parts.push(t("fleet.nodeNetwork.inbound.none"));
     }
     const groups = [...(section.security_groups ?? []), ...(section.derived_security_groups ?? [])];
-    if (groups.length) parts.push(groups.map((g) => g.name || g.id).join(", "));
+    if (groups.length) parts.push(list(groups.map((g) => g.name || g.id)));
     const ports = section.extra_ports ?? [];
-    if (ports.length) parts.push(ports.map(extraPort).join(", "));
+    if (ports.length) parts.push(list(ports.map(extraPort)));
     return parts.join(" · ");
   }
 
@@ -95,7 +96,7 @@ export function useNodeNetworkText() {
       case "policies": {
         const applying = applyingPolicies(section);
         const parts = [t("fleet.nodeNetwork.outbound.applying", { n: applying.length }, applying.length)];
-        if (applying.length) parts.push(applying.map((p) => p.label).join(", "));
+        if (applying.length) parts.push(list(applying.map((p) => p.label)));
         if (section.default_drop) parts.push(t("fleet.nodeNetwork.outbound.defaultDrop"));
         return parts.join(" · ");
       }
@@ -115,7 +116,7 @@ export function useNodeNetworkText() {
 
   function mesh(section: NodeNetworkMesh): string {
     if (section.state === "refused") return refused(section);
-    if (!section.ready) return (section.missing ?? []).map((m) => t(`fleet.nodeNetwork.mesh.missing.${m}`, m)).join(", ");
+    if (!section.ready) return list((section.missing ?? []).map((m) => t(`fleet.nodeNetwork.mesh.missing.${m}`, m)));
     const parts = [t("fleet.nodeNetwork.mesh.address", { address: section.address ?? "" }), t("fleet.nodeNetwork.mesh.peers", { n: section.peers ?? 0 }, section.peers ?? 0)];
     if (section.last_applied) parts.push(t("fleet.nodeNetwork.mesh.lastApplied", { when: formatRelativeTime(section.last_applied.applied_at) }));
     return parts.join(" · ");
@@ -124,8 +125,8 @@ export function useNodeNetworkText() {
   function groups(section: NodeNetworkGroups): string {
     if (section.state === "refused") return refused(section);
     const items = section.items ?? [];
-    return items.length ? items.map((g) => g.name).join(", ") : t("fleet.nodeNetwork.groups.none");
+    return items.length ? list(items.map((g) => g.name)) : t("fleet.nodeNetwork.groups.none");
   }
 
-  return { inbound, extraPort, outbound, access, mesh, groups, refused };
+  return { inbound, extraPort, outbound, access, mesh, groups, refused, list };
 }

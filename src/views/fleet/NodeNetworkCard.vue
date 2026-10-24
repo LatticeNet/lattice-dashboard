@@ -73,7 +73,7 @@ function inboundHead(): string {
           : t("fleet.nodeNetwork.inbound.legacy")
         : t("fleet.nodeNetwork.inbound.none");
   const zones = section.zones ?? [];
-  return zones.length ? `${head} · ${t("fleet.nodeNetwork.inbound.zones", { zones: zones.map((z) => z.name || z.id).join(", ") })}` : head;
+  return zones.length ? `${head} · ${t("fleet.nodeNetwork.inbound.zones", { zones: text.list(zones.map((z) => z.name || z.id)) })}` : head;
 }
 
 function outboundHead(): string {
@@ -86,7 +86,7 @@ function outboundHead(): string {
 }
 
 function reachText(policy: NodeNetworkPolicy): string {
-  if (policy.reach === "group") return t("fleet.nodeNetwork.outbound.reach.group", { groups: (policy.via_groups ?? []).map((g) => g.name || g.id).join(", ") });
+  if (policy.reach === "group") return t("fleet.nodeNetwork.outbound.reach.group", { groups: text.list((policy.via_groups ?? []).map((g) => g.name || g.id)) });
   return t(`fleet.nodeNetwork.outbound.reach.${policy.reach}`);
 }
 
@@ -112,18 +112,18 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
           <p :class="inbound?.state !== 'ok' ? 'text-xs text-muted-foreground' : undefined">{{ inboundHead() }}</p>
           <template v-if="inbound?.state === 'ok'">
             <p class="break-words">
-              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }}: </span>
+              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }} </span>
               <template v-if="securityGroups.length">
                 <span v-for="(group, i) in securityGroups" :key="`${group.id}-${group.via?.id ?? ''}`">
                   {{ group.name || group.id }}
-                  <span class="text-xs text-muted-foreground">({{ $t('fleet.nodeNetwork.inbound.groupRules', { n: group.rules }, group.rules) }}<template v-if="group.via">, {{ $t('fleet.nodeNetwork.inbound.viaGroup', { group: group.via.name || group.via.id }) }}</template>)</span><template v-if="i < securityGroups.length - 1">, </template>
+                  <span class="text-xs text-muted-foreground">({{ $t('fleet.nodeNetwork.inbound.groupRules', { n: group.rules }, group.rules) }}<template v-if="group.via">, {{ $t('fleet.nodeNetwork.inbound.viaGroup', { group: group.via.name || group.via.id }) }}</template>)</span><template v-if="i < securityGroups.length - 1">{{ $t('fleet.nodeNetwork.join') }}</template>
                 </span>
               </template>
               <span v-else class="text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.noSecurityGroups') }}</span>
             </p>
             <p v-if="inbound.extra_ports?.length" class="break-words">
-              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.extraPorts') }}: </span>
-              <span class="font-mono text-xs">{{ inbound.extra_ports.map(text.extraPort).join(', ') }}</span>
+              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.extraPorts') }} </span>
+              <span class="font-mono text-xs">{{ text.list(inbound.extra_ports.map(text.extraPort)) }}</span>
             </p>
             <p v-if="inbound.legacy_ingress" class="text-xs text-muted-foreground">
               {{ $t(`fleet.nodeNetwork.inbound.legacyIngress.${inbound.legacy_ingress.state}`, { n: inbound.legacy_ingress.rules }, inbound.legacy_ingress.rules) }}
@@ -138,7 +138,7 @@ const driftTables = computed(() => (view.value ? attentionTables(view.value).fil
             <li
               v-for="policy in outbound.policies"
               :key="policy.id"
-              class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[2.5rem_minmax(0,1.4fr)_minmax(0,1fr)_auto]"
+              class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,11rem)_11rem]"
               :class="policy.state === 'applies' ? undefined : 'text-muted-foreground'"
             >
               <span class="font-mono text-xs tabular-nums text-muted-foreground" :title="$t('fleet.nodeNetwork.outbound.priority', { n: policy.priority })">{{ policy.priority }}</span>
