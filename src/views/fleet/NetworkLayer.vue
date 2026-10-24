@@ -26,7 +26,7 @@
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useMediaQuery, useNow } from "@vueuse/core";
+import { useElementSize, useMediaQuery, useNow } from "@vueuse/core";
 import { Network, Route as RouteIcon, Settings2 } from "lucide-vue-next";
 
 import { api, unwrap, type IncidentListResponse, type LineChainView, type MonitorView, type MonitorWindow, type Node } from "@/lib/api";
@@ -52,7 +52,7 @@ import NodePathList from "./NodePathList.vue";
 import PathSheet from "./PathSheet.vue";
 import TopologyGraph from "./TopologyGraph.vue";
 import TopologySourcePicker from "./TopologySourcePicker.vue";
-import { formatPresentation, listOrder, parsePresentation, presentation as presentationFor, type Presentation } from "./networkModel";
+import { formatPresentation, listOrder, parsePresentation, presentation as presentationFor, roomy, type Presentation } from "./networkModel";
 import { NODE_PATHS_SHOWN, monitoringQuery, nodePaths } from "./nodePathsModel";
 import { PATHS_QUERY_EXAMPLES, pathsQuerySchema, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
@@ -134,7 +134,10 @@ watch(
 
 /* ---- The mode ---- */
 
-const screen = computed(() => ({ wide: wide.value, finePointer: finePointer.value }));
+/** The view's own width, not the window's: the sidebar and the page's gutters take their share first. */
+const root = ref<HTMLElement>();
+const { width: viewWidth } = useElementSize(root);
+const screen = computed(() => ({ roomy: roomy(viewWidth.value), finePointer: finePointer.value }));
 const asParam = bindQueryParam<Presentation | "auto">(props.owned, "as", {
   parse: (raw) => parsePresentation(raw),
   format: (value) => (value === "auto" ? undefined : value),
@@ -155,7 +158,8 @@ const queryText = useQueryText(storedQuery);
 /** The list's own order, worst first; a `sort:` term or a column replaces it. */
 const allPaths = computed(() => listOrder(matrix.value?.paths ?? []));
 const listQuery = useListQuery(allPaths, schema, queryText);
-const matching = computed(() => (listQuery.filtering.value ? new Set(listQuery.rows.value.map((p) => p.key)) : undefined));
+// Only a query that leaves paths out reshapes the graph: a sort, or a filter every path passes, keeps the drawing as it is.
+const matching = computed(() => (listQuery.filtering.value && listQuery.rows.value.length < allPaths.value.length ? new Set(listQuery.rows.value.map((p) => p.key)) : undefined));
 const queryExamples = computed(() => PATHS_QUERY_EXAMPLES.map((e) => ({ query: e.query, note: t(`fleet.monitoring.paths.query.examples.${e.key}`) })));
 const isEmpty = computed(() => !!matrix.value && matrix.value.paths.length === 0);
 
@@ -316,7 +320,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div ref="root" class="space-y-4">
     <p v-if="data.source.value === 'legacy'" class="text-xs text-muted-foreground" data-testid="paths-legacy">
       {{ $t('fleet.monitoring.paths.legacy') }}
     </p>
@@ -402,6 +406,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
           :query-sorted="listQuery.sorted.value"
           :failure-of="failureOf"
           :stale="listQuery.staleRows.value"
+          :table="screen.roomy"
           @drop-query-sort="queryText = withoutSorts(queryText)"
           @open="openPath"
         />
@@ -432,6 +437,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
                 {{ $t('fleet.monitoring.network.graph.drawAll', { n: model.sourceChoices.length }) }}
               </button>
             </p>
+            <p v-if="listQuery.sorted.value" class="text-xs text-muted-foreground" data-testid="network-sort-list">{{ $t('fleet.monitoring.network.graph.sortList') }}</p>
             <p v-if="!canReadNodes" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.topology.nodesUnread') }}</p>
             <!-- A read the drawing is missing outright: what it costs, and a retry. -->
             <p v-for="note in missingNotes" :key="note.read" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-destructive" :data-testid="`topology-missing-${note.read}`">

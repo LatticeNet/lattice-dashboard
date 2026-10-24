@@ -10,13 +10,12 @@
  * Each row carries what the matrix response has for the path: the state in
  * words (unknown with its reason), p50, p95, jitter, loss, availability, the
  * last run, the method and the check. A figure column no path of the matrix
- * has (a server from before design 29 keeps no jitter) is not shown. Below 768 px the rows
- * become a list grouped by target, one line per source, the figures in a
- * second line.
+ * has (a server from before design 29 keeps no jitter) is not shown. In a
+ * view narrower than the table needs (networkModel.ROOMY_W) the rows become a
+ * list grouped by target, one line per source, the figures in a second line.
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useMediaQuery } from "@vueuse/core";
 
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -26,7 +25,7 @@ import DataTable, { type DataTableColumn } from "@/components/common/DataTable.v
 
 import { formatLoss, formatMs } from "./latencyModel";
 import { LIST_GROUP_ORDER, formatAvailability, listGroup, regionGroups, type ListGroup } from "./networkModel";
-import { LOSS_TEXT, availability, displayState, lossTone, targetLabel, type PathItem } from "./pathsModel";
+import { LOSS_TEXT, availability, displayState, lossTone, measuresNow, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 
 const props = defineProps<{
@@ -41,6 +40,8 @@ const props = defineProps<{
   failureOf: (monitorId: string, source: string) => string | undefined;
   /** The rows answer an earlier query: dimmed and inert. */
   stale?: boolean;
+  /** The view has the table's width; narrower, the rows are grouped by target. */
+  table: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -51,22 +52,25 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { displayLabel, reasonShort, whyText, groupLabel, methodName, evidenceText } = usePathsCopy();
-const wide = useMediaQuery("(min-width: 768px)");
 
-/** Measured figures only when the path measures now: an unknown or paused path never leads with a number its window still holds. */
-const measured = (p: PathItem) => p.state === "up" || p.state === "degraded" || p.state === "down";
 const has = (pick: (p: PathItem) => number | undefined) => props.all.some((p) => pick(p) !== undefined);
 
+/*
+ * Every column has its width (its cells truncate inside it), so typing a
+ * query never moves a column: the table spreads its spare width the same way
+ * whatever the rows hold. The figure columns fit "1.20 s" and "99.9%".
+ */
+const FIGURE = "w-19";
 const columns = computed<DataTableColumn<PathItem>[]>(() => [
-  { key: "target", label: t("fleet.monitoring.network.list.target"), sortable: true, value: (p) => targetLabel(p) },
-  { key: "source", label: t("fleet.monitoring.network.list.source"), sortable: true, value: (p) => p.sourceName },
-  { key: "state", label: t("fleet.monitoring.network.list.state"), sortable: true, value: (p) => STATE_ORDER[displayState(p)] },
-  { key: "p50", label: "p50", align: "right", sortable: true, value: (p) => (measured(p) ? p.p50Ms : undefined) },
-  ...(has((p) => p.p95Ms) ? [{ key: "p95", label: "p95", align: "right" as const, sortable: true, value: (p: PathItem) => (measured(p) ? p.p95Ms : undefined) }] : []),
-  ...(has((p) => p.jitterMs) ? [{ key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), align: "right" as const, sortable: true, value: (p: PathItem) => (measured(p) ? p.jitterMs : undefined) }] : []),
-  { key: "loss", label: t("fleet.monitoring.paths.stats.loss"), align: "right", sortable: true, value: (p) => (measured(p) ? p.loss : undefined) },
-  ...(has(availability) ? [{ key: "availability", label: t("fleet.monitoring.paths.stats.availability"), align: "right" as const, sortable: true, value: (p: PathItem) => availability(p) }] : []),
-  { key: "last", label: t("fleet.monitoring.network.list.last"), align: "right", sortable: true, value: (p) => p.lastAt },
+  { key: "target", label: t("fleet.monitoring.network.list.target"), class: "w-58", sortable: true, value: (p) => targetLabel(p) },
+  { key: "source", label: t("fleet.monitoring.network.list.source"), class: "w-48", sortable: true, value: (p) => p.sourceName },
+  { key: "state", label: t("fleet.monitoring.network.list.state"), class: "w-50", sortable: true, value: (p) => STATE_ORDER[displayState(p)] },
+  { key: "p50", label: "p50", align: "right", class: FIGURE, sortable: true, value: (p) => (measuresNow(p) ? p.p50Ms : undefined) },
+  ...(has((p) => p.p95Ms) ? [{ key: "p95", label: "p95", align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.p95Ms : undefined) }] : []),
+  ...(has((p) => p.jitterMs) ? [{ key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.jitterMs : undefined) }] : []),
+  { key: "loss", label: t("fleet.monitoring.paths.stats.loss"), align: "right", class: FIGURE, sortable: true, value: (p) => (measuresNow(p) && p.samples > 0 ? p.loss : undefined) },
+  ...(has(availability) ? [{ key: "availability", label: t("fleet.monitoring.paths.stats.availability"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => availability(p) }] : []),
+  { key: "last", label: t("fleet.monitoring.network.list.last"), align: "right", class: "w-26", sortable: true, value: (p) => p.lastAt },
 ]);
 
 /** Worst first when sorted ascending, as the list's own order is. */
@@ -98,8 +102,8 @@ function stateWords(p: PathItem): { word: string; why: string; title: string } {
 function rowLabel(p: PathItem): string {
   const s = stateWords(p);
   const parts = [s.why ? `${s.word}: ${s.why}` : s.word, `${methodName(p.method)} ${checkLabel(p)}`];
-  if (measured(p) && p.p50Ms !== undefined) parts.push(`p50 ${formatMs(p.p50Ms)}`);
-  if (measured(p) && p.loss !== undefined && p.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(p.loss) }));
+  if (measuresNow(p) && p.p50Ms !== undefined) parts.push(`p50 ${formatMs(p.p50Ms)}`);
+  if (measuresNow(p) && p.loss !== undefined && p.samples > 0) parts.push(t("fleet.monitoring.paths.cell.loss", { loss: formatLoss(p.loss) }));
   return t("fleet.monitoring.paths.cell.label", { source: p.sourceName, target: p.targetName, state: parts.join(", ") });
 }
 
@@ -108,7 +112,7 @@ const lossClass = (p: PathItem) => ((p.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(displ
 
 /** The phone's second line: the figures a row has, joined. */
 function figures(p: PathItem): string {
-  if (!measured(p)) return "";
+  if (!measuresNow(p)) return "";
   const out: string[] = [];
   if (p.p95Ms !== undefined) out.push(`p95 ${formatMs(p.p95Ms)}`);
   if (p.jitterMs !== undefined) out.push(`${t("fleet.monitoring.paths.stats.jitter")} ${formatMs(p.jitterMs)}`);
@@ -135,7 +139,7 @@ const groupCounts = computed(() => {
 <template>
   <div :class="cn(stale && 'opacity-50')" :inert="stale || undefined">
     <DataTable
-      v-if="wide"
+      v-if="table"
       data-testid="network-list"
       :columns="columns"
       :rows="rows"
@@ -159,13 +163,13 @@ const groupCounts = computed(() => {
         <template v-if="groupCounts.get(group.key)?.degraded"><span class="text-muted-foreground" aria-hidden="true">·</span><span class="font-mono text-warning-text tabular">{{ $t('fleet.monitoring.paths.proof.degraded', { n: groupCounts.get(group.key)!.degraded }) }}</span></template>
       </template>
       <template #cell-target="{ row }">
-        <span class="block max-w-56 truncate font-medium" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
-        <span class="block max-w-56 truncate font-mono text-xs text-muted-foreground" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
+        <span class="block max-w-52 truncate font-medium" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
+        <span class="block max-w-52 truncate font-mono text-xs text-muted-foreground" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
       </template>
       <!-- The source, and what it measures with: the method and the check, the path set's or an operator's. -->
       <template #cell-source="{ row }">
-        <span class="block max-w-44 truncate" :title="row.sourceName">{{ row.sourceName }}</span>
-        <span class="flex max-w-44 min-w-0 items-center gap-1.5 text-xs text-muted-foreground" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
+        <span class="block max-w-42 truncate" :title="row.sourceName">{{ row.sourceName }}</span>
+        <span class="flex max-w-42 min-w-0 items-center gap-1.5 text-xs text-muted-foreground" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
           <span class="shrink-0 font-mono text-[10px] uppercase">{{ row.method }}</span>
           <span class="truncate">{{ checkLabel(row) }}</span>
         </span>
@@ -175,19 +179,19 @@ const groupCounts = computed(() => {
           <span :class="cn('size-2 shrink-0 rounded-full', DOT[displayState(row)])" aria-hidden="true" />
           <span :class="cn('whitespace-nowrap', STATE_INK[displayState(row)])">{{ stateWords(row).word }}</span>
         </span>
-        <span v-if="stateWords(row).why" :class="cn('block max-w-48 truncate ps-4 text-xs', displayState(row) === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')" :title="stateWords(row).title || undefined">{{ stateWords(row).why }}</span>
+        <span v-if="stateWords(row).why" :class="cn('block max-w-44 truncate ps-4 text-xs', displayState(row) === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')" :title="stateWords(row).title || undefined">{{ stateWords(row).why }}</span>
       </template>
       <template #cell-p50="{ row }">
-        <span :class="cn('whitespace-nowrap font-mono tabular', STATE_INK[displayState(row)])">{{ measured(row) ? formatMs(row.p50Ms) : '' }}</span>
+        <span :class="cn('whitespace-nowrap font-mono tabular', STATE_INK[displayState(row)])">{{ measuresNow(row) ? formatMs(row.p50Ms) : '' }}</span>
       </template>
       <template #cell-p95="{ row }">
-        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.p95Ms) : '' }}</span>
+        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measuresNow(row) ? formatMs(row.p95Ms) : '' }}</span>
       </template>
       <template #cell-jitter="{ row }">
-        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measured(row) ? formatMs(row.jitterMs) : '' }}</span>
+        <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ measuresNow(row) ? formatMs(row.jitterMs) : '' }}</span>
       </template>
       <template #cell-loss="{ row }">
-        <span :class="cn('whitespace-nowrap font-mono tabular', lossClass(row))">{{ measured(row) && row.loss !== undefined && row.samples > 0 ? formatLoss(row.loss) : '' }}</span>
+        <span :class="cn('whitespace-nowrap font-mono tabular', lossClass(row))">{{ measuresNow(row) && row.loss !== undefined && row.samples > 0 ? formatLoss(row.loss) : '' }}</span>
       </template>
       <template #cell-availability="{ row }">
         <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ formatAvailability(availability(row)) }}</span>
@@ -197,7 +201,7 @@ const groupCounts = computed(() => {
       </template>
     </DataTable>
 
-    <!-- Under 768 px: grouped by target, one line per source, reasons in words (a phone has no hover). -->
+    <!-- Narrower than the table: grouped by target, one line per source, reasons in words (a phone has no hover). -->
     <div v-else class="space-y-4" data-testid="network-list">
       <section v-for="group in groups" :key="group.group" :aria-label="groupLabel(group.group)">
         <h3 class="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -221,18 +225,20 @@ const groupCounts = computed(() => {
                   @click="(e) => emit('open', p.key, e.currentTarget as HTMLElement)"
                 >
                   <span class="min-w-0 ps-1">
-                    <span class="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                    <span class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <span :class="cn('size-2 shrink-0 rounded-full', DOT[displayState(p)])" aria-hidden="true" />
-                      {{ $t('fleet.monitoring.paths.list.from', { source: p.sourceName }) }} · <span class="font-mono">{{ p.method.toUpperCase() }}</span><template v-if="!p.managed"> · {{ checkLabel(p) }}</template>
+                      <span class="truncate">{{ $t('fleet.monitoring.paths.list.from', { source: p.sourceName }) }}</span>
                     </span>
+                    <!-- The method and the check on their own line, so a long source never cuts them mid-word. -->
+                    <span class="block truncate ps-3.5 text-xs text-muted-foreground"><span class="font-mono">{{ p.method.toUpperCase() }}</span><template v-if="!p.managed"> · {{ checkLabel(p) }}</template></span>
                     <span v-if="displayState(p) !== 'up'" :class="cn('block text-xs', STATE_INK[displayState(p)])">
                       {{ stateWords(p).why ? `${stateWords(p).word}: ${stateWords(p).why}` : stateWords(p).title ? `${stateWords(p).word}: ${stateWords(p).title}` : stateWords(p).word }}
                     </span>
                     <span v-if="figures(p)" class="block break-words font-mono text-[11px] text-muted-foreground tabular">{{ figures(p) }}</span>
                   </span>
                   <span class="text-end">
-                    <span :class="cn('block font-mono font-medium tabular', STATE_INK[displayState(p)])">{{ measured(p) ? formatMs(p.p50Ms) : '' }}</span>
-                    <span v-if="measured(p) && (p.loss ?? 0) > 0" :class="cn('block text-[11px]', lossClass(p))">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(p.loss) }) }}</span>
+                    <span :class="cn('block font-mono font-medium tabular', STATE_INK[displayState(p)])">{{ measuresNow(p) ? formatMs(p.p50Ms) : '' }}</span>
+                    <span v-if="measuresNow(p) && (p.loss ?? 0) > 0" :class="cn('block text-[11px]', lossClass(p))">{{ $t('fleet.monitoring.paths.cell.loss', { loss: formatLoss(p.loss) }) }}</span>
                     <span class="block font-mono text-[10px] text-muted-foreground">{{ lastRun(p) }}</span>
                   </span>
                 </button>

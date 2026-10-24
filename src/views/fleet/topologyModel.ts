@@ -232,6 +232,11 @@ export interface TopologyModel {
   members: TopoNode[];
   addresses: TopoAddress[];
   edges: TopoEdge[];
+  /**
+   * Every source's edge into a target node, drawn or not, so a row's summary
+   * counts every source that probes it whatever the picker draws.
+   */
+  inbound: Map<string, TopoEdge[]>;
   cp: ControlPlaneSummary;
   counts: TopologyCounts;
   /** A query is filtering: what it does not keep is drawn faded. */
@@ -433,9 +438,10 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   });
   if (showPaths) for (const id of drawn) sources.push(nodes.get(id)!);
   const addresses = new Map<string, { address: string; paths: PathItem[]; methods: Set<string>; checks: Set<string> }>();
+  const inbound = new Map<string, TopoEdge[]>();
   if (showPaths && matrix) {
     const drawnSet = new Set(drawn);
-    const pairs = new Map<string, { from: string; to: string; paths: PathItem[] }>();
+    const pairs = new Map<string, { from: string; to: string; paths: PathItem[]; drawn: boolean }>();
     for (const path of matrix.paths) {
       const to = pathEnd(path);
       if (!path.targetNode) {
@@ -446,20 +452,18 @@ export function buildTopology(input: TopologyInput): TopologyModel {
         addresses.set(to, entry);
       }
       // The control plane's box is always drawn; a node source only when the picker or the query draws it.
-      if (path.source && !drawnSet.has(path.source)) {
-        counts.undrawn += 1;
-        continue;
-      }
+      const drawnFrom = !path.source || drawnSet.has(path.source);
+      if (!drawnFrom) counts.undrawn += 1;
       const from = path.source || CONTROL_PLANE;
       const key = `${from}>${to}`;
-      const pair = pairs.get(key) ?? { from, to, paths: [] };
+      const pair = pairs.get(key) ?? { from, to, paths: [], drawn: drawnFrom };
       pair.paths.push(path);
       pairs.set(key, pair);
     }
-    for (const { from, to, paths } of pairs.values()) {
+    for (const { from, to, paths, drawn: drawnFrom } of pairs.values()) {
       const ordered = pairOrder(paths);
       const lead = ordered[0]!;
-      if (lead.targetNode) {
+      if (drawnFrom && lead.targetNode) {
         const target = ensure(lead.targetNode);
         if (target.name === target.id && lead.targetNodeName) target.name = lead.targetNodeName;
         if (!target.country && lead.country) {
@@ -489,6 +493,8 @@ export function buildTopology(input: TopologyInput): TopologyModel {
       };
       // The matrix says when the path last heard; only a down path's newest outcome is known (it failed).
       if (lead.lastAt !== undefined) edge.last = { at: lead.lastAt, ok: state === "down" ? false : undefined };
+      if (lead.targetNode) inbound.set(to, [...(inbound.get(to) ?? []), edge]);
+      if (!drawnFrom) continue;
       if (matching && edge.matched) {
         matchedEnds.add(from);
         matchedEnds.add(to);
@@ -579,6 +585,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     members,
     addresses: terminals,
     edges,
+    inbound,
     cp,
     counts,
     filtering: !!matching,
@@ -630,13 +637,13 @@ export function rowPath(model: Pick<TopologyModel, "edges">, nodeId: string): { 
   return { edge: worstLive(into), count: into.length };
 }
 
-/** A target row's word across its drawn sources: the state that speaks for it and how many of them read it. */
+/** A target row's word across the sources that probe it: the state that speaks for it and how many of them read it. */
 export interface RowSummary {
   /** The worst live state among the paths into the row, else the worst of the rest. */
   state: EdgePathState;
-  /** Drawn sources whose path reads that state. */
+  /** Sources whose path reads that state. */
   n: number;
-  /** Drawn sources with a path into the row. */
+  /** Sources with a path into the row, drawn or not: the matrix's count, as the node sheet lists them. */
   of: number;
   /** Why an unknown row is unknown: the speaking path's reason. */
   reason?: string;
@@ -646,12 +653,14 @@ export interface RowSummary {
  * With several sources drawn, a target row summarises across them ("down
  * from 1 of 4") rather than printing its worst edge: the worst edge alone
  * made one failing source read as the node being down while three others
- * reach it, and a p50 without its source said nothing true. Undefined with
- * one drawn source, whose edge says it all, and for a row no path enters.
+ * reach it, and a p50 without its source said nothing true. It counts every
+ * source that probes the row, drawn or not, so drawing more sources never
+ * changes what it says. Undefined with one drawn source, whose edge says it
+ * all, and for a row no path enters.
  */
-export function rowSummary(model: Pick<TopologyModel, "edges" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
+export function rowSummary(model: Pick<TopologyModel, "inbound" | "drawnSourceIds">, nodeId: string): RowSummary | undefined {
   if (model.drawnSourceIds.length < 2) return undefined;
-  const into = model.edges.filter((e) => e.kind === "path" && e.to === nodeId);
+  const into = model.inbound.get(nodeId) ?? [];
   if (into.length === 0) return undefined;
   const lead = worstLive(into);
   const state = lead.state as EdgePathState;

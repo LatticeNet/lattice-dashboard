@@ -24,20 +24,42 @@ export function parsePresentation(raw: QueryValue | undefined): Presentation | "
 }
 
 /**
- * The mode a screen opens in: the graph with a mouse from 768 px up, the
- * list on a phone or a touch screen (32 px rows and a 14 px stroke are not
- * touch targets). The other mode is one tap away, the graph on a phone too.
+ * The view's width from which both modes have their room. In the graph, with
+ * the default four sources drawn and the address terminals, a target's name
+ * keeps a one-source row's room beside its summary and marks from a drawing
+ * about 1068 px wide (topologyModel's layout; the frame's border and padding
+ * make it 1100). The list's table with every figure column wants about the
+ * same. Narrower, the view opens in the list and the list groups its rows by
+ * target; the graph stays one tap away and scrolls sideways inside its frame.
  */
-export function defaultPresentation(screen: { wide: boolean; finePointer: boolean }): Presentation {
-  return screen.wide && screen.finePointer ? "graph" : "list";
+export const ROOMY_W = 1100;
+
+export function roomy(viewWidth: number): boolean {
+  return viewWidth >= ROOMY_W;
 }
 
-export function presentation(asked: Presentation | "auto", screen: { wide: boolean; finePointer: boolean }): Presentation {
+export interface Screen {
+  /** The view itself is ROOMY_W wide (the window less the sidebar and the gutters). */
+  roomy: boolean;
+  finePointer: boolean;
+}
+
+/**
+ * The mode a screen opens in: the graph with a mouse in a roomy view, the
+ * list in a narrower one, on a phone, or on a touch screen (32 px rows and a
+ * 14 px stroke are not touch targets). The other mode is one tap away, the
+ * graph on a phone too.
+ */
+export function defaultPresentation(screen: Screen): Presentation {
+  return screen.roomy && screen.finePointer ? "graph" : "list";
+}
+
+export function presentation(asked: Presentation | "auto", screen: Screen): Presentation {
   return asked === "auto" ? defaultPresentation(screen) : asked;
 }
 
 /** `?as=` written: the screen's default is written as nothing, so the bare address stays bare. */
-export function formatPresentation(value: Presentation, screen: { wide: boolean; finePointer: boolean }): Presentation | "auto" {
+export function formatPresentation(value: Presentation, screen: Screen): Presentation | "auto" {
   return value === defaultPresentation(screen) ? "auto" : value;
 }
 

@@ -7,9 +7,9 @@ import { GOLDEN_MONITORS, GOLDEN_PATHS_1H, GOLDEN_PATH_SET } from "@/testing/m3G
 import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
-import { LIST_GROUP_ORDER, defaultPresentation, formatAvailability, formatPresentation, listGroup, listOrder, parsePresentation, presentation, regionGroups } from "../networkModel.ts";
-import { buildPathsMatrix, countPaths, displayState, pathsQuerySchema, reachBySource, type PathsMatrix } from "../pathsModel.ts";
-import { buildTopology } from "../topologyModel.ts";
+import { LIST_GROUP_ORDER, ROOMY_W, defaultPresentation, formatAvailability, formatPresentation, listGroup, listOrder, parsePresentation, presentation, regionGroups, roomy } from "../networkModel.ts";
+import { availability, buildPathsMatrix, countPaths, displayState, measuresNow, pathsQuerySchema, reachBySource, type PathsMatrix } from "../pathsModel.ts";
+import { ROW_MARK_W, ROW_SUMMARY_EXTRA_W, buildTopology, layoutTopology } from "../topologyModel.ts";
 
 const names = new Map(GOLDEN_MONITORS.map((m) => [m.id, m.name]));
 const golden = (): PathsMatrix => buildPathsMatrix(GOLDEN_PATHS_1H, { checkName: (id) => names.get(id), controlPlane: "control plane" });
@@ -22,13 +22,18 @@ const keep = (m: PathsMatrix, text: string) => {
 
 /* ---- Mode ---- */
 
-test("the view opens in the graph with a mouse from 768 px up, and in the list on a phone or a touch screen", () => {
-  const desk = { wide: true, finePointer: true };
-  const phone = { wide: false, finePointer: false };
-  const tablet = { wide: true, finePointer: false };
+test("the view opens in the graph with a mouse in a roomy view, and in the list when narrower, on a phone or a touch screen", () => {
+  const desk = { roomy: true, finePointer: true };
+  const phone = { roomy: false, finePointer: false };
+  const tablet = { roomy: true, finePointer: false };
+  const narrowDesk = { roomy: false, finePointer: true };
   assert.equal(defaultPresentation(desk), "graph");
   assert.equal(defaultPresentation(phone), "list");
   assert.equal(defaultPresentation(tablet), "list");
+  assert.equal(defaultPresentation(narrowDesk), "list", "a 768 px window has no room for the graph's columns");
+  assert.equal(roomy(ROOMY_W), true);
+  assert.equal(roomy(ROOMY_W - 1), false);
+  assert.equal(roomy(720), false);
   assert.equal(presentation("auto", phone), "list");
   // The graph is one tap away on a phone too.
   assert.equal(presentation("graph", phone), "graph");
@@ -42,6 +47,23 @@ test("the view opens in the graph with a mouse from 768 px up, and in the list o
   assert.equal(parsePresentation(["graph"]), "graph");
   assert.equal(parsePresentation("table"), "auto");
   assert.equal(parsePresentation(undefined), "auto");
+});
+
+test("a roomy view fits the graph's columns: four sources, their summaries and marks, and the address terminals, with no sideways scroll", () => {
+  const m = golden();
+  const topo = buildTopology({ plan: GOLDEN_PATH_SET, matrix: m, window: "1h", layer: "all" });
+  assert.ok(topo.addresses.length > 0 && topo.drawnSourceIds.length > 1, "the golden set draws addresses and several sources");
+  // The frame's border and padding (TopologyGraph's PAD) come off the view's width.
+  const width = ROOMY_W - 2 - 32;
+  const layout = layoutTopology(topo, { width });
+  assert.equal(layout.width, width, "the drawing fits its frame");
+  // The summary and one mark per source take their width; the name keeps what a one-source row has (260 px).
+  const extra = ROW_SUMMARY_EXTRA_W + ROW_MARK_W * topo.drawnSourceIds.length;
+  assert.ok(layout.rowsW - extra >= 260, `rows ${layout.rowsW} px less ${extra} keep the names' room`);
+  // At 768 px (a 720 px view) the same drawing scrolls sideways and the names lose that room.
+  const narrow = layoutTopology(topo, { width: 720 - 2 - 32 });
+  assert.ok(narrow.width > 720 - 2 - 32);
+  assert.ok(narrow.rowsW - extra < 260);
 });
 
 /* ---- The list ---- */
@@ -80,6 +102,23 @@ test("availability prints one floored decimal, so 99.96% of runs never reads as 
   assert.equal(formatAvailability(0.95), "95.0%");
   assert.equal(formatAvailability(0), "0.0%");
   assert.equal(formatAvailability(undefined), "");
+});
+
+test("a path that does not measure now has no availability and no figures to sort or filter by, never 0%", () => {
+  const m = golden();
+  const quiet = m.paths.filter((p) => !measuresNow(p));
+  assert.ok(quiet.length > 0, "the golden set holds unknown or paused paths");
+  for (const p of quiet) assert.equal(availability(p), undefined, `${p.key} reads ${p.state}`);
+  // A path that measures but counted no run has none either.
+  const measuring = m.paths.find((p) => measuresNow(p) && p.expected > 0)!;
+  assert.equal(availability({ ...measuring, samples: 0 }), undefined);
+  // The query reads the figures the list shows: a filter or a sort never finds a blank cell.
+  for (const text of ["p50>0", "p95>0", "jitter>=0", "loss>=0%", "availability>=0%"]) {
+    for (const p of keep(m, text)) assert.ok(measuresNow(p), `${text} keeps ${p.key} (${p.state})`);
+  }
+  const sorted = keep(m, "sort:-p95");
+  const firstBlank = sorted.findIndex((p) => !measuresNow(p) || p.p95Ms === undefined);
+  assert.ok(sorted.slice(firstBlank).every((p) => !measuresNow(p) || p.p95Ms === undefined), "rows with no shown p95 sort last");
 });
 
 test("availability is a query field in percent", () => {

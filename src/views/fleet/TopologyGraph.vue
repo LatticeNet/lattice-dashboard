@@ -16,7 +16,8 @@
  * close. The edge whose path is open is drawn with a ring.
  *
  * The page's query fades what it does not keep: matching edges and their
- * ends keep full strength, the rest take the muted tone.
+ * ends keep full strength, the rest take the muted tone and leave the tab
+ * order, so Tab walks only the edges the query keeps.
  *
  * The card lives outside the scrolling frame, in a host that does not
  * scroll, so a card near the bottom or the right edge is moved, never cut.
@@ -671,7 +672,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
         <!-- Control plane: the heartbeat every node sends, counted. A group, since a failed node list read puts a Retry inside it. -->
         <div
           class="absolute flex flex-col justify-center rounded-lg border bg-muted/40 px-3 outline-none transition-opacity duration-150 focus-visible:ring-2 focus-visible:ring-ring"
-          :class="[dimmed(CONTROL_PLANE) && 'opacity-35', nodesState === 'failed' && !model.cp.known ? 'border-destructive/50' : 'border-border']"
+          :class="[dimmed(CONTROL_PLANE) && 'opacity-50', nodesState === 'failed' && !model.cp.known ? 'border-destructive/50' : 'border-border']"
           :style="{ left: `${layout.cp.x}px`, top: `${layout.cp.y}px`, width: `${layout.cp.w}px`, height: `${layout.cp.h}px` }"
           role="group"
           tabindex="0"
@@ -707,7 +708,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             v-for="le in keyedFrom(CONTROL_PLANE)"
             :key="le.key"
             role="button"
-            tabindex="0"
+            :tabindex="edgeMatched(le) ? 0 : -1"
             class="outline-none"
             :aria-label="edgeLabels.get(le.key)"
             :data-edge-key="le.edge.id"
@@ -726,7 +727,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
           <button
             type="button"
             class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-            :class="[dimmed(s.node.id) && 'opacity-35', s.node.freshness === 'quiet' || s.node.freshness === 'never' ? 'border-destructive/50' : 'border-border']"
+            :class="[dimmed(s.node.id) && 'opacity-50', s.node.freshness === 'quiet' || s.node.freshness === 'never' ? 'border-destructive/50' : 'border-border']"
             :style="{ left: `${s.box.x}px`, top: `${s.box.y}px`, width: `${s.box.w}px`, height: `${s.box.h}px` }"
             :data-node="s.node.id"
             :data-row-key="s.node.id"
@@ -758,7 +759,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
               v-for="le in keyedFrom(`source:${s.node.id}`)"
               :key="le.key"
               role="button"
-              tabindex="0"
+              :tabindex="edgeMatched(le) ? 0 : -1"
               class="outline-none"
               :aria-label="edgeLabels.get(le.key)"
               :data-edge-key="le.edge.id"
@@ -786,7 +787,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             v-else-if="row.type === 'country'"
             type="button"
             class="absolute flex items-center gap-2 rounded-md border border-transparent bg-card px-2 text-start text-sm outline-none transition-[opacity,background-color] duration-150 hover:border-border hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
-            :class="rowDimmed(row) && 'opacity-35'"
+            :class="rowDimmed(row) && 'opacity-50'"
             :style="{ left: `${layout.rowsX}px`, top: `${row.y}px`, width: `${layout.rowsW}px`, height: `${row.h}px` }"
             :aria-expanded="row.expanded"
             :data-country="row.country"
@@ -814,7 +815,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             v-else
             type="button"
             class="absolute flex items-center gap-2 rounded-md border border-transparent bg-card pe-2 text-start text-sm outline-none transition-[opacity,background-color] duration-150 hover:border-border hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
-            :class="[rowDimmed(row) && 'opacity-35', row.indent ? 'ps-6' : 'ps-2']"
+            :class="[rowDimmed(row) && 'opacity-50', row.indent ? 'ps-6' : 'ps-2']"
             :style="{ left: `${layout.rowsX}px`, top: `${row.y}px`, width: `${layout.rowsW}px`, height: `${row.h}px` }"
             :data-node="row.node.id"
             :data-row-key="row.node.id"
@@ -857,7 +858,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
           :key="a.address.id"
           type="button"
           class="absolute flex flex-col justify-center rounded-lg border bg-card px-3 text-start outline-none transition-[opacity,border-color] duration-150 hover:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-          :class="[dimmed(a.address.id) && 'opacity-35', a.address.counts.down ? 'border-destructive/50' : a.address.counts.degraded ? 'border-warning/50' : 'border-border']"
+          :class="[dimmed(a.address.id) && 'opacity-50', a.address.counts.down ? 'border-destructive/50' : a.address.counts.degraded ? 'border-warning/50' : 'border-border']"
           :style="{ left: `${a.box.x}px`, top: `${a.box.y}px`, width: `${a.box.w}px`, height: `${a.box.h}px` }"
           data-testid="topology-address"
           :data-address="a.address.address"
@@ -884,7 +885,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             v-for="le in keyedRest"
             :key="le.key"
             role="button"
-            tabindex="0"
+            :tabindex="edgeMatched(le) ? 0 : -1"
             class="outline-none"
             :aria-label="edgeLabels.get(le.key)"
             :data-edge-key="le.edge.id"

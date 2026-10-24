@@ -899,9 +899,23 @@ export function formatShare(share: number | undefined): string {
   return `${Math.round(pct)}%`;
 }
 
-/** Successful runs of the runs expected, 0 to 1; undefined when nothing was expected. */
-export function availability(path: Pick<PathItem, "samples" | "expected" | "loss">): number | undefined {
-  if (!path.expected || path.expected <= 0) return undefined;
+/**
+ * Whether a path's window figures are its own now: it reads up, degraded or
+ * down. An unknown or paused path still holds the figures of the runs before
+ * it stopped (or of none), and the list, its sort, the query and the sheet's
+ * availability never read them as its own (design 32 D1).
+ */
+export function measuresNow(path: Pick<PathItem, "state">): boolean {
+  return path.state === "up" || path.state === "degraded" || path.state === "down";
+}
+
+/**
+ * Successful runs of the runs expected, 0 to 1. Undefined when nothing was
+ * expected, no run was counted, or the path does not measure now: a path that
+ * never ran has no availability, never 0%.
+ */
+export function availability(path: Pick<PathItem, "state" | "samples" | "expected" | "loss">): number | undefined {
+  if (!measuresNow(path) || path.samples <= 0 || !path.expected || path.expected <= 0) return undefined;
   const ok = path.samples * (1 - (path.loss ?? 0));
   return Math.max(0, Math.min(1, ok / path.expected));
 }
@@ -954,10 +968,11 @@ export function pathsQuerySchema(options: PathsQueryOptions): QuerySchema<PathIt
     { key: "country", type: "string", hint: hint("country"), get: (p) => p.country },
     { key: "method", type: "enum", hint: hint("method"), values: PATH_METHODS, get: (p) => p.method },
     { key: "check", type: "string", hint: hint("check"), get: (p) => p.checkName ?? p.monitorId },
-    { key: "p50", type: "number", hint: hint("p50"), get: (p) => p.p50Ms },
-    { key: "p95", type: "number", hint: hint("p95"), get: (p) => p.p95Ms },
-    { key: "jitter", type: "number", hint: hint("jitter"), get: (p) => p.jitterMs },
-    { key: "loss", type: "number", unit: "percent", hint: hint("loss"), get: (p) => percent(p.loss) },
+    // The figures as the list shows them: none while the path does not measure now, so a sort never ranks a blank cell.
+    { key: "p50", type: "number", hint: hint("p50"), get: (p) => (measuresNow(p) ? p.p50Ms : undefined) },
+    { key: "p95", type: "number", hint: hint("p95"), get: (p) => (measuresNow(p) ? p.p95Ms : undefined) },
+    { key: "jitter", type: "number", hint: hint("jitter"), get: (p) => (measuresNow(p) ? p.jitterMs : undefined) },
+    { key: "loss", type: "number", unit: "percent", hint: hint("loss"), get: (p) => (measuresNow(p) && p.samples > 0 ? percent(p.loss) : undefined) },
     { key: "availability", aliases: ["avail"], type: "number", unit: "percent", hint: hint("availability"), get: (p) => percent(availability(p)) },
     { key: "managed", aliases: ["generated"], type: "bool", flag: true, hint: hint("managed"), get: (p) => p.managed, sort: false },
   ];

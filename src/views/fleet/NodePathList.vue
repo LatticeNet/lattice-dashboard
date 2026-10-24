@@ -47,11 +47,11 @@ function valueOf(path: PathItem): { text: string; tone: string; title?: string }
     return { text: path.p50Ms !== undefined ? `${formatMs(path.p50Ms)}${loss}` : t("fleet.monitoring.paths.reasonShort.no_data"), tone: "text-foreground" };
   }
   if (state === "down") return { text: (path.loss ?? 0) > 0 ? `${displayLabel(path)} · ${formatLoss(path.loss)}` : displayLabel(path), tone: "text-destructive" };
-  // Degraded (design 29 D13): the evidence and the reason, in the warning tone.
+  // Degraded (design 29 D13): the word, as down and unknown say theirs, then the evidence and the reason, in the warning tone.
   if (state === "degraded") {
     const f = degradedFigures(path);
     const figures = [f.latencyMs !== undefined ? formatMs(f.latencyMs) : "", f.loss !== undefined ? formatLoss(f.loss) : ""];
-    return { text: [...figures, reasonShort(path.reason)].filter(Boolean).join(" · "), tone: "text-warning-text", title: evidenceText(path.degraded, path.reason) || undefined };
+    return { text: [t("fleet.monitoring.paths.state.degraded"), ...figures, reasonShort(path.reason)].filter(Boolean).join(" · "), tone: "text-warning-text", title: evidenceText(path.degraded, path.reason) || undefined };
   }
   if (state === "paused") return { text: displayLabel(path), tone: "text-muted-foreground" };
   return { text: t("fleet.monitoring.paths.state.unknownWhy", { reason: reasonShort(path.reason) }), tone: "text-muted-foreground" };

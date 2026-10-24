@@ -260,8 +260,11 @@ test("delta and availability", () => {
   assert.equal(formatDeltaLoss(0.12), "+12 pt");
   assert.equal(formatDeltaLoss(-0.005), "-0.5 pt");
   assert.equal(formatDeltaLoss(0), "0 pt");
-  assert.equal(availability({ samples: 276, expected: 288, loss: 0.04 }), (276 * 0.96) / 288);
-  assert.equal(availability({ samples: 0, expected: 0 }), undefined);
+  assert.equal(availability({ state: "up", samples: 276, expected: 288, loss: 0.04 }), (276 * 0.96) / 288);
+  assert.equal(availability({ state: "up", samples: 0, expected: 0 }), undefined);
+  // A path that never ran, or does not measure now, has none: never 0%.
+  assert.equal(availability({ state: "down", samples: 0, expected: 288 }), undefined);
+  assert.equal(availability({ state: "unknown", samples: 276, expected: 288, loss: 0.4 }), undefined);
 });
 
 test("query: state, source, target, reason words, loss in percent and p50 in ms", () => {

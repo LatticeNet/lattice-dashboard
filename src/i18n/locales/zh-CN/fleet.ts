@@ -2577,6 +2577,7 @@ export default {
         graph: {
           undrawn: "{n} 条路径来自未画出的源节点。 | {n} 条路径来自未画出的源节点。",
           drawAll: "画出全部 {n} 个源节点",
+          sortList: "排序只作用于列表，图保持原有布局。",
           forced: "搜索匹配到它的路径，暂时画出",
           nodeHint: "按 Enter 查看它的路径",
         },
