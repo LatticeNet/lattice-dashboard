@@ -13,7 +13,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { Pencil, Trash2 } from "lucide-vue-next";
+import { Pencil, RefreshCw, Trash2 } from "lucide-vue-next";
 
 import { api, type CheckDefinitionView, type GroupView, type Node } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -30,7 +30,7 @@ import { replanNames } from "./beaconModel";
 import { formatMs } from "./latencyModel";
 import { stateRank, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
-import { describeSelector, skippedByReason, type DefinitionFix, type SelectorWords } from "./definitionsModel";
+import { describeSelector, measureAgainSave, skippedByReason, type DefinitionFix, type SelectorWords } from "./definitionsModel";
 import { useBeaconReplan } from "./useBeaconReplan";
 
 const props = defineProps<{
@@ -162,6 +162,33 @@ function replanOf(targetNode: string) {
 }
 function fix(fixed: DefinitionFix): void {
   if (def.value) emit("edit", def.value, fixed);
+}
+/** A group's skipped pairs as the excluded pairs a "pairs" fix adds. */
+const pairsOf = (paths: readonly PathItem[]) => paths.filter((p) => p.source && p.targetNode).map((p) => ({ source: p.source, target: p.targetNode! }));
+
+/* ---- Pairs left out: each can be measured again (design 32 R3) ---- */
+
+const excluded = computed(() => def.value?.excluded_pairs ?? []);
+const excludedLabel = (pair: { source: string; target: string }) => t("fleet.monitoring.checkDefs.sheet.pair", { source: nodeName(pair.source), target: nodeName(pair.target) });
+const restoring = ref<string>();
+async function measureAgain(pair: { source: string; target: string }): Promise<void> {
+  const d = def.value;
+  if (!d) return;
+  restoring.value = `${pair.source}~${pair.target}`;
+  try {
+    // The definition as stored now, so the save names the version it takes the pair out of.
+    const current = await api.monitors.definitions.get(d.id);
+    const body = measureAgainSave(current, pair.source, pair.target);
+    if (body) await api.monitors.definitions.update(body);
+    toast.success(t("fleet.monitoring.checkDefs.toast.measuredAgain", { name: d.name, pair: excludedLabel(pair) }));
+    emit("changed");
+    await load(d.id);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checkDefs.toast.failed"));
+    await load(d.id);
+  } finally {
+    restoring.value = undefined;
+  }
 }
 
 /* ---- Paused targets: forget, with the monitors and their runs named ---- */
@@ -315,6 +342,9 @@ async function remove(): Promise<void> {
                 <Button v-else-if="kind === 'exclude' && group.targets.length" variant="outline" size="sm" type="button" data-testid="definition-fix-exclude" @click="fix({ kind: 'exclude', targets: group.targets })">
                   {{ $t('fleet.monitoring.checkDefs.sheet.fixExclude', { n: group.targets.length }, group.targets.length) }}
                 </Button>
+                <Button v-else-if="kind === 'pairs' && pairsOf(group.paths).length" variant="outline" size="sm" type="button" data-testid="definition-fix-pairs" @click="fix({ kind: 'pairs', pairs: pairsOf(group.paths) })">
+                  {{ $t('fleet.monitoring.checkDefs.sheet.fixPairs', { n: pairsOf(group.paths).length }, pairsOf(group.paths).length) }}
+                </Button>
                 <template v-else-if="kind === 'approve'">
                   <template v-for="target in group.targets" :key="target">
                     <BeaconReplanNote
@@ -342,6 +372,30 @@ async function remove(): Promise<void> {
           </li>
         </ul>
         <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.skippedHint') }}</p>
+      </section>
+
+      <!-- Pairs the operator stopped measuring: kept with their history, each one click from measured again. -->
+      <section v-if="excluded.length" class="space-y-1.5" data-testid="definition-excluded" :aria-label="$t('fleet.monitoring.checkDefs.sheet.excluded')">
+        <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.excludedTitle', { n: excluded.length }, excluded.length) }}</h3>
+        <ul class="divide-y divide-border rounded-md border border-border text-xs">
+          <li v-for="pair in excluded" :key="`${pair.source}~${pair.target}`" class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
+            <span class="min-w-0 break-words">{{ excludedLabel(pair) }}</span>
+            <Button
+              v-if="canAdmin"
+              variant="outline"
+              size="sm"
+              type="button"
+              :disabled="!!restoring"
+              :aria-label="$t('fleet.monitoring.checkDefs.sheet.measureAgainLabel', { pair: excludedLabel(pair) })"
+              data-testid="definition-measure-again"
+              @click="measureAgain(pair)"
+            >
+              <RefreshCw v-if="restoring === `${pair.source}~${pair.target}`" class="size-4 animate-spin" aria-hidden="true" />
+              {{ $t('fleet.monitoring.checkDefs.sheet.measureAgain') }}
+            </Button>
+          </li>
+        </ul>
+        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.excludedHint') }}</p>
       </section>
 
       <!-- Targets that left the set: kept paused with their history until forgotten. -->

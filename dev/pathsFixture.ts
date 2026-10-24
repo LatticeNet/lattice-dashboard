@@ -735,7 +735,8 @@ export function pathsFor(plan: LatencyProbePlan, window: MonitorWindow, checks: 
         continue;
       }
       if (pair && !pair.enabled) {
-        paths.push(pathFrom(shape, window, base, "path_paused"));
+        // Migrated, a disabled pair is one of Fleet mesh's excluded pairs, which the server leaves out of the matrix.
+        if (!MIGRATED) paths.push(pathFrom(shape, window, base, "path_paused"));
         continue;
       }
       if (sourceOffline(source)) {

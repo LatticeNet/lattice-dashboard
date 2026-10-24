@@ -463,15 +463,24 @@ export function checkRowMethod(row: CheckRow): string {
 
 /* ---- Skipped pairs and their fixes (design 32 R2) ---- */
 
-/** What fixes a skipped pair: switch the check to auto, leave the targets out of it, or approve the beacon plan. */
-export type SkipFix = "auto" | "exclude" | "approve";
+/**
+ * What fixes a skipped pair: switch the check to auto, leave the targets out
+ * of it, stop measuring exactly those pairs, or approve the beacon plan.
+ */
+export type SkipFix = "auto" | "exclude" | "pairs" | "approve";
 
-/** Why a pair is skipped, in the order the sheet lists them: nothing to dial, a source that cannot run it, an approval, the budget. */
+/**
+ * Why a pair is skipped, in the order the sheet lists them: nothing to dial,
+ * a source that cannot run it, an approval, the budget, a refused address.
+ * Leaving a target out stops it for every source, so it is offered only when
+ * the target is what fails; a source's own reason stops only its pairs.
+ */
 const SKIP_KINDS: readonly { reasons: readonly string[]; fixes: (type: CheckMethod) => SkipFix[] }[] = [
   { reasons: ["not_probeable", "no_tcp_line", "udp_only", "no_public_address", "no_inventory"], fixes: (type) => (type === "auto" ? ["exclude"] : ["auto", "exclude"]) },
-  { reasons: ["agent_too_old", "icmp_not_permitted"], fixes: (type) => (type === "auto" ? ["exclude"] : ["auto", "exclude"]) },
+  { reasons: ["agent_too_old", "icmp_not_permitted"], fixes: (type) => (type === "auto" ? ["pairs"] : ["auto", "pairs"]) },
   { reasons: ["beacon_not_enabled", "firewall_pending", "beacon_source_pending", "refused_by_node"], fixes: () => ["approve"] },
-  { reasons: ["packet_budget"], fixes: () => ["exclude"] },
+  { reasons: ["packet_budget"], fixes: () => ["pairs"] },
+  { reasons: ["destination_refused"], fixes: () => ["pairs"] },
 ];
 
 export type SkippedPair = Pick<PathItem, "key" | "source" | "sourceName" | "targetNode" | "targetName" | "reason" | "measure">;
@@ -486,7 +495,8 @@ export interface SkippedGroup<P extends SkippedPair = SkippedPair> {
  * A definition's skipped pairs grouped by reason, each reason with its fixes
  * (design 32 R2): auto for a pair whose method has nothing to dial or whose
  * source cannot run it (not offered when the check is auto already), the
- * targets left out of the set, or the beacon plan approved. Paused pairs are
+ * targets left out of the set when the target is what fails, those pairs
+ * excluded when a source is, or the beacon plan approved. Paused pairs are
  * not skipped and are left out.
  */
 export function skippedByReason<P extends SkippedPair>(paths: readonly P[], type: CheckMethod): SkippedGroup<P>[] {
@@ -504,21 +514,26 @@ export function skippedByReason<P extends SkippedPair>(paths: readonly P[], type
     .map(([reason, list]) => ({
       reason,
       paths: [...list].sort((a, b) => a.targetName.localeCompare(b.targetName) || a.sourceName.localeCompare(b.sourceName)),
-      fixes: SKIP_KINDS[rank(reason)]?.fixes(type) ?? ["exclude"],
+      fixes: SKIP_KINDS[rank(reason)]?.fixes(type) ?? ["pairs"],
     }))
     .sort((a, b) => rank(a.reason) - rank(b.reason) || b.paths.length - a.paths.length || a.reason.localeCompare(b.reason));
 }
 
 /** A change the check sheet opens the editor with, for the operator to review and save. */
-export type DefinitionFix = { kind: "auto" } | { kind: "exclude"; targets: readonly string[] };
+export type DefinitionFix = { kind: "auto" } | { kind: "exclude"; targets: readonly string[] } | { kind: "pairs"; pairs: readonly LatencyPair[] };
 
 /**
- * The draft with a fix made: auto as the method, or the targets left out of
- * the set (a node named outright leaves the list instead, so it is never both
- * named and excluded).
+ * The draft with a fix made: auto as the method, the pairs added to the
+ * excluded pairs, or the targets left out of the set (a node named outright
+ * leaves the list instead, so it is never both named and excluded).
  */
 export function applyDefinitionFix(draft: DefinitionDraft, fix: DefinitionFix): DefinitionDraft {
   if (fix.kind === "auto") return withKind(draft, "auto");
+  if (fix.kind === "pairs") {
+    const pairs = [...draft.excludedPairs];
+    for (const pair of fix.pairs) if (!pairs.some((p) => p.source === pair.source && p.target === pair.target)) pairs.push({ source: pair.source, target: pair.target });
+    return { ...draft, excludedPairs: pairs };
+  }
   const leave = new Set(fix.targets);
   const t = draft.targets;
   return {
@@ -541,4 +556,16 @@ export function stopMeasuringSave(def: CheckDefinitionView, source: string, targ
   if (draft.excludedPairs.some((p) => p.source === source && p.target === target)) return undefined;
   draft.excludedPairs.push({ source, target });
   return buildDefinitionSave(draft, def, def.name);
+}
+
+/**
+ * "Measure again": the same save the other way, the pair taken out of the
+ * excluded pairs (its monitor and history were kept); undefined when the
+ * pair is measured already. It is also the undo of a stop.
+ */
+export function measureAgainSave(def: CheckDefinitionView, source: string, target: string): CheckDefinitionSave | undefined {
+  const draft = draftFromDefinition(def);
+  const kept = draft.excludedPairs.filter((p) => p.source !== source || p.target !== target);
+  if (kept.length === draft.excludedPairs.length) return undefined;
+  return buildDefinitionSave({ ...draft, excludedPairs: kept }, def, def.name);
 }

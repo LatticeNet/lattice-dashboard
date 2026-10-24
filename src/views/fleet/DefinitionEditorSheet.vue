@@ -8,9 +8,9 @@
  * budget" is exactly what the save produces; the list behind it is one click
  * away. The same sheet edits a definition.
  */
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Plus, RefreshCw, Save } from "lucide-vue-next";
+import { Plus, RefreshCw, Save, X } from "lucide-vue-next";
 
 import { api, type CheckDefinitionPreview, type CheckDefinitionView, type CheckMethod, type GroupView, type MonitorType, type Node } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -100,6 +100,9 @@ function copyDraft(d: DefinitionDraft): DefinitionDraft {
   return { ...d, sources: { ...d.sources }, targets: { ...d.targets }, headers: d.headers.map((h) => ({ ...h })), degraded: { ...d.degraded }, excludedPairs: d.excludedPairs.map((p) => ({ ...p })) };
 }
 
+/** What a fix from the check sheet changed and the field it changed, said beside that field until the sheet closes. */
+const fixed = ref<{ field: string; text: string }>();
+
 watch(
   () => props.open,
   (open) => {
@@ -115,6 +118,9 @@ watch(
     base.value = props.definition;
     const opened = props.definition ? draftFromDefinition(props.definition) : emptyDefinitionDraft(props.initialType ?? "tcp");
     draft.value = copyDraft(props.definition && props.fix ? applyDefinitionFix(opened, props.fix) : opened);
+    fixed.value = props.definition && props.fix ? fixedNote(props.fix) : undefined;
+    // The field the fix changed may sit below the fold: bring it into view.
+    if (fixed.value) void nextTick(() => formEl.value?.querySelector(`[data-field="${fixed.value!.field}"]`)?.scrollIntoView({ block: "center" }));
   },
   { immediate: true },
 );
@@ -143,6 +149,23 @@ function setKind(kind: CheckMethod): void {
 
 function nodeName(id: string): string {
   return props.nodes.find((n) => n.id === id)?.name || id;
+}
+
+/* ---- A fix from the check sheet, and the pairs left out (design 32 R2, R3) ---- */
+
+function fixedNote(fix: DefinitionFix): { field: string; text: string } {
+  switch (fix.kind) {
+    case "auto":
+      return { field: "type", text: t("fleet.monitoring.checkDefs.editor.fixed.auto") };
+    case "exclude":
+      return { field: "targets", text: t("fleet.monitoring.checkDefs.editor.fixed.exclude", { names: fix.targets.map(nodeName).join(t("fleet.monitoring.create.missingJoin")) }) };
+    case "pairs":
+      return { field: "excluded_pairs", text: t("fleet.monitoring.checkDefs.editor.fixed.pairs", { n: fix.pairs.length }, fix.pairs.length) };
+  }
+}
+const pairText = (pair: { source: string; target: string }) => t("fleet.monitoring.checkDefs.sheet.pair", { source: nodeName(pair.source), target: nodeName(pair.target) });
+function removePair(index: number): void {
+  draft.value.excludedPairs.splice(index, 1);
 }
 function groupName(id: string): string {
   return props.groups.find((g) => g.id === id)?.name || id;
@@ -462,6 +485,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
         <p v-if="editing && definition && draft.type !== definition.type" class="rounded-md bg-warning/10 px-2.5 py-2 text-xs text-warning-text" role="status">
           {{ $t('fleet.monitoring.checkDefs.editor.methodChange') }}
         </p>
+        <p v-if="fixed?.field === 'type'" class="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs" role="status" data-testid="definition-fixed">{{ fixed.text }}</p>
       </fieldset>
 
       <!-- 2. From -->
@@ -498,6 +522,25 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
             :label="$t('fleet.monitoring.checkDefs.editor.to')"
             id-prefix="definition-targets"
           />
+        </div>
+        <p v-if="fixed && fixed.field !== 'type'" class="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs" role="status" data-testid="definition-fixed">{{ fixed.text }}</p>
+        <!-- Pairs both sets hold that the check does not measure; removing one measures it again. -->
+        <div v-if="nodeTargets && draft.excludedPairs.length" class="grid gap-1.5" data-field="excluded_pairs" data-testid="definition-excluded">
+          <p class="text-xs font-medium">{{ $t('fleet.monitoring.checkDefs.editor.excludedPairs') }}</p>
+          <ul class="flex flex-wrap gap-1.5">
+            <li v-for="(pair, i) in draft.excludedPairs" :key="`${pair.source}~${pair.target}`" class="inline-flex max-w-full items-center gap-1 rounded-md border border-border py-0.5 ps-2 pe-0.5 text-xs">
+              <span class="min-w-0 break-words">{{ pairText(pair) }}</span>
+              <button
+                type="button"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"
+                :aria-label="$t('fleet.monitoring.checkDefs.editor.removePair', { pair: pairText(pair) })"
+                @click="removePair(i)"
+              >
+                <X class="size-3.5" aria-hidden="true" />
+              </button>
+            </li>
+          </ul>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.excludedPairsHint') }}</p>
         </div>
         <button
           v-if="addressesOptional && !showAddresses"

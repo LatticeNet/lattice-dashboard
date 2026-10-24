@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 
 import PathDetail from "./PathDetail.vue";
 import { buildSourcePause, canEditCheck, sourcePaused } from "./checksModel";
-import { stopMeasuringSave } from "./definitionsModel";
+import { measureAgainSave, stopMeasuringSave } from "./definitionsModel";
 import { draftFromConfig, draftToConfig, formatMs, pairEnabledIn, setPairEnabled } from "./latencyModel";
 import { currentPathKey, decodePathKey, displayState, everyPath, measuresNow, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
@@ -135,7 +135,10 @@ function stateText(p: PathItem): string {
   if (state === "up") return displayLabel(p);
   return p.reason ? `${displayLabel(p)}: ${reasonShort(p.reason)}` : displayLabel(p);
 }
-const lastRun = (p: PathItem) => (p.lastAt !== undefined ? formatRelativeTime(p.lastAt) : t("fleet.monitoring.paths.sheet.noRun"));
+/** A check with a run to chart: one that never ran (skipped from the start) has nothing to show. */
+const charted = (p: PathItem) => p.lastAt !== undefined || p.samples > 0;
+// "No run yet" promises a run; a skipped or paused pair that never ran gets the plain mark for no value.
+const lastRun = (p: PathItem) => (p.lastAt !== undefined ? formatRelativeTime(p.lastAt) : p.measure === "measured" ? t("fleet.monitoring.paths.sheet.noRun") : formatRelativeTime(undefined));
 
 /* ---- Stop measuring this pair (design 32 R3) ---- */
 
@@ -157,7 +160,10 @@ async function stop(): Promise<void> {
     const current = await api.monitors.definitions.get(p.definitionId);
     const body = stopMeasuringSave(current, p.source, p.targetNode);
     if (body) await api.monitors.definitions.update(body);
-    toast.success(t("fleet.monitoring.paths.sheet.stop.done", { check: checkLabel(p), source: p.sourceName, target: targetLabel(p) }));
+    // The pair leaves the matrix with the save, so its way back is here and on the check's sheet.
+    toast.success(t("fleet.monitoring.paths.sheet.stop.done", { check: checkLabel(p), source: p.sourceName, target: targetLabel(p) }), {
+      action: { label: t("fleet.monitoring.paths.sheet.stop.undo"), onClick: () => void measureAgain(p) },
+    });
     stopOpen.value = false;
     chosen.value = undefined;
   } catch (error) {
@@ -166,6 +172,21 @@ async function stop(): Promise<void> {
   } finally {
     emit("changed");
     stopPending.value = false;
+  }
+}
+
+/** Undo of a stop: the pair taken out of the definition's excluded pairs again. */
+async function measureAgain(p: PathItem): Promise<void> {
+  if (!p.definitionId || !p.targetNode) return;
+  try {
+    const current = await api.monitors.definitions.get(p.definitionId);
+    const body = measureAgainSave(current, p.source, p.targetNode);
+    if (body) await api.monitors.definitions.update(body);
+    toast.success(t("fleet.monitoring.paths.sheet.stop.undone", { check: checkLabel(p), source: p.sourceName, target: targetLabel(p) }));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.paths.toast.failed"));
+  } finally {
+    emit("changed");
   }
 }
 
@@ -222,6 +243,7 @@ async function togglePause(): Promise<void> {
   <ObjectSheet
     :open="!!sheet.openId.value"
     :title="openTitle"
+    wrap-title
     :subtitle="openPath ? `${openPath.method.toUpperCase()} · ${openPath.target || openPath.monitorId}` : undefined"
     :state="sheetState"
     :error="query.error.value?.message ?? null"
@@ -246,7 +268,7 @@ async function togglePause(): Promise<void> {
             <span :class="cn('size-2 rounded-full', DOT[displayState(p)])" aria-hidden="true" />
             <button
               type="button"
-              class="min-w-0 truncate text-start font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:underline pointer-coarse:min-h-11"
+              class="min-w-0 truncate rounded-sm text-start font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
               :title="$t('fleet.monitoring.paths.sheet.checks.open', { check: checkLabel(p) })"
               data-testid="path-check-name"
               @click="emit('openCheck', p.checkId)"
@@ -262,11 +284,11 @@ async function togglePause(): Promise<void> {
             <span aria-hidden="true">·</span>
             <span class="font-mono tabular" :title="p.lastAt ? new Date(p.lastAt).toISOString() : undefined">{{ lastRun(p) }}</span>
           </p>
-          <div v-if="pairPaths.length > 1 || canStop(p)" class="flex flex-wrap gap-x-3 gap-y-1 ps-4.5">
+          <div v-if="(pairPaths.length > 1 && charted(p)) || canStop(p)" class="flex flex-wrap gap-x-3 gap-y-1 ps-4.5">
             <button
-              v-if="pairPaths.length > 1"
+              v-if="pairPaths.length > 1 && charted(p)"
               type="button"
-              class="inline-flex items-center gap-1 text-muted-foreground outline-none hover:text-foreground focus-visible:underline aria-pressed:font-medium aria-pressed:text-foreground pointer-coarse:min-h-11"
+              class="inline-flex items-center gap-1 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:font-medium aria-pressed:text-foreground pointer-coarse:min-h-11"
               :aria-pressed="p.id === openPath?.id"
               data-testid="path-check-chart"
               @click="chosen = p.checkId"
@@ -277,7 +299,8 @@ async function togglePause(): Promise<void> {
             <button
               v-if="canStop(p)"
               type="button"
-              class="text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:underline pointer-coarse:min-h-11"
+              class="rounded-sm text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+              :aria-label="$t('fleet.monitoring.paths.sheet.stop.actionFor', { check: checkLabel(p) })"
               data-testid="path-check-stop"
               @click="askStop(p)"
             >

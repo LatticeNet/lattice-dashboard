@@ -17,6 +17,7 @@ import {
   pathsHealth,
   suggestDefinitionName,
   skippedByReason,
+  measureAgainSave,
   stopMeasuringSave,
   summarizePreview,
   takesAddresses,
@@ -209,13 +210,18 @@ test("R2: a definition's skipped pairs group by reason, each with its fix", () =
     groups.map((g) => [g.reason, g.paths.map((p) => p.targetNode), g.fixes]),
     [
       ["not_probeable", ["bare1", "bare2"], ["auto", "exclude"]],
-      ["agent_too_old", ["old"], ["auto", "exclude"]],
+      // A source that cannot run the method or is over its budget: only those pairs stop, never the
+      // target for every source, whose other pairs may be measured and healthy.
+      ["agent_too_old", ["old"], ["auto", "pairs"]],
       ["beacon_source_pending", ["jp"], ["approve"]],
-      ["packet_budget", ["de"], ["exclude"]],
+      ["packet_budget", ["de"], ["pairs"]],
     ],
   );
   // An auto check already chooses per pair: excluding is the only fix left for a target it cannot reach.
   assert.deepEqual(skippedByReason([pair("bare1", "not_probeable")], "auto")[0]!.fixes, ["exclude"]);
+  assert.deepEqual(skippedByReason([pair("old", "icmp_not_permitted")], "auto")[0]!.fixes, ["pairs"]);
+  // A reason the console does not know stops only its pairs.
+  assert.deepEqual(skippedByReason([pair("odd", "something_new")], "tcp")[0]!.fixes, ["pairs"]);
 });
 
 test("R2: a fix opens the editor with the change made: auto as the method, or the targets left out of the set", () => {
@@ -228,6 +234,11 @@ test("R2: a fix opens the editor with the change made: auto as the method, or th
   const named = applyDefinitionFix(draftFromDefinition(stored({ targets: { nodes: ["a", "bare1"] } })), { kind: "exclude", targets: ["bare1"] });
   assert.deepEqual(named.targets, { nodes: ["a"] });
   assert.equal(definitionDirty(def, out, def.name), true);
+  // Pairs: added to the excluded pairs once each, the targets untouched.
+  const withPair = stored({ type: "icmp", targets: { all: true }, excluded_pairs: [{ source: "n-sh", target: "n-us" }] });
+  const stopped = applyDefinitionFix(draftFromDefinition(withPair), { kind: "pairs", pairs: [{ source: "n-sh", target: "n-us" }, { source: "n-bj", target: "n-jp" }] });
+  assert.deepEqual(stopped.excludedPairs, [{ source: "n-sh", target: "n-us" }, { source: "n-bj", target: "n-jp" }]);
+  assert.deepEqual(stopped.targets, { all: true });
 });
 
 test("R3: Stop measuring this pair is the check's normal save with the pair excluded, at the version read", () => {
@@ -241,4 +252,9 @@ test("R3: Stop measuring this pair is the check's normal save with the pair excl
   const { excluded_pairs: _b, ...same } = buildDefinitionSave(draftFromDefinition(def), def, def.name);
   assert.deepEqual(rest, same);
   assert.equal(stopMeasuringSave(def, "n-sh", "n-us"), undefined, "a pair already excluded needs no save");
+  // Measuring it again is the same save the other way, and the undo of a stop.
+  const again = measureAgainSave(def, "n-sh", "n-us")!;
+  assert.deepEqual(again.excluded_pairs ?? [], [], "an empty list is left out, which the server reads as none");
+  assert.equal(again.version, def.version);
+  assert.equal(measureAgainSave(def, "n-sh", "n-jp"), undefined, "a pair that is measured needs no save");
 });
