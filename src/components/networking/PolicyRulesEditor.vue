@@ -7,12 +7,15 @@
  * rule picks one and a matrix cell's remote is its destination group.
  *
  * Outbound policy compiles outbound rules only, so the form offers no
- * direction. Inbound rules a policy already holds are listed as not applied,
- * with a link to the firewall that owns inbound traffic and a remove action:
- * a policy holding one cannot be planned.
+ * direction. Inbound rules a policy already holds are listed with what is
+ * true of them per node (this plan never applies them; NetGuard-managed
+ * nodes ignore them; on other nodes the legacy firewall and DNS plans still
+ * apply them), a link to the firewall that owns inbound traffic and a remove
+ * action: a policy holding one cannot be planned.
  */
+import { nextTick, ref } from "vue";
 import type { RouteLocationRaw } from "vue-router";
-import { Plus, Trash2 } from "lucide-vue-next";
+import { AlertTriangle, Plus, Trash2 } from "lucide-vue-next";
 import type { PolicyRuleDraft } from "@/views/networking/policyRuleModel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -68,36 +71,56 @@ function setProtocol(rule: PolicyRuleDraft, value: unknown) {
 function errorId(index: number): string {
   return `${props.idPrefix}-rule-${index}-error`;
 }
+
+/**
+ * Removing a card or an inbound line unmounts the focused button, which drops
+ * keyboard focus to the top of the dialog; it lands on Add rule instead.
+ */
+const addButton = ref<{ $el?: HTMLElement } | null>(null);
+function remove(index: number) {
+  emit("remove", index);
+  void nextTick(() => addButton.value?.$el?.focus());
+}
+function removeInbound(key: string) {
+  emit("remove-inbound", key);
+  void nextTick(() => addButton.value?.$el?.focus());
+}
 </script>
 
 <template>
   <div class="space-y-3">
     <div class="flex items-center justify-between gap-2">
       <Label>{{ $t("networking.policy.rules") }}</Label>
-      <Button type="button" variant="outline" size="sm" :disabled="!canEdit" @click="emit('add')">
+      <Button ref="addButton" type="button" variant="outline" size="sm" :disabled="!canEdit" @click="emit('add')">
         <Plus class="size-4" aria-hidden="true" />
         {{ $t("networking.policy.addRule") }}
       </Button>
     </div>
     <p class="text-xs text-muted-foreground">{{ $t("networking.policy.defaultDrop") }}</p>
 
-    <div v-if="inbound.length" class="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
-      <p class="text-foreground">
-        {{ $t("networking.policy.inboundInactive", { n: inbound.length }, inbound.length) }}
-        <RouterLink v-if="firewallTo" :to="firewallTo" class="whitespace-nowrap text-primary underline-offset-4 hover:underline">
-          {{ $t("networking.policy.openFirewall") }}
-        </RouterLink>
+    <div v-if="inbound.length" class="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs">
+      <p class="flex items-start gap-2 text-sm font-medium text-foreground">
+        <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+        {{ $t("networking.policy.inboundTitle", { n: inbound.length }, inbound.length) }}
       </p>
+      <p class="text-muted-foreground">{{ $t("networking.policy.inboundExplain") }}</p>
+      <RouterLink
+        v-if="firewallTo"
+        :to="firewallTo"
+        class="inline-flex min-h-8 items-center text-sm text-primary underline-offset-4 hover:underline"
+      >
+        {{ $t("networking.policy.openFirewall") }}
+      </RouterLink>
       <ul class="divide-y divide-warning/20">
         <li v-for="line in inbound" :key="line.key" class="flex items-center justify-between gap-2 py-1">
-          <span class="min-w-0 break-all font-mono text-muted-foreground">{{ line.text }}</span>
+          <span class="min-w-0 break-words font-mono text-muted-foreground">{{ line.text }}</span>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             :disabled="!canEdit"
             :aria-label="$t('networking.policy.removeInboundRule', { rule: line.text })"
-            @click="emit('remove-inbound', line.key)"
+            @click="removeInbound(line.key)"
           >
             {{ $t("common.actions.remove") }}
           </Button>
@@ -118,7 +141,7 @@ function errorId(index: number): string {
     >
       <div class="flex items-center justify-between">
         <span class="text-xs font-medium text-muted-foreground">{{ $t("networking.policy.ruleLabel", { index: index + 1 }) }}</span>
-        <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRuleN', { index: index + 1 })" @click="emit('remove', index)">
+        <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRuleN', { index: index + 1 })" @click="remove(index)">
           <Trash2 class="size-4 text-destructive" />
         </Button>
       </div>
@@ -156,6 +179,9 @@ function errorId(index: number): string {
             :aria-invalid="errors[index]?.ports ? 'true' : undefined"
             :aria-describedby="errors[index]?.ports ? errorId(index) : undefined"
           />
+          <!-- Under the field it is about, and announced, so a phone keyboard
+               does not hide why Save went grey. -->
+          <p :id="errorId(index)" aria-live="polite" class="text-xs text-destructive empty:hidden">{{ errors[index]?.ports ? errors[index]?.text : "" }}</p>
         </div>
       </div>
 
@@ -172,7 +198,7 @@ function errorId(index: number): string {
         </label>
       </div>
 
-      <p v-if="errors[index]" :id="errorId(index)" class="text-xs text-destructive">{{ errors[index]?.text }}</p>
+      <p v-if="errors[index] && !errors[index]?.ports" class="text-xs text-destructive" aria-live="polite">{{ errors[index]?.text }}</p>
     </div>
   </div>
 </template>

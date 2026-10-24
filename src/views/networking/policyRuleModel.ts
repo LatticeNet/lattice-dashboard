@@ -12,11 +12,13 @@ export type PortParse =
  * ports and an empty list means every port, so a token that is not one port
  * from 1 to 65535 is an error, never dropped: the old parser dropped
  * "8000-8010" and saved an empty list, which opened every port. Ports are
- * separated by commas or whitespace. An empty field is every port on
+ * separated by commas (ASCII or full-width), the ideographic comma, or
+ * whitespace. An empty field is every port on
  * purpose; a field holding only separators is an error, since it was not
  * left empty.
  */
-export function parsePortList(input: string): PortParse {
+export function parsePortList(raw: string): PortParse {
+  const input = raw.replace(/[，、]/g, ",");
   const ports = new Set<number>();
   if (input.trim() && !/[^\s,]/.test(input)) return { ok: false, reason: "invalid", token: input.trim() };
   for (const raw of input.replace(/\s*([-:])\s*/g, "$1").split(/[\s,]+/)) {

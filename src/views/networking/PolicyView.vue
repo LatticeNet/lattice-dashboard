@@ -278,22 +278,30 @@ const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
 /* Policy state                                                        */
 /* ------------------------------------------------------------------ */
 
-type PolicyState = "failing" | "unapplied" | "applied" | "disabled";
+type PolicyState = "failing" | "blocked" | "unapplied" | "applied" | "disabled";
+
+/** An inbound rule makes the policy's own plan fail ("egress-only MVP"). */
+function holdsInbound(p: NetPolicyView): boolean {
+  return p.rules.some((r) => r.direction === "ingress");
+}
 
 /**
  * What a node's policy amounts to on the node. A failed apply is the only
- * red; an enabled policy that never applied is not enforced yet; a disabled
- * one is the operator's choice and stays quiet.
+ * red; an enabled policy holding inbound rules cannot be planned at all; an
+ * enabled policy that never applied is not enforced yet; a disabled one is
+ * the operator's choice and stays quiet.
  */
 function policyState(p: NetPolicyView): PolicyState {
   if (p.last_error) return "failing";
   if (!p.enabled) return "disabled";
+  if (holdsInbound(p)) return "blocked";
   return hasRealTime(p.last_applied_at) ? "applied" : "unapplied";
 }
 
-const STATE_ORDER: Record<PolicyState, number> = { failing: 0, unapplied: 1, applied: 2, disabled: 3 };
+const STATE_ORDER: Record<PolicyState, number> = { failing: 0, blocked: 1, unapplied: 2, applied: 3, disabled: 4 };
 const STATE_TONE: Record<PolicyState, string> = {
   failing: "text-destructive",
+  blocked: "text-warning-text",
   unapplied: "text-warning-text",
   applied: "text-muted-foreground",
   disabled: "text-muted-foreground",
@@ -311,7 +319,7 @@ function ago(value?: string): string {
 }
 
 const counts = computed(() => {
-  const out = { failing: 0, unapplied: 0, applied: 0, disabled: 0 };
+  const out = { failing: 0, blocked: 0, unapplied: 0, applied: 0, disabled: 0 };
   for (const p of policies.value) out[policyState(p)] += 1;
   return out;
 });
@@ -336,6 +344,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (c.applied) parts.push({ key: "applied", text: t("networking.policyPage.proof.applied", { n: c.applied }) });
   if (c.unapplied) parts.push({ key: "unapplied", text: t("networking.policyPage.proof.unapplied", { n: c.unapplied }), tone: "warning" });
   if (c.failing) parts.push({ key: "failing", text: t("networking.policyPage.proof.failing", { n: c.failing }), tone: "destructive" });
+  if (c.blocked) parts.push({ key: "blocked", text: t("networking.policyPage.proof.blocked", { n: c.blocked }), tone: "warning" });
   return parts;
 });
 
@@ -382,6 +391,14 @@ const attention = computed<AttentionItem[]>(() => {
         claim: t("networking.policyPage.attention.failingClaim", { node: policyNodeLabel(p) }),
         proof: firstLine(p.last_error ?? ""),
         action,
+      });
+    } else if (state === "blocked") {
+      items.push({
+        key: `blocked:${p.target_node_id}`,
+        tone: "warning",
+        claim: t("networking.policyPage.attention.blockedClaim", { node: policyNodeLabel(p) }),
+        proof: t("networking.policyPage.attention.blockedProof"),
+        action: { label: t("common.actions.edit"), run: () => openEdit(p) },
       });
     } else if (state === "unapplied") {
       items.push({
@@ -489,7 +506,15 @@ function groupName(id: string): string {
 
 function menuFor(p: NetPolicyView): RowMenuItem[] {
   return [
-    { key: "plan", label: t("networking.shared.plan"), icon: Play, hidden: !canAdmin.value, disabled: planning.value === p.target_node_id, run: () => void plan(p) },
+    {
+      key: "plan",
+      label: t("networking.shared.plan"),
+      icon: Play,
+      hidden: !canAdmin.value,
+      disabled: planning.value === p.target_node_id || holdsInbound(p),
+      reason: holdsInbound(p) ? t("networking.policyPage.planBlocked") : undefined,
+      run: () => void plan(p),
+    },
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(p) },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = p) },
   ];
@@ -986,7 +1011,14 @@ function closePlan(open: boolean) {
         </p>
       </div>
       <template v-if="openPolicyRow" #actions>
-        <Button variant="outline" size="sm" type="button" :disabled="planning === openPolicyRow.target_node_id" @click="plan(openPolicyRow)">
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          :disabled="planning === openPolicyRow.target_node_id || holdsInbound(openPolicyRow)"
+          :title="holdsInbound(openPolicyRow) ? $t('networking.policyPage.planBlocked') : undefined"
+          @click="plan(openPolicyRow)"
+        >
           <RefreshCw v-if="planning === openPolicyRow.target_node_id" class="animate-spin" aria-hidden="true" />
           <Play v-else aria-hidden="true" />
           {{ $t('networking.shared.plan') }}

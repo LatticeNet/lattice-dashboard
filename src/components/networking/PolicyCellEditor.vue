@@ -144,6 +144,14 @@ const canSubmit = computed(
   () => props.canAdmin && (drafts.value.length > 0 || hadDestRules.value) && !hasErrors.value,
 );
 
+/**
+ * Saving turns the source group's policy on when it has none yet or is off.
+ * Once planned, an enabled policy drops every outbound connection its rules
+ * do not allow, so one allow rule for this cell cuts the group off from
+ * everything else, the internet included; the dialog says so before save.
+ */
+const turnsPolicyOn = computed(() => meta.enabled && (!props.existing || !props.existing.enabled));
+
 function onOpenChange(value: boolean) {
   emit("update:open", value);
 }
@@ -196,6 +204,10 @@ function submit() {
             <Input v-model.number="meta.priority" type="number" />
           </div>
         </div>
+
+        <p v-if="turnsPolicyOn" class="rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-foreground" role="note">
+          {{ $t("networking.matrix.createsPolicy", { group: source.name }) }}
+        </p>
 
         <PolicyRulesEditor
           :rules="drafts"

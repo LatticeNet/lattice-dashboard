@@ -6,6 +6,8 @@ import { assignRuleIds, draftPorts, parsePortList, ruleFieldError } from "../pol
 test("single ports parse, sort and collapse", () => {
   assert.deepEqual(parsePortList("443, 80,80"), { ok: true, ports: [80, 443] });
   assert.deepEqual(parsePortList(" 22 8080\n53 "), { ok: true, ports: [22, 53, 8080] });
+  // A zh-CN keyboard types full-width and ideographic commas.
+  assert.deepEqual(parsePortList("22，443、8080"), { ok: true, ports: [22, 443, 8080] });
   assert.deepEqual(parsePortList(""), { ok: true, ports: [] });
   // A field holding only separators was not left empty, so it is an error
   // rather than "every port".
