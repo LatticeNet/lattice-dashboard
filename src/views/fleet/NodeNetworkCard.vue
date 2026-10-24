@@ -64,7 +64,10 @@ const policyTo = computed(() => {
 
 const inbound = computed(() => view.value?.inbound);
 const outbound = computed(() => view.value?.outbound);
-const securityGroups = computed(() => [...(inbound.value?.security_groups ?? []), ...(inbound.value?.derived_security_groups ?? [])]);
+const securityGroups = computed(() => [
+  ...(inbound.value?.security_groups ?? []).map((group) => ({ group, derived: false })),
+  ...(inbound.value?.derived_security_groups ?? []).map((group) => ({ group, derived: true })),
+]);
 
 function inboundHead(): string {
   const section = inbound.value;
@@ -90,10 +93,13 @@ function outboundHead(): string {
   return section.default_drop ? `${head} · ${t("fleet.nodeNetwork.outbound.defaultDrop")}` : head;
 }
 
-function groupDetail(group: NodeNetworkSecurityGroup): string {
+/** A derived group (S4) says which node group it comes through, or only that it comes through one when the caller cannot read node groups, and whether it is inactive here. */
+function groupDetail(group: NodeNetworkSecurityGroup, derived: boolean): string {
   const rules = t("fleet.nodeNetwork.inbound.groupRules", { n: group.rules }, group.rules);
-  if (!group.via) return t("fleet.nodeNetwork.inbound.groupDetail", { rules });
-  return t("fleet.nodeNetwork.inbound.groupDetailVia", { rules, via: t("fleet.nodeNetwork.inbound.viaGroup", { group: group.via.name || group.via.id }) });
+  if (!derived) return t("fleet.nodeNetwork.inbound.groupDetail", { rules });
+  const parts = [group.via ? t("fleet.nodeNetwork.inbound.viaGroup", { group: group.via.name || group.via.id }) : t("fleet.nodeNetwork.inbound.viaUnnamed")];
+  if (group.state === "inactive") parts.push(t("fleet.nodeNetwork.inbound.groupInactive"));
+  return t("fleet.nodeNetwork.inbound.groupDetailVia", { rules, via: parts.join(t("fleet.nodeNetwork.join")) });
 }
 
 function reachText(policy: NodeNetworkPolicy): string {
@@ -143,8 +149,8 @@ const attention = computed(() => {
             <p class="break-words">
               <span class="text-xs text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.securityGroups') }}</span>
               <template v-if="securityGroups.length">
-                <span v-for="(group, i) in securityGroups" :key="`${group.id}-${group.via?.id ?? ''}`">
-                  {{ group.name || group.id }}<span class="text-xs text-muted-foreground">{{ groupDetail(group) }}</span><template v-if="i < securityGroups.length - 1">{{ $t('fleet.nodeNetwork.join') }}</template>
+                <span v-for="({ group, derived }, i) in securityGroups" :key="`${derived ? 'derived' : 'own'}-${group.id}-${group.via?.id ?? ''}`" :class="group.state === 'inactive' ? 'text-muted-foreground' : undefined">
+                  {{ group.name || group.id }}<span class="text-xs text-muted-foreground">{{ groupDetail(group, derived) }}</span><template v-if="i < securityGroups.length - 1">{{ $t('fleet.nodeNetwork.join') }}</template>
                 </span>
               </template>
               <span v-else class="text-muted-foreground">{{ $t('fleet.nodeNetwork.inbound.noSecurityGroups') }}</span>

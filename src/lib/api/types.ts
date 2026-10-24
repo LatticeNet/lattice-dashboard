@@ -2420,8 +2420,11 @@ export interface NodeNetworkSecurityGroup {
   id: string;
   name?: string;
   rules: number;
-  /** The node group a derived binding comes through (S4). */
+  /** The node group a derived binding comes through (S4); sent only to a caller holding group:read. */
   via?: NodeNetworkRef;
+  /** "inactive" for a derived group on a node NetGuard does not manage: a group binding never adopts a node. */
+  state?: "inactive";
+  reason?: string;
 }
 
 export interface NodeNetworkPort {

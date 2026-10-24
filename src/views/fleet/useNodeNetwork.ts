@@ -6,7 +6,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useRefreshOnReturn } from "@/composables/useRefreshOnReturn";
 import { formatRelativeTime } from "@/lib/format";
 
-import { applyingPolicies, guardAttention, portLabel } from "./nodeNetworkModel";
+import { applyingPolicies, compiledSecurityGroups, guardAttention, portLabel } from "./nodeNetworkModel";
 
 /**
  * The node's effective network (design 32 D4) for one open node: read when
@@ -68,7 +68,7 @@ export function useNodeNetworkText() {
       default:
         parts.push(t("fleet.nodeNetwork.inbound.none"));
     }
-    const groups = [...(section.security_groups ?? []), ...(section.derived_security_groups ?? [])];
+    const groups = compiledSecurityGroups(section);
     if (groups.length) parts.push(t("fleet.nodeNetwork.inbound.groupsInline", { groups: list(groups.map((g) => g.name || g.id)) }));
     const ports = section.extra_ports ?? [];
     if (ports.length) parts.push(list(ports.map(extraPort)));

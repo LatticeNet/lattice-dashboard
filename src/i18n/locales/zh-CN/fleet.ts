@@ -36,7 +36,7 @@ export default {
         none: {
           check: "没有检查指定这个分组。",
           outbound_policy: "没有出站策略指定这个分组。",
-          security_group_binding: "无。在支持绑定节点分组之前，安全组只绑定单个节点。",
+          security_group_binding: "没有安全组绑定到这个分组，也没有防护规则把它作为来源。",
           mesh_rule: "无。所有具备组网条件的节点都在同一个 WireGuard 网状网络中。",
         },
         noneGeneric: "无。",
@@ -2960,6 +2960,8 @@ export default {
         securityGroups: "安全组：",
         noSecurityGroups: "未绑定安全组",
         viaGroup: "经由节点分组 {group}",
+        viaUnnamed: "经由一个节点分组",
+        groupInactive: "未生效：节点不受管理",
         groupRules: "没有规则 | {n} 条规则 | {n} 条规则",
         groupDetail: "（{rules}）",
         groupDetailVia: "（{rules}，{via}）",
