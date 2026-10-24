@@ -39,7 +39,7 @@ import { nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 import { REGION_ORDER, regionOf, regionRank, type RegionKey } from "@/lib/regions";
 import type { QueryValue } from "@/components/common/tableUrlState";
 import { worstFirst } from "@/views/fleet/nodePathsModel";
-import { countPaths, displayState, reachBySource, type PathCounts, type PathDisplay, type PathItem, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
+import { countPaths, displayState, reachBySource, type PathCounts, type PathDisplay, type PathItem, type PathMeasure, type PathsMatrix, type SourceReach } from "@/views/fleet/pathsModel";
 
 export { REGION_ORDER, regionOf, regionRank, type RegionKey };
 
@@ -81,6 +81,11 @@ export interface TopoNode {
   incidents: number;
   /** In the node list; false for a node only the plan, the matrix or a chain named. */
   listed: boolean;
+  /**
+   * A target only skipped or paused pairs reach (design 32 R2): the first
+   * such pair's word and reason. Absent once any measured pair reaches it.
+   */
+  unmeasured?: { measure: Exclude<PathMeasure, "measured">; reason?: string };
 }
 
 /** Endpoint id of the control plane; node ids never start with "@". */
@@ -183,8 +188,12 @@ export interface TopologyInput {
   nodes?: readonly Node[];
   /** The path set plan: its source order and each target's note; edges come from the matrix. */
   plan?: LatencyProbePlan;
-  /** The shared matrix (usePathsData) at the page's window; undefined until read. */
-  matrix?: Pick<PathsMatrix, "sources" | "paths">;
+  /**
+   * The shared matrix (usePathsData) at the page's window; undefined until
+   * read. Its paths hold the pairs that are not measured only while the
+   * view shows them; unmeasured holds them always.
+   */
+  matrix?: Pick<PathsMatrix, "sources" | "paths"> & Partial<Pick<PathsMatrix, "unmeasured">>;
   /** The sources the picker drew (`?topo.sources=`); undefined draws the default. */
   drawnSources?: readonly string[];
   /**
@@ -419,6 +428,31 @@ export function buildTopology(input: TopologyInput): TopologyModel {
     if (node) node.incidents += 1;
   }
 
+  /* ---- Targets nothing measures (design 32 R2) ---- */
+  // A target only skipped or paused pairs reach leaves the drawing, and its
+  // region's count, until the view shows those pairs; then it is drawn
+  // dimmed with the reason. It takes its country from the pair either way,
+  // so showing it never moves it to another region.
+  const reached = new Set<string>();
+  const measuredInto = new Set<string>();
+  for (const path of matrix?.paths ?? []) {
+    if (!path.targetNode) continue;
+    reached.add(path.targetNode);
+    if (path.measure === "measured") measuredInto.add(path.targetNode);
+  }
+  const hidden = new Set<string>();
+  for (const path of [...(matrix?.paths ?? []), ...(matrix?.unmeasured ?? [])]) {
+    if (!path.targetNode || path.measure === "measured" || measuredInto.has(path.targetNode)) continue;
+    const target = ensure(path.targetNode);
+    if (target.name === target.id && path.targetNodeName) target.name = path.targetNodeName;
+    if (!target.country && path.country) {
+      target.country = path.country;
+      target.region = regionOf(path.country);
+    }
+    target.unmeasured ??= { measure: path.measure, reason: path.reason };
+    if (!reached.has(path.targetNode)) hidden.add(path.targetNode);
+  }
+
   const edges: TopoEdge[] = [];
   const counts: TopologyCounts = { drawn: 0, undrawn: 0, chains: 0, chainsBroken: 0, chainsUnplaced: 0 };
   const showPaths = layer === "all" || layer === "paths";
@@ -561,6 +595,7 @@ export function buildTopology(input: TopologyInput): TopologyModel {
   const ends = new Set(edges.flatMap((e) => [e.from, e.to]));
   const inLayer = (node: TopoNode): boolean => {
     if (left.has(node.id)) return false;
+    if (hidden.has(node.id) && !node.relay && !node.exit) return false;
     switch (layer) {
       case "all":
         return true;

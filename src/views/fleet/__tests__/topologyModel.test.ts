@@ -6,6 +6,7 @@ import type { Incident, LatencyProbePlan, LineChainView, Node, PathView, PathsRe
 import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
+import { regionGroups } from "../networkModel.ts";
 import { quietAfterMs } from "../latencyModel.ts";
 import { buildPathsMatrix, everyPath } from "../pathsModel.ts";
 import { addressLineValue, edgeValue, rowSummaryValue, stateLabel } from "../topologyCopy.ts";
@@ -131,10 +132,10 @@ function check(source: string, monitorId: string, spec: PathSpec & { target: str
 const CHECK_NAMES: Record<string, string> = { ping: "ICMP to hk", web: "Status page", cert: "sub cert", relay: "HK relay port" };
 
 /** The matrix of an M3 server: one row per target, one column per source. */
-function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[] = [{ node_id: "sh", name: "cd-hs-sh" }]) {
+function matrixOf(paths: PathView[], sources: { node_id: string; name: string }[] = [{ node_id: "sh", name: "cd-hs-sh" }], countries: Record<string, string> = {}) {
   const targets = [...new Set(paths.map((p) => p.target_node!).filter(Boolean))].map((id) => {
     const n = NODES.find((x) => x.id === id);
-    return { node_id: id, name: n?.name ?? id, country: n?.geo?.country };
+    return { node_id: id, name: n?.name ?? id, country: countries[id] ?? n?.geo?.country };
   });
   const response: PathsResponse = { window: "1h", observed_at: ago(0), degraded_at: ago(30_000), sources, targets, paths };
   return buildPathsMatrix(response, { checkName: (id) => CHECK_NAMES[id] });
@@ -191,8 +192,8 @@ test("regions run in order of distance from mainland China; Hong Kong is not mai
   const m = buildTopology(input());
   assert.deepEqual(
     m.members.map((n) => n.id),
-    ["bj", "hk", "jp", "us4", "us1", "us2", "de", "x"],
-    "region, then country, then name; the source sits in the left column",
+    ["bj", "hk", "us4", "us1", "us2", "x"],
+    "region, then country, then name; the source sits in the left column; jp and de, which no measured pair reaches, are not drawn",
   );
   assert.deepEqual(m.sources.map((n) => n.id), ["sh"]);
 });
@@ -275,6 +276,37 @@ test("a check that cannot run does not grey a pair another check measures; shown
   const alone = buildTopology(input({ matrix: revealed([ping]) }));
   assert.equal(edge(alone, "path:sh>hk").state, "skipped");
   assert.equal(edge(alone, "path:sh>hk").reason, "icmp_not_permitted");
+});
+
+// Design 32 R2: a target only skipped or paused pairs reach is not part of
+// the drawing (its row, its region's count) until the view shows those
+// pairs; then it is drawn dimmed with the reason, in the same region.
+test("a target no measured pair reaches leaves the graph and its region's count until the reveal brings it back dimmed", () => {
+  const regionCount = (m: ReturnType<typeof buildTopology>, region: string) =>
+    layoutTopology(m, { width: 1200 }).rows.find((r) => r.type === "header" && r.region === region)?.count ?? 0;
+  // x has no country in the node list; the matrix names its target CN.
+  const paths = [...PATHS, probe("sh", "x", { state: "unknown", reason: "not_probeable", target: "", monitor_id: "", samples: 0, expected: 0 })];
+  const quietMatrix = matrixOf(paths, undefined, { x: "CN" });
+  for (const layer of ["all", "paths"] as const) {
+    const quiet = buildTopology(input({ layer, matrix: quietMatrix }));
+    const ids = quiet.members.map((n) => n.id);
+    // jp has nothing to dial, de is paused, x has nothing to dial and no country of its own.
+    for (const id of ["jp", "de", "x"]) assert.ok(!ids.includes(id), `${layer}: ${id} is drawn with no measured pair`);
+    assert.ok(ids.includes("hk") && ids.includes("us4"), `${layer}: a measured target, unknown included, stays`);
+    assert.equal(regionCount(quiet, "eastAsia"), 1, `${layer}: East Asia counts hk only`);
+  }
+  const shown = buildTopology(input({ matrix: { ...quietMatrix, paths: everyPath(quietMatrix) } }));
+  const byId = new Map(shown.members.map((n) => [n.id, n]));
+  assert.deepEqual(byId.get("jp")?.unmeasured, { measure: "skipped", reason: "not_probeable" });
+  assert.deepEqual(byId.get("de")?.unmeasured, { measure: "paused", reason: "path_paused" });
+  assert.equal(byId.get("hk")?.unmeasured, undefined);
+  assert.equal(regionCount(shown, "eastAsia"), 2);
+  // x keeps the region its pair names, shown or not, as the list does.
+  assert.equal(byId.get("x")?.region, "mainland");
+  assert.equal(buildTopology(input({ matrix: quietMatrix })).nodes.get("x")?.region, "mainland");
+  // The list groups paths, so a pair that is not measured has no group until shown.
+  const listed = regionGroups(quietMatrix.paths).flatMap((g) => g.targets.map((t) => t.key));
+  assert.ok(!listed.includes("jp") && !listed.includes("de") && !listed.includes("x"));
 });
 
 test("an address keeps one terminal however many checks and sources dial it; a certificate check leaves the control plane", () => {
@@ -564,7 +596,7 @@ test("chain status words", () => {
 test("each filter keeps only its own nodes and edges", () => {
   const paths = buildTopology(input({ layer: "paths" }));
   assert.deepEqual(new Set(paths.edges.map((e) => e.kind)), new Set(["path"]));
-  assert.deepEqual(paths.members.map((n) => n.id), ["hk", "jp", "us4", "us1", "us2", "de"]);
+  assert.deepEqual(paths.members.map((n) => n.id), ["hk", "us4", "us1", "us2"]);
   const chains = buildTopology(input({ layer: "chains" }));
   assert.deepEqual(chains.sources, [], "the left column holds sources only");
   assert.deepEqual(chains.members.map((n) => n.id), ["bj", "hk", "us1"]);
@@ -617,7 +649,7 @@ test("layout is deterministic and keeps sources left, rows in one column, chains
   assert.equal(a.sources[0]!.box.x, 0);
   assert.ok(a.rowsX >= LEFT_W + 72, "a gap for the fan");
   const headers = a.rows.filter((r) => r.type === "header").map((r) => (r.type === "header" ? `${r.region}:${r.count}` : ""));
-  assert.deepEqual(headers, ["mainland:1", "eastAsia:2", "northAmerica:3", "europe:1", "unknown:1"]);
+  assert.deepEqual(headers, ["mainland:1", "eastAsia:1", "northAmerica:3", "unknown:1"]);
   for (const row of a.rows) if (row.type === "node") assert.equal(row.h, ROW_H);
   const chain = a.edges.find((e) => e.edge.id === "chain:line-hk")!;
   const right = a.rowsX + a.rowsW;

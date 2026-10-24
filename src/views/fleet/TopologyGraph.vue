@@ -323,7 +323,11 @@ const rowValues = computed(() => {
     if (row.type !== "node") continue;
     const node = row.node;
     const path = rowPath(props.model, node.id);
-    if (!path) continue;
+    if (!path) {
+      // Shown on request with no drawn edge into it: say why nothing measures it (design 32 R2).
+      if (node.unmeasured) out.set(node.id, { text: stateLabel(t, { kind: "path", state: node.unmeasured.measure, reason: node.unmeasured.reason }), tone: "text-muted-foreground", marks: [] });
+      continue;
+    }
     const marks = several ? rowMarks(props.model, node.id).map((m) => ({ ...m, name: nodeName(m.source) })) : [];
     // Several sources: the row summarises across them; one source: its edge's own value (p50 or state).
     const summary = rowSummary(props.model, node.id);
@@ -823,7 +827,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
             v-else
             type="button"
             class="absolute flex items-center gap-2 rounded-md border border-transparent bg-card pe-2 text-start text-sm outline-none transition-[opacity,background-color] duration-150 hover:border-border hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
-            :class="[rowDimmed(row) && 'opacity-50', row.indent ? 'ps-6' : 'ps-2']"
+            :class="[rowDimmed(row) ? 'opacity-50' : row.node.unmeasured && 'opacity-60', row.indent ? 'ps-6' : 'ps-2']"
             :style="{ left: `${layout.rowsX}px`, top: `${row.y}px`, width: `${layout.rowsW}px`, height: `${row.h}px` }"
             :data-node="row.node.id"
             :data-row-key="row.node.id"
