@@ -237,11 +237,15 @@ function toNode(e: Entry, index: number): Node {
           memory_total: memTotal,
           disk_used: Math.round(diskTotal * 0.4),
           disk_total: diskTotal,
-          net_rx_speed: reporting ? 120_000 * (cpu + 1) : 0,
-          net_tx_speed: reporting ? 90_000 * (cpu + 1) : 0,
+          net_rx_speed: reporting || status === "offline" ? 120_000 * (cpu + 1) : 0,
+          net_tx_speed: reporting || status === "offline" ? 90_000 * (cpu + 1) : 0,
           net_rx_bytes: 4_000_000_000_000,
           net_tx_bytes: 2_500_000_000_000,
           uptime_seconds: 86_400 * 12,
+          // The sample's own instant: without it every metric reads as never
+          // measured (hasMetricSample), and an offline node's last reading
+          // dates from its last beat.
+          collected_at: lastSeen,
         },
     host_facts: never
       ? undefined
