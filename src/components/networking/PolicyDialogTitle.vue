@@ -11,11 +11,11 @@ defineProps<{ editing: boolean }>();
 </script>
 
 <template>
-  <DialogTitle class="flex flex-wrap items-center gap-x-2 gap-y-1">
+  <DialogTitle class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
     <span>{{ editing ? $t("networking.outbound.titleEdit") : $t("networking.outbound.titleNew") }}</span>
     <template v-if="$slots.default">
       <span class="text-muted-foreground" aria-hidden="true">·</span>
-      <span class="flex min-w-0 flex-wrap items-center gap-1.5 font-normal"><slot /></span>
+      <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 font-normal wrap-anywhere"><slot /></span>
     </template>
   </DialogTitle>
 </template>

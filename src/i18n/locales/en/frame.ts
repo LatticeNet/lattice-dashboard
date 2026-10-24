@@ -389,7 +389,7 @@ export default {
 
   // First-visit notes on the pages design 32 renamed (RenameNote).
   renames: {
-    outboundPolicy: "Network Policy is now Outbound policy. It controls the connections a node opens; inbound traffic is the Inbound firewall.",
+    outboundPolicy: "Network Policy is now Outbound policy. It controls the connections a node opens, not inbound traffic.",
     nodeGroups: "Groups is now Node groups, the fleet groups that checks and outbound policy target.",
     inboundFirewall: "NetGuard Firewall is now Inbound firewall, under Networking.",
     wireguardMesh: "WireGuard Networks is now WireGuard mesh, under Networking.",

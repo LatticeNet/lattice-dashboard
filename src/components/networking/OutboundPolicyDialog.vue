@@ -183,7 +183,10 @@ function submit(): void {
     <DialogScrollContent class="sm:max-w-3xl">
       <DialogHeader>
         <PolicyDialogTitle :editing="!!existing">
-          <span v-if="titleObject" class="truncate">{{ titleObject }}</span>
+          <!-- A conditional slot, so the title drops its separator while nothing is chosen; the text wraps, so a long name never widens the dialog past a phone screen. -->
+          <template v-if="titleObject" #default>
+            <span class="min-w-0 wrap-anywhere">{{ titleObject }}</span>
+          </template>
         </PolicyDialogTitle>
         <DialogDescription>{{ $t("networking.outbound.formDescription") }}</DialogDescription>
       </DialogHeader>
@@ -284,13 +287,16 @@ function submit(): void {
           </template>
         </PolicyRulesEditor>
 
-        <DialogFooter class="items-center">
-          <p v-if="noTarget" class="me-auto text-xs text-muted-foreground" data-testid="outbound-missing">{{ $t("networking.outbound.stillNeedsTarget") }}</p>
+        <!-- The footer stacks in reverse below sm, so the note comes last in the
+             markup to sit above the disabled Create on a phone and first
+             (order-first) beside the buttons on wider screens. -->
+        <DialogFooter class="sm:items-center">
           <Button type="button" variant="outline" @click="requestClose">{{ $t("common.actions.cancel") }}</Button>
           <Button type="submit" :disabled="!canSubmit || saving">
             <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
             {{ existing ? $t("common.actions.saveChanges") : $t("networking.outbound.create") }}
           </Button>
+          <p v-if="noTarget" class="text-xs text-muted-foreground sm:order-first sm:me-auto" data-testid="outbound-missing">{{ $t("networking.outbound.stillNeedsTarget") }}</p>
         </DialogFooter>
       </form>
     </DialogScrollContent>

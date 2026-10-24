@@ -6,6 +6,7 @@ import {
   isEmptySelector,
   nodeCoverage,
   normalizeSelector,
+  onlyMatch,
   resolveSelector,
   selectorEquals,
   selectorParts,
@@ -107,4 +108,17 @@ test("the chips read the fleet or groups, then nodes, then exclusions, by name",
     { kind: "exclude", id: "c", name: "charlie" },
   ]);
   assert.deepEqual(selectorParts({ all: true }, nodes, groups), [{ kind: "fleet" }]);
+});
+
+test("Enter in the search picks the one group or node that matches, and nothing when several or none do", () => {
+  assert.deepEqual(onlyMatch("char", nodes, groups, true), { kind: "node", id: "c" });
+  assert.deepEqual(onlyMatch(" WEB ", nodes, groups, true), { kind: "group", id: "g-web" });
+  // "b" matches bravo by name and the DB group, so nothing is picked.
+  assert.equal(onlyMatch("b", nodes, groups, true), undefined);
+  // With groups off, only nodes count: "db" then matches no node.
+  assert.equal(onlyMatch("db", nodes, groups, false), undefined);
+  assert.equal(onlyMatch("", nodes, groups, true), undefined);
+  assert.equal(onlyMatch("zzz", nodes, groups, true), undefined);
+  // A node without a name matches by id.
+  assert.deepEqual(onlyMatch("d", [{ id: "d" }], [], true), { kind: "node", id: "d" });
 });

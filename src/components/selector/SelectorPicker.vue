@@ -33,7 +33,9 @@ import GroupChip from "@/components/networking/GroupChip.vue";
 
 import {
   coverageMap,
+  nodeSearchText,
   normalizeSelector,
+  onlyMatch,
   resolveSelector,
   selectorParts,
   setWholeFleet,
@@ -100,7 +102,7 @@ const regions = computed(() => {
   const q = query.value.trim().toLowerCase();
   const keep = new Set([...(value.value.nodes ?? []), ...(value.value.exclude ?? [])]);
   const list = props.nodes
-    .filter((n) => !q || `${n.name} ${n.id} ${n.geo?.country ?? ""}`.toLowerCase().includes(q) || keep.has(n.id))
+    .filter((n) => !q || nodeSearchText(n).includes(q) || keep.has(n.id))
     .sort((a, b) => regionRank(regionOf(a.geo?.country)) - regionRank(regionOf(b.geo?.country)) || (a.name || a.id).localeCompare(b.name || b.id));
   const out: { region: RegionKey; nodes: Node[] }[] = [];
   for (const node of list) {
@@ -173,6 +175,23 @@ function groupMemberCount(group: PickerGroup): number {
   return group.resolved_members.filter((id) => visibleIds.value.has(id)).length;
 }
 
+/**
+ * Enter in the search box picks the only match and clears the search. It
+ * never reaches a form around the picker, which would save a half-made
+ * target (design review of S3a).
+ */
+function pickOnlyMatch(): void {
+  const hit = onlyMatch(query.value, props.nodes, props.groups, props.allowGroups);
+  if (!hit) return;
+  if (hit.kind === "group") {
+    if (!value.value.all && !(value.value.groups ?? []).includes(hit.id)) emit(toggleGroup(value.value, hit.id, true));
+  } else {
+    const node = props.nodes.find((n) => n.id === hit.id);
+    if (node && !coverageOf(node).explicit && !coveredElsewhere(node)) emit(toggleNode(value.value, hit.id, true));
+  }
+  query.value = "";
+}
+
 const resolvedId = computed(() => `${props.idPrefix}-resolved`);
 const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.value.length === 0 && unseen.value.length === 0);
 </script>
@@ -226,6 +245,7 @@ const nothingVisible = computed(() => shownGroups.value.length === 0 && regions.
         <Input
           v-model="query"
           class="ps-8"
+          @keydown.enter.prevent="pickOnlyMatch"
           :placeholder="allowGroups ? t('selector.searchGroupsAndNodes') : t('selector.searchNodes')"
           :aria-label="allowGroups ? t('selector.searchGroupsAndNodes') : t('selector.searchNodes')"
         />

@@ -383,7 +383,7 @@ export default {
 
   // 设计 32 改名的页面在首次访问时显示的说明（RenameNote）。
   renames: {
-    outboundPolicy: "网络策略已改名为出站策略。它管节点主动发起的连接；入站流量由入站防火墙负责。",
+    outboundPolicy: "网络策略已改名为出站策略。它管节点主动发起的连接，不管入站流量。",
     nodeGroups: "分组已改名为节点分组，即检查和出站策略所针对的机群分组。",
     inboundFirewall: "NetGuard 防火墙已改名为入站防火墙，位于网络分区。",
     wireguardMesh: "WireGuard 网络已改名为 WireGuard 网状网络，位于网络分区。",

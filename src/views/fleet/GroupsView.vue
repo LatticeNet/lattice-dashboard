@@ -17,6 +17,7 @@ import {
   unwrap,
   ApiError,
   type GroupUse,
+  type GroupUsedByResponse,
   type GroupSelector,
   type GroupUpsertRequest,
   type GroupView,
@@ -524,10 +525,38 @@ const confirmReturn = createConfirmReturn();
 /** The group the confirm names; its own ref, so the editor's draft is never touched. */
 const deleteTarget = ref<GroupView | undefined>();
 
+/**
+ * What names the group the confirm is about, read when the confirm opens so
+ * an in-use group says so before Delete rather than after (design review of
+ * S3a). Unread (no netpolicy:read, or the request failed) leaves the decision
+ * to the server, which refuses with the same list.
+ */
+const deleteUses = ref<GroupUsedByResponse | undefined>();
+const deleteUsesPending = ref(false);
+const deleteUseCount = computed(() => (deleteUses.value ? groupUseCount(deleteUses.value.used_by, deleteUses.value.hidden) : 0));
+
 function requestDelete(group: GroupView): void {
   confirmReturn.remember(group.id);
   deleteTarget.value = group;
+  deleteUses.value = undefined;
+  deleteUsesPending.value = true;
+  void api.groups
+    .usedBy(group.id)
+    .then((res) => {
+      if (deleteTarget.value?.id === group.id) deleteUses.value = res;
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (deleteTarget.value?.id === group.id) deleteUsesPending.value = false;
+    });
   deleteOpen.value = true;
+}
+
+/** From a refused confirm to the open group's Used by list, where each user is a link. */
+function showDeleteUses(): void {
+  const target = deleteTarget.value;
+  deleteOpen.value = false;
+  if (target) unlessDraft(() => sheet.open(target.id));
 }
 
 async function confirmDelete() {
@@ -692,12 +721,16 @@ function selectorSummary(group: GroupView): string {
 const deleteImpact = computed(() => {
   const target = deleteTarget.value;
   if (!target) return [];
+  // In use: the server refuses, so say who uses it instead of what a delete would do.
+  if (deleteUseCount.value > 0 && deleteUses.value) {
+    const lines = deleteUses.value.used_by.map(
+      (use) => `${t(`fleet.groups.usedBy.kind.${use.kind}`, use.kind)}: ${use.label} (${t(`fleet.groups.usedBy.role.${use.role}`, use.role)})`,
+    );
+    if (deleteUses.value.hidden > 0) lines.push(t("fleet.groups.usedBy.hidden", { n: deleteUses.value.hidden }, deleteUses.value.hidden));
+    return lines;
+  }
   const members = groups.value.find((g) => g.id === target.id)?.resolved_members.length ?? target.resolved_members.length;
-  const impact = [t("fleet.groups.deleteImpact", { n: members })];
-  // Known before the request: the server refuses while anything names the group.
-  const uses = usedBy.value && usedBy.value.group_id === target.id ? usedByCount.value : 0;
-  if (uses > 0) impact.unshift(t("fleet.groups.usedBy.blocksDelete", { n: uses }, uses));
-  return impact;
+  return [t("fleet.groups.deleteImpact", { n: members })];
 });
 </script>
 
@@ -860,6 +893,18 @@ const deleteImpact = computed(() => {
             <li v-if="openMembers.length === 0" class="px-3 py-4 text-xs text-muted-foreground">{{ $t('fleet.groups.sheet.noMembers') }}</li>
           </ul>
         </section>
+        <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersTitle') }}</dt>
+          <dd>{{ $t('fleet.groups.sheet.explicit', { n: (selectedGroup.members ?? []).length }) }}</dd>
+          <template v-if="selectorSummary(selectedGroup)">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorTitle') }}</dt>
+            <dd class="break-words">{{ selectorSummary(selectedGroup) }}</dd>
+          </template>
+          <template v-if="selectedGroup.parent_id">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.fieldParent') }}</dt>
+            <dd>{{ groups.find((g) => g.id === selectedGroup?.parent_id)?.name ?? selectedGroup.parent_id }}</dd>
+          </template>
+        </dl>
         <!-- Used by (design 32 D3): every check, outbound policy, security-group binding and mesh rule naming the group. -->
         <section class="space-y-2" aria-labelledby="group-used-by" data-testid="group-used-by">
           <h3 id="group-used-by" class="flex items-baseline gap-2 text-xs font-medium text-muted-foreground">
@@ -885,25 +930,13 @@ const deleteImpact = computed(() => {
                 <RouterLink
                   v-if="section.kind === 'outbound_policy' && section.uses.some((u) => u.role === 'target' || u.role === 'remote')"
                   :to="{ name: 'network-outbound-policy', query: { view: 'matrix' } }"
-                  class="mt-1 inline-block text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  class="mt-1 inline-block text-primary underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
                 >{{ $t('fleet.groups.usedBy.matrix') }}</RouterLink>
               </dd>
             </div>
           </dl>
           <p v-if="usedBy && usedBy.hidden > 0" class="text-xs text-muted-foreground">{{ $t('fleet.groups.usedBy.hidden', { n: usedBy.hidden }, usedBy.hidden) }}</p>
         </section>
-        <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2">
-          <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersTitle') }}</dt>
-          <dd>{{ $t('fleet.groups.sheet.explicit', { n: (selectedGroup.members ?? []).length }) }}</dd>
-          <template v-if="selectorSummary(selectedGroup)">
-            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorTitle') }}</dt>
-            <dd class="break-words">{{ selectorSummary(selectedGroup) }}</dd>
-          </template>
-          <template v-if="selectedGroup.parent_id">
-            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.fieldParent') }}</dt>
-            <dd>{{ groups.find((g) => g.id === selectedGroup?.parent_id)?.name ?? selectedGroup.parent_id }}</dd>
-          </template>
-        </dl>
       </div>
 
       <!-- Edit and create. -->
@@ -1077,14 +1110,24 @@ const deleteImpact = computed(() => {
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.groups.deleteTitle')"
-      :description="$t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })"
+      :description="
+        deleteUseCount > 0
+          ? $t('fleet.groups.usedBy.blocksDelete', { n: deleteUseCount }, deleteUseCount)
+          : $t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })
+      "
       :impact="deleteImpact"
+      :impact-title="deleteUseCount > 0 ? $t('fleet.groups.usedBy.title') : undefined"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
+      :confirm-disabled="deleteUsesPending || deleteUseCount > 0"
       :return-focus="confirmReturn.target"
       @confirm="confirmDelete"
-    />
+    >
+      <Button v-if="deleteUseCount > 0" variant="link" size="sm" type="button" class="h-auto justify-start px-0" @click="showDeleteUses">
+        {{ $t('fleet.groups.usedBy.openList') }}
+      </Button>
+    </ConfirmDialog>
 
     <!-- Leaving an edited draft: say what is lost, keep editing by default.
          Destructive like every other discard confirm in the console. -->

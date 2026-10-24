@@ -44,6 +44,7 @@ export default {
         matrix: "Open the group matrix",
         hidden: "{n} more use you cannot read. | {n} more uses you cannot read.",
         blocksDelete: "{n} object names this group, so the server refuses to delete it until that changes. | {n} objects name this group, so the server refuses to delete it until they change.",
+        openList: "Open the group's Used by list",
       },
       query: {
         label: "Search, filter and sort groups",

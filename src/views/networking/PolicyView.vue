@@ -171,13 +171,20 @@ const cellSourcePolicy = computed<GroupPolicyView | undefined>(() =>
     : undefined,
 );
 
-/** Other policies whose target includes the source group and that hold rules for this pair. */
+/**
+ * Other policies that reach the source group's nodes, by naming the group,
+ * by naming its nodes or by covering the whole fleet, and that hold rules
+ * toward the destination group. The cell edits only the source group's own
+ * policy, so removing its rule may leave the path open through one of these.
+ */
 const cellAlsoFrom = computed<string[]>(() => {
   const source = cellSource.value;
   const dest = cellDest.value;
   if (!source || !dest) return [];
+  const members = new Set(nodeGroups.value.find((g) => g.id === source.id)?.resolved_members ?? []);
   return groupPolicies.value
-    .filter((p) => p.id !== cellSourcePolicy.value?.id && (p.target?.groups ?? []).includes(source.id))
+    .filter((p) => p.id !== cellSourcePolicy.value?.id)
+    .filter((p) => (p.target?.groups ?? []).includes(source.id) || p.target_node_ids.some((id) => members.has(id)))
     .filter((p) => p.rules.some((r) => r.remote.kind === "group" && r.remote.group_id === dest.id))
     .map((p) => policyTitle(p));
 });
@@ -399,6 +406,8 @@ const convertTarget = ref<NetPolicyView | undefined>(undefined);
 const convertName = ref("");
 const convertPriority = ref(0);
 const converting = ref(false);
+/** Why the server refused the last convert; kept in the dialog, where the operator decides what to change. */
+const convertError = ref("");
 
 /** Outbound policies that already reach the node, which merge into it once it converts. */
 const convertMerges = computed(() => {
@@ -411,12 +420,14 @@ function openConvert(p: NetPolicyView): void {
   convertTarget.value = p;
   convertName.value = t("networking.outbound.convertDefaultName", { node: policyNodeLabel(p) });
   convertPriority.value = 0;
+  convertError.value = "";
 }
 
 async function confirmConvert(): Promise<void> {
   const target = convertTarget.value;
   if (!target) return;
   converting.value = true;
+  convertError.value = "";
   try {
     const result = await api.netpolicy.convert(target.target_node_id, { name: convertName.value.trim() || undefined, priority: Math.trunc(convertPriority.value || 0) });
     convertTarget.value = undefined;
@@ -426,7 +437,7 @@ async function confirmConvert(): Promise<void> {
     owned.push({ ...owned.query(), view: undefined, open: undefined, [POLICY_PARAM]: result.group_policy.id });
     if (result.approval) await showPlan(result.approval);
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("networking.outbound.toastConvertFailed"));
+    convertError.value = error instanceof Error ? error.message : t("networking.outbound.toastConvertFailed");
   } finally {
     converting.value = false;
   }
@@ -1097,6 +1108,9 @@ function closePlan(open: boolean) {
       :no-match-description="$t('networking.shared.noMatchDescription')"
       @retry="refreshAll"
     >
+      <template #no-match>
+        <EmptyState :title="$t('networking.shared.noMatchTitle')" :description="$t('networking.shared.noMatchDescription')" />
+      </template>
       <template #empty>
         <EmptyState :title="$t('networking.outbound.emptyTitle')" :description="$t('networking.outbound.emptyDescription')">
           <Button v-if="canAdmin" size="sm" type="button" @click="openOutboundCreate">
@@ -1212,6 +1226,9 @@ function closePlan(open: boolean) {
       :no-match-description="$t('networking.shared.noMatchDescription')"
       @retry="refreshAll"
     >
+      <template #no-match>
+        <EmptyState :title="$t('networking.shared.noMatchTitle')" :description="$t('networking.shared.noMatchDescription')" />
+      </template>
       <template #empty>
         <EmptyState
           :title="$t('networking.policy.emptyTitle')"
@@ -1506,9 +1523,13 @@ function closePlan(open: boolean) {
             </div>
             <div class="grid gap-1.5">
               <Label for="convert-priority">{{ $t('networking.matrix.priority') }}</Label>
-              <Input id="convert-priority" v-model.number="convertPriority" type="number" inputmode="numeric" />
+              <Input id="convert-priority" v-model.number="convertPriority" type="number" inputmode="numeric" aria-describedby="convert-priority-hint" />
+              <p id="convert-priority-hint" class="text-xs text-muted-foreground">{{ $t('networking.outbound.priorityHint') }}</p>
             </div>
           </div>
+          <p v-if="convertError" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground" role="alert">
+            {{ convertError }}
+          </p>
           <DialogFooter>
             <Button type="button" variant="outline" @click="convertTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="converting || !canAdmin">
@@ -1666,6 +1687,7 @@ function closePlan(open: boolean) {
       :source="cellSource"
       :dest="cellDest"
       :existing="cellSourcePolicy"
+      :existing-title="cellSourcePolicy ? policyTitle(cellSourcePolicy) : undefined"
       :firewall-to="netguardTo"
       :also-from="cellAlsoFrom"
       :saving="savingCell"

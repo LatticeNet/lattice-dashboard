@@ -119,6 +119,33 @@ export function coverageMap(
   return out;
 }
 
+/** What the picker's search matches a node on: its name, id and country. */
+export function nodeSearchText(node: SelectorNode & { geo?: { country?: string } }): string {
+  return `${node.name ?? ""} ${node.id} ${node.geo?.country ?? ""}`.toLowerCase();
+}
+
+/**
+ * The one group or node a search names, when exactly one matches; Enter in
+ * the search box picks it. Several matches or none pick nothing, so Enter
+ * never guesses.
+ */
+export function onlyMatch(
+  query: string,
+  nodes: readonly (SelectorNode & { geo?: { country?: string } })[],
+  groups: readonly SelectorGroup[],
+  allowGroups: boolean,
+): { kind: "group" | "node"; id: string } | undefined {
+  const q = query.trim().toLowerCase();
+  if (!q) return undefined;
+  const groupHits = allowGroups ? groups.filter((g) => g.name.toLowerCase().includes(q)) : [];
+  const nodeHits = nodes.filter((n) => nodeSearchText(n).includes(q));
+  if (groupHits.length + nodeHits.length !== 1) return undefined;
+  const group = groupHits[0];
+  if (group) return { kind: "group", id: group.id };
+  const node = nodeHits[0];
+  return node ? { kind: "node", id: node.id } : undefined;
+}
+
 /** The visible nodes a selector resolves to, sorted by id. */
 export function resolveSelector(
   sel: TargetSelector,

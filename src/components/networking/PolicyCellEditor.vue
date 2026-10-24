@@ -45,18 +45,20 @@ const props = withDefaults(
     dest: MatrixGroup;
     /** Existing policy scoped to `source`, if one exists. */
     existing?: GroupPolicyView;
+    /** How the page names `existing`, so the dialog says which policy Enabled and Priority belong to. */
+    existingTitle?: string;
     saving?: boolean;
     canAdmin?: boolean;
     /** Where inbound traffic is managed; no link when the firewall page is absent. */
     firewallTo?: RouteLocationRaw | null;
     /**
-     * Other outbound policies whose target includes the source group and
-     * that hold rules for this pair. This dialog edits only the source
-     * group's own policy, so it names them rather than hiding them.
+     * Other outbound policies that reach the source group's nodes and hold
+     * rules for this pair. This dialog edits only the source group's own
+     * policy, so it names them rather than hiding them.
      */
     alsoFrom?: string[];
   }>(),
-  { existing: undefined, saving: false, canAdmin: false, firewallTo: null, alsoFrom: () => [] },
+  { existing: undefined, existingTitle: undefined, saving: false, canAdmin: false, firewallTo: null, alsoFrom: () => [] },
 );
 
 const emit = defineEmits<{
@@ -208,6 +210,14 @@ function submit() {
 
       <form class="space-y-5" @submit.prevent="submit">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <!-- Enabled and Priority are the whole policy's, not this cell's. -->
+          <p class="text-xs text-muted-foreground sm:col-span-2" data-testid="cell-whole-policy">
+            {{
+              existing
+                ? $t("networking.matrix.wholePolicy", { policy: existingTitle ?? existing.label })
+                : $t("networking.matrix.wholePolicyNew", { group: source.name })
+            }}
+          </p>
           <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
             <input v-model="meta.enabled" type="checkbox" class="size-4 accent-primary" />
             {{ $t("networking.matrix.policyEnabled") }}
