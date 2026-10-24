@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import type { RouteLocationRaw } from "vue-router";
+import { RefreshCw } from "lucide-vue-next";
 import type {
   GroupNetRule,
   GroupPolicyUpsertRequest,
   GroupPolicyView,
   MatrixGroup,
-  NetRuleAction,
-  NetRuleDirection,
-  NetRuleProtocol,
 } from "@/lib/api";
+import {
+  assignRuleIds,
+  draftPorts,
+  ruleFieldError,
+  type PolicyRuleDraft,
+} from "@/views/networking/policyRuleModel";
 import GroupChip from "./GroupChip.vue";
+import PolicyRulesEditor, { type InboundRuleLine, type PolicyRuleError } from "./PolicyRulesEditor.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,33 +28,29 @@ import {
   DialogTitle,
   Dialog,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 /**
  * PolicyCellEditor authors the rules that govern one matrix cell: traffic from
- * the `source` group to the `dest` group. It edits ONLY the rules whose remote
- * is `dest`; any other rules already on the source group's policy (targeting
- * other groups or external endpoints) are preserved untouched on save, so
- * editing one cell never clobbers another.
+ * the `source` group to the `dest` group. It edits ONLY the outbound rules
+ * whose remote is `dest`; any other rules already on the source group's policy
+ * (targeting other groups or external endpoints) are preserved untouched on
+ * save, so editing one cell never clobbers another. Inbound rules for the cell
+ * are kept and listed as not applied (design 32 D7): group policy compiles
+ * outbound only, and a node policy holding an inbound rule cannot be planned.
  */
 const props = withDefaults(
   defineProps<{
     open: boolean;
     source: MatrixGroup;
     dest: MatrixGroup;
-    direction: NetRuleDirection;
     /** Existing policy scoped to `source`, if one exists. */
     existing?: GroupPolicyView;
     saving?: boolean;
     canAdmin?: boolean;
+    /** Where inbound traffic is managed; no link when the firewall page is absent. */
+    firewallTo?: RouteLocationRaw | null;
   }>(),
-  { existing: undefined, saving: false, canAdmin: false },
+  { existing: undefined, saving: false, canAdmin: false, firewallTo: null },
 );
 
 const emit = defineEmits<{
@@ -59,29 +60,22 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-interface RuleDraft {
-  id?: string;
-  action: NetRuleAction;
-  direction: NetRuleDirection;
-  protocol: NetRuleProtocol;
-  ports: string;
-  comment: string;
-  disabled: boolean;
-}
-
 const meta = reactive({ enabled: true, priority: 0 });
-const drafts = ref<RuleDraft[]>([]);
+const drafts = ref<PolicyRuleDraft[]>([]);
 /** Rules on the source policy that target OTHER destinations. Preserved as-is. */
 const otherRules = ref<GroupNetRule[]>([]);
+/** Inbound rules for this cell: kept on save until removed, never applied. */
+const inboundRules = ref<GroupNetRule[]>([]);
+/** The cell held rules when opened, so saving with none left removes them. */
+const hadDestRules = ref(false);
 
 function isDestRule(r: GroupNetRule): boolean {
   return r.remote.kind === "group" && r.remote.group_id === props.dest.id;
 }
 
-function emptyDraft(): RuleDraft {
+function emptyDraft(): PolicyRuleDraft {
   return {
     action: "allow",
-    direction: props.direction,
     protocol: "tcp",
     ports: "",
     comment: "",
@@ -89,11 +83,10 @@ function emptyDraft(): RuleDraft {
   };
 }
 
-function ruleToDraft(r: GroupNetRule): RuleDraft {
+function ruleToDraft(r: GroupNetRule): PolicyRuleDraft {
   return {
     id: r.id,
     action: r.action,
-    direction: r.direction,
     protocol: r.protocol,
     ports: (r.ports ?? []).join(", "),
     comment: r.comment ?? "",
@@ -108,24 +101,16 @@ watch(
     if (!open) return;
     const rules = props.existing?.rules ?? [];
     otherRules.value = rules.filter((r) => !isDestRule(r));
-    const destDrafts = rules.filter(isDestRule).map(ruleToDraft);
-    drafts.value = destDrafts.length ? destDrafts : [emptyDraft()];
+    const destRules = rules.filter(isDestRule);
+    hadDestRules.value = destRules.length > 0;
+    inboundRules.value = destRules.filter((r) => r.direction === "ingress");
+    const outbound = destRules.filter((r) => r.direction !== "ingress").map(ruleToDraft);
+    drafts.value = outbound.length || inboundRules.value.length ? outbound : [emptyDraft()];
     meta.enabled = props.existing?.enabled ?? true;
     meta.priority = props.existing?.priority ?? 0;
   },
   { immediate: true },
 );
-
-function parsePorts(input: string): number[] {
-  const set = new Set<number>();
-  for (const piece of input.split(",")) {
-    const trimmed = piece.trim();
-    if (!trimmed) continue;
-    const value = Number(trimmed);
-    if (Number.isInteger(value) && value >= 1 && value <= 65535) set.add(value);
-  }
-  return [...set].sort((a, b) => a - b);
-}
 
 function addRule() {
   drafts.value.push(emptyDraft());
@@ -135,29 +120,29 @@ function removeRule(index: number) {
   drafts.value.splice(index, 1);
 }
 
-function draftError(d: RuleDraft): string | undefined {
-  if (d.protocol === "any" && parsePorts(d.ports).length > 0) {
-    return t("networking.policy.errAnyNoPorts");
-  }
-  return undefined;
+function removeInbound(key: string) {
+  inboundRules.value = inboundRules.value.filter((r) => r.id !== key);
+}
+
+const inboundLines = computed<InboundRuleLine[]>(() =>
+  inboundRules.value.map((r) => ({
+    key: r.id,
+    text: `${r.action} ${r.protocol}${r.ports?.length ? `:${r.ports.join(",")}` : ""} ${t("networking.policyPage.direction.ingress")} ${props.dest.name}`,
+  })),
+);
+
+function draftError(d: PolicyRuleDraft): PolicyRuleError | undefined {
+  const field = ruleFieldError(d);
+  if (!field) return undefined;
+  if (field.key === "errAnyNoPorts") return { text: t("networking.policy.errAnyNoPorts"), ports: true };
+  return { text: t(`networking.policy.${field.key}`, { token: field.token }), ports: true };
 }
 
 const errors = computed(() => drafts.value.map(draftError));
 const hasErrors = computed(() => errors.value.some((e) => e !== undefined));
-const canSubmit = computed(() => props.canAdmin && drafts.value.length > 0 && !hasErrors.value);
-
-function draftToRule(d: RuleDraft, index: number): GroupNetRule {
-  return {
-    id: d.id || `grule_${props.dest.id}_${index + 1}`,
-    action: d.action,
-    direction: d.direction,
-    protocol: d.protocol,
-    ports: d.protocol === "any" ? [] : parsePorts(d.ports),
-    remote: { kind: "group", group_id: props.dest.id },
-    ...(d.comment.trim() ? { comment: d.comment.trim() } : {}),
-    ...(d.disabled ? { disabled: true } : {}),
-  };
-}
+const canSubmit = computed(
+  () => props.canAdmin && (drafts.value.length > 0 || hadDestRules.value) && !hasErrors.value,
+);
 
 function onOpenChange(value: boolean) {
   emit("update:open", value);
@@ -165,11 +150,22 @@ function onOpenChange(value: boolean) {
 
 function submit() {
   if (!canSubmit.value) return;
-  const destRules = drafts.value.map(draftToRule);
+  const reserved = [...otherRules.value, ...inboundRules.value].map((r) => r.id);
+  const ids = assignRuleIds(drafts.value, reserved, `grule_${props.dest.id}`);
+  const destRules = drafts.value.map<GroupNetRule>((d, index) => ({
+    id: ids[index]!,
+    action: d.action,
+    direction: "egress",
+    protocol: d.protocol,
+    ports: draftPorts(d),
+    remote: { kind: "group", group_id: props.dest.id },
+    ...(d.comment.trim() ? { comment: d.comment.trim() } : {}),
+    ...(d.disabled ? { disabled: true } : {}),
+  }));
   emit("save", {
     id: props.existing?.id,
     scope_group_id: props.source.id,
-    rules: [...otherRules.value, ...destRules],
+    rules: [...otherRules.value, ...destRules, ...inboundRules.value],
     enabled: meta.enabled,
     priority: meta.priority,
   });
@@ -201,99 +197,18 @@ function submit() {
           </div>
         </div>
 
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <Label>{{ $t("networking.policy.rules") }}</Label>
-            <Button type="button" variant="outline" size="sm" :disabled="!canAdmin" @click="addRule">
-              <Plus class="size-4" aria-hidden="true" />
-              {{ $t("networking.policy.addRule") }}
-            </Button>
-          </div>
-
-          <p
-            v-if="drafts.length === 0"
-            class="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground"
-          >
-            {{ $t("networking.matrix.noCellRules") }}
-          </p>
-
-          <div
-            v-for="(rule, index) in drafts"
-            :key="index"
-            class="space-y-3 rounded-lg border border-border p-3"
-          >
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">
-                {{ $t("networking.policy.ruleLabel", { index: index + 1 }) }}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('networking.policy.removeRule')"
-                @click="removeRule(index)"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div class="grid gap-1.5">
-                <Label class="text-xs">{{ $t("networking.policy.action") }}</Label>
-                <Select v-model="rule.action">
-                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="allow">allow</SelectItem>
-                    <SelectItem value="deny">deny</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div class="grid gap-1.5">
-                <Label class="text-xs">{{ $t("networking.policy.direction") }}</Label>
-                <Select v-model="rule.direction">
-                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="egress">egress</SelectItem>
-                    <SelectItem value="ingress">ingress</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div class="grid gap-1.5">
-                <Label class="text-xs">{{ $t("networking.policy.protocol") }}</Label>
-                <Select v-model="rule.protocol">
-                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tcp">tcp</SelectItem>
-                    <SelectItem value="udp">udp</SelectItem>
-                    <SelectItem value="any">any</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="grid gap-1.5">
-                <Label class="text-xs">{{ $t("networking.policy.ports") }}</Label>
-                <Input
-                  v-model="rule.ports"
-                  :disabled="rule.protocol === 'any'"
-                  :placeholder="$t('networking.policy.portsPlaceholder')"
-                />
-              </div>
-              <div class="grid gap-1.5">
-                <Label class="text-xs">{{ $t("networking.policy.comment") }}</Label>
-                <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />
-              </div>
-            </div>
-
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="rule.disabled" type="checkbox" class="size-4 accent-primary" />
-              {{ $t("networking.policy.disabled") }}
-            </label>
-
-            <p v-if="errors[index]" class="text-xs text-destructive">{{ errors[index] }}</p>
-          </div>
-        </div>
+        <PolicyRulesEditor
+          :rules="drafts"
+          :errors="errors"
+          :inbound="inboundLines"
+          :firewall-to="firewallTo"
+          :empty-text="$t('networking.matrix.noCellRules')"
+          :can-edit="canAdmin"
+          id-prefix="cell"
+          @add="addRule"
+          @remove="removeRule"
+          @remove-inbound="removeInbound"
+        />
 
         <DialogFooter>
           <Button type="button" variant="outline" @click="onOpenChange(false)">

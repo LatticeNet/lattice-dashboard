@@ -1,36 +1,28 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { ArrowRight, Check, Circle, Contrast, Minus, X } from "lucide-vue-next";
-import type { MatrixCell, MatrixGroup, NetPolicyMatrix, NetRuleDirection } from "@/lib/api";
+import type { MatrixCell, MatrixGroup, NetPolicyMatrix } from "@/lib/api";
 import GroupChip from "./GroupChip.vue";
 import PolicyMatrixCell from "./PolicyMatrixCell.vue";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 /**
  * Reachability matrix: rows = source groups, columns = destination groups.
  * Each cell shows whether the source group is allowed to reach the destination
  * (see PolicyMatrixCell for the glyph legend). A trailing column rolls up each
  * source group's rules that target endpoints OUTSIDE any group (cidr / domain /
- * any / external node).
+ * any / external node). Outbound only: group policy compiles no inbound
+ * rules (design 32 D7), so the matrix offers no direction.
  */
 const props = withDefaults(
   defineProps<{
     matrix: NetPolicyMatrix;
-    direction: NetRuleDirection;
     canAdmin?: boolean;
   }>(),
   { canAdmin: false },
 );
 
 const emit = defineEmits<{
-  (e: "update:direction", value: NetRuleDirection): void;
   (e: "edit", source: MatrixGroup, dest: MatrixGroup): void;
 }>();
 
@@ -55,26 +47,13 @@ const externalMap = computed(() => {
 function externalFor(from: string): number {
   return externalMap.value.get(from) ?? 0;
 }
-
-function onDirection(value: unknown) {
-  if (value === "egress" || value === "ingress") emit("update:direction", value);
-}
 </script>
 
 <template>
   <div class="space-y-4">
     <!-- Controls + glyph legend -->
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-2">
-        <span class="text-sm text-muted-foreground">{{ $t("networking.matrix.direction") }}</span>
-        <Select :model-value="direction" @update:model-value="onDirection">
-          <SelectTrigger class="w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="egress">{{ $t("networking.matrix.egress") }}</SelectItem>
-            <SelectItem value="ingress">{{ $t("networking.matrix.ingress") }}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <span class="text-sm text-muted-foreground">{{ $t("networking.matrix.outboundOnly") }}</span>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span class="inline-flex items-center gap-1"><Check class="size-3.5 text-success-text" aria-hidden="true" /> {{ $t("networking.matrix.legendAllow") }}</span>
         <span class="inline-flex items-center gap-1"><X class="size-3.5 text-destructive" aria-hidden="true" /> {{ $t("networking.matrix.legendDeny") }}</span>
