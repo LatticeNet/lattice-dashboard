@@ -1106,18 +1106,26 @@ export function rovingStop(walk: readonly string[], preferred: readonly (string 
  * Where a key moves the keyboard along the walk: the next line on Down or
  * Right, the previous on Up or Left, the ends on Home and End, stopping at
  * either end. From a line outside the walk (a faded line the pointer opened)
- * any of them goes to the walk's first line. Undefined for any other key.
+ * an arrow goes to the nearest kept line that way in `order`, every line in
+ * the same order, else the walk's end on that side. Undefined for any other
+ * key.
  */
-export function rovingMove(walk: readonly string[], current: string, key: string): string | undefined {
+export function rovingMove(walk: readonly string[], current: string, key: string, order: readonly string[] = walk): string | undefined {
   if (walk.length === 0) return undefined;
   const i = walk.indexOf(current);
+  const kept = new Set(walk);
+  const from = order.indexOf(current);
+  const nearest = (step: 1 | -1): string | undefined => {
+    for (let j = from + step; from >= 0 && j >= 0 && j < order.length; j += step) if (kept.has(order[j]!)) return order[j];
+    return step === 1 ? walk[walk.length - 1] : walk[0];
+  };
   switch (key) {
     case "ArrowDown":
     case "ArrowRight":
-      return i < 0 ? walk[0] : walk[Math.min(walk.length - 1, i + 1)];
+      return i < 0 ? nearest(1) : walk[Math.min(walk.length - 1, i + 1)];
     case "ArrowUp":
     case "ArrowLeft":
-      return i < 0 ? walk[0] : walk[Math.max(0, i - 1)];
+      return i < 0 ? nearest(-1) : walk[Math.max(0, i - 1)];
     case "Home":
       return walk[0];
     case "End":

@@ -678,7 +678,12 @@ test("the arrow keys, Home and End move along the walk and stop at its ends; oth
   assert.equal(rovingMove(walk, "a", "ArrowUp"), "a", "no wrap before the first");
   assert.equal(rovingMove(walk, "b", "Home"), "a");
   assert.equal(rovingMove(walk, "a", "End"), "c");
-  assert.equal(rovingMove(walk, "x", "ArrowDown"), "a", "from a faded line the pointer opened, into the walk");
+  // From a faded line the pointer opened: the nearest kept line that way, in the order every line has.
+  const order = ["a", "f1", "b", "f2", "c"];
+  assert.equal(rovingMove(walk, "f2", "ArrowDown", order), "c");
+  assert.equal(rovingMove(walk, "f2", "ArrowUp", order), "b");
+  assert.equal(rovingMove(walk, "f1", "ArrowLeft", order), "a");
+  assert.equal(rovingMove(["a", "b"], "f2", "ArrowDown", order), "b", "nothing kept that way: the walk's end on that side");
   assert.equal(rovingMove(walk, "a", "Tab"), undefined);
   assert.equal(rovingMove(walk, "a", "Enter"), undefined);
   assert.equal(rovingMove([], "a", "ArrowDown"), undefined);

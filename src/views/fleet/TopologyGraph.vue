@@ -127,8 +127,10 @@ const hover = ref<Target | null>(null);
 const focusedEdge = ref<string | null>(null);
 /** The edge the keyboard was last on: Tab comes back to it (the roving stop). */
 const lastEdge = ref<string | null>(null);
-// A layer or window switch rebuilds everything under the pointer.
-watch(() => [props.model.layer, props.model.window], () => {
+// A layer or window switch rebuilds everything under the pointer. Two sources, not one getter
+// returning a new array, so a refresh of the same layer and window (the poll, a query, the
+// picker) keeps the ring, the card and the tab stop where the keyboard left them.
+watch([() => props.model.layer, () => props.model.window], () => {
   hover.value = null;
   focusedEdge.value = null;
   lastEdge.value = null;
@@ -249,15 +251,18 @@ async function onEdgeClick(le: LayoutEdge, fromKeyboard = false): Promise<void> 
     const hit = bundleCountry(le);
     if (!hit) return;
     toggleCountry(hit.row.country);
-    // The bundle's line goes away as its country opens: the keyboard lands on the country's row, not on the page.
+    // The bundle's line goes away as its country opens: the keyboard lands on the country's row, not on the page,
+    // and the lines' tab stop moves to the source's first line into that country, not back to the top.
     if (fromKeyboard) {
       await nextTick();
+      const into = keyed.value.find((x) => x.fromKey === le.fromKey && props.model.nodes.get(x.edge.to)?.country === hit.row.country);
+      if (into) lastEdge.value = into.key;
       host.value?.querySelector<HTMLElement>(`[data-country="${CSS.escape(hit.row.country)}"]`)?.focus();
     }
     return;
   }
   if (edge.kind === "path" && edge.pathKey) emit("openPath", edge.pathKey, edgeButton(le));
-  else if (edge.kind === "chain") emit("openNode", edge.from, null);
+  else if (edge.kind === "chain") emit("openNode", edge.from, edgeButton(le));
 }
 
 /** An address box opens the worst path into it: its card lists the others. */
@@ -496,6 +501,8 @@ function pathList(id: string): Pick<Card, "paths" | "more"> {
   return { paths: shown, more: Math.max(0, list.length - shown.length) };
 }
 
+/** The card is for the line the keyboard is on (not the pointer's). */
+const keyboardCard = computed(() => hover.value?.type === "edge" && hover.value.key === focusedEdge.value);
 const card = computed<Card | null>(() => {
   const h = hover.value;
   if (!h) return null;
@@ -607,7 +614,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
   }
   // A modified arrow is the browser's or the system's (Alt+Left goes back), never a move between edges.
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-  const next = rovingMove(walk.value, le.key, event.key);
+  const next = rovingMove(walk.value, le.key, event.key, keyed.value.map((x) => x.key));
   if (!next) return;
   event.preventDefault();
   host.value?.querySelector<SVGGElement>(`[data-edge-nav="${CSS.escape(next)}"]`)?.focus();
@@ -916,7 +923,11 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
           </ul>
           <p v-if="card.more" class="mt-0.5 text-muted-foreground">{{ $t('fleet.monitoring.topology.card.more', { n: card.more }) }}</p>
         </template>
-        <p v-if="card.hint" class="mt-2 border-t border-border pt-1.5 text-[11px] text-muted-foreground">{{ card.hint }}</p>
+        <p v-if="card.hint || keyboardCard" class="mt-2 border-t border-border pt-1.5 text-[11px] text-muted-foreground">
+          {{ card.hint }}
+          <!-- A line the keyboard is on says how to reach the others, which sit behind the arrow keys, not Tab. -->
+          <span v-if="keyboardCard" class="block">{{ $t('fleet.monitoring.network.graph.arrows') }}</span>
+        </p>
       </div>
   </div>
 </template>
