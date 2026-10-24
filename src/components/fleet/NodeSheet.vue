@@ -56,6 +56,7 @@ import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
+import NodeNetworkSummary from "@/components/fleet/NodeNetworkSummary.vue";
 import { Button } from "@/components/ui/button";
 
 const props = withDefaults(
@@ -247,6 +248,8 @@ const STATUS_TONE: Record<string, string> = {
           {{ $t('fleet.nodes.sheet.likelyUnpaid', { date: renewal.date }) }}
         </p>
       </section>
+      <!-- What applies to it on the network (design 32 D4), below the lead. -->
+      <NodeNetworkSummary :node-id="node.id" />
 
       <dl class="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">
         <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.sheet.tasks') }}</dt>

@@ -104,6 +104,7 @@ import CopyButton from "@/components/common/CopyButton.vue";
 import ShellText from "@/components/common/ShellText.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import NodeBeaconCard from "./NodeBeaconCard.vue";
+import NodeNetworkCard from "./NodeNetworkCard.vue";
 import NodePathsCard from "./NodePathsCard.vue";
 import NodeHistoryCard from "./NodeHistoryCard.vue";
 import { Button } from "@/components/ui/button";
@@ -1783,6 +1784,9 @@ async function saveDebug(): Promise<void> {
 
             <!-- Is the agent doing its work, or only beating (node-agent 0.3.10+). -->
             <AgentLoopPanel :health="node.loop_health" :now="loopNow.getTime()" />
+
+            <!-- What applies to it on the network (design 32 D4). -->
+            <NodeNetworkCard :node="node" />
 
             <!-- Addresses: what the agent reported. Discovery is in Settings. -->
             <Card>
