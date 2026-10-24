@@ -1142,6 +1142,7 @@ const DELETE_COUNT_FIELDS: { key: string; field: keyof NodeDeletePlanView }[] = 
   { key: "netPolicies", field: "net_policies" },
   { key: "netPeerRulesStripped", field: "net_peer_rules_stripped" },
   { key: "groupPolicyRulesStripped", field: "group_policy_rules_stripped" },
+  { key: "groupPolicyScopesStripped", field: "group_policy_scopes_stripped" },
   { key: "geoRoutingStripped", field: "geo_routing_stripped" },
   { key: "geoRoutingDeleted", field: "geo_routing_deleted" },
   { key: "agentUpdatePolicies", field: "agent_update_policies" },

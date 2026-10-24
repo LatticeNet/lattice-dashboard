@@ -357,6 +357,39 @@ export default {
     },
   },
 
+  // 共享的目标选择器（设计 32 D5）：节点、节点分组、整个机群和排除的节点。
+  selector: {
+    chosenLabel: "{field} 已选",
+    nothingChosen: "还没有选择",
+    wholeFleet: "整个机群",
+    wholeFleetInline: "整个机群",
+    except: "排除 {name}",
+    remove: "移除 {name}",
+    searchGroupsAndNodes: "搜索节点分组和节点",
+    searchNodes: "搜索节点",
+    groupsHeading: "节点分组",
+    groupNodes: "{n} 个节点 | {n} 个节点",
+    via: "来自 {groups}",
+    viaFleet: "来自整个机群",
+    leftOut: "已排除",
+    leaveOut: "排除",
+    leaveOutNode: "排除 {name}",
+    unseen: "不在你的节点列表里",
+    noMatch: "没有匹配的节点分组或节点。",
+    resolves: "解析为 0 个节点 | 解析为 {n} 个节点 | 解析为 {n} 个节点",
+    showNodes: "查看",
+    hideNodes: "收起",
+  },
+
+  // 设计 32 改名的页面在首次访问时显示的说明（RenameNote）。
+  renames: {
+    outboundPolicy: "网络策略已改名为出站策略。它管节点主动发起的连接，不管入站流量。",
+    nodeGroups: "分组已改名为节点分组，即检查和出站策略所针对的机群分组。",
+    inboundFirewall: "NetGuard 防火墙已改名为入站防火墙，位于网络分区。",
+    wireguardMesh: "WireGuard 网络已改名为 WireGuard 网状网络，位于网络分区。",
+    dismiss: "关闭",
+  },
+
   nav: {
     sections: {
       overview: "概览",
@@ -372,7 +405,7 @@ export default {
       overview: "概览",
       nodes: "节点",
       "node-detail": "节点详情",
-      groups: "分组",
+      groups: "节点分组",
       map: "地图",
       inventory: "资产",
       upcoming: "即将到期",
@@ -381,7 +414,10 @@ export default {
       tasks: "任务",
       terminal: "终端",
       audit: "审计",
-      "network-policy": "网络策略",
+      "network-outbound-policy": "出站策略",
+      // 控制台为官方插件页取的名字（navigationModel.OFFICIAL_PLUGIN_PAGES）。
+      "inbound-firewall": "入站防火墙",
+      "wireguard-mesh": "WireGuard 网状网络",
       "network-dns": "自建 DNS",
       "network-geo-routing": "地理路由",
       "network-ddns": "动态 DNS",
@@ -501,7 +537,7 @@ export default {
         tasks: "任务 作业 运行 失败 队列",
         terminal: "终端 命令行",
         audit: "审计 日志 历史 变更",
-        networkPolicy: "防火墙 规则 允许 拒绝",
+        networkPolicy: "网络策略 出站 防火墙 规则 允许 拒绝",
         sshGuard: "端口敲门 封禁 端口",
         publishing: "分享 订阅 链接 发布",
         notifications: "通知 告警 渠道",

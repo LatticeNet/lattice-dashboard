@@ -5,6 +5,7 @@
 
 /** The official plugins' ids, as their manifests declare them. */
 export const NETGUARD_PLUGIN_ID = "latticenet.netguard";
+export const WIREGUARD_PLUGIN_ID = "latticenet.wireguard";
 
 interface PluginPages {
   id: string;

@@ -11,6 +11,7 @@ import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
 import { legacyEvidenceQuery } from "@/views/platform/evidenceModel";
+import { legacyPolicyQuery } from "@/views/networking/outboundPolicyModel";
 import { landsOnSsoSecondFactor } from "@/views/auth/loginModel";
 import {
   PLUGIN_VIEW_ROUTE_NAME,
@@ -74,6 +75,18 @@ const manualChildRoutes: RouteRecordRaw[] = [
   {
     path: "platform/trace",
     redirect: (to) => ({ path: "/platform/evidence", query: legacyEvidenceQuery("trace", to.query) }),
+  },
+  {
+    // Design 32 D3 renamed Network Policy to Outbound policy and Groups to
+    // Node groups. Old links land on the new pages with their query; the
+    // policy page's layers moved, so an old layer is translated
+    // (outboundPolicyModel.legacyPolicyQuery).
+    path: "network/policy",
+    redirect: (to) => ({ path: "/network/outbound", query: legacyPolicyQuery(to.query), hash: to.hash }),
+  },
+  {
+    path: "groups",
+    redirect: (to) => ({ path: "/node-groups", query: to.query, hash: to.hash }),
   },
   {
     // KV and Static became one Store page with the kind in the query. Old

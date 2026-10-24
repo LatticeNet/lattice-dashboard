@@ -39,6 +39,8 @@ import type {
   GroupPolicyPlanResult,
   GroupPolicyUpsertRequest,
   GroupPolicyView,
+  GroupUsedByResponse,
+  NetPolicyConvertResult,
   GroupSelector,
   GroupUpsertRequest,
   GroupView,
@@ -674,6 +676,9 @@ export const api = {
     delete: (target_node_id: string) =>
       http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id }),
     plan: (node_id: string) => http.post<ApprovalView>("/api/netpolicy/plan", { node_id }),
+    /** Turn a node's manual policy into an outbound policy targeting it, with one reviewed plan. */
+    convert: (target_node_id: string, input: { name?: string; priority?: number } = {}) =>
+      http.post<NetPolicyConvertResult>("/api/netpolicy/convert", { target_node_id, ...input }),
     graph: (opts?: RequestOptions) =>
       http.get<NetPolicyGraph>("/api/netpolicy/graph", undefined, opts),
     matrix: (direction: "egress" | "ingress" = "egress", opts?: RequestOptions) =>
@@ -691,6 +696,9 @@ export const api = {
     preview: (selector: GroupSelector) =>
       http.post<{ node_ids: string[]; count: number }>("/api/groups/preview", selector),
     seed: () => http.post<{ created: number; skipped: number }>("/api/groups/seed", {}),
+    /** Every object that names the group, by the kinds this session may read. */
+    usedBy: (id: string, opts?: RequestOptions) =>
+      http.get<GroupUsedByResponse>("/api/groups/used-by", { id }, opts),
   },
 
   groupPolicy: {

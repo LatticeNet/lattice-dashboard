@@ -27,6 +27,7 @@ import { objectTitle } from "@/layout/useObjectTitle";
 import { resetRestoredView, restoredView, viewQueriesEqual, viewQuery } from "@/router/viewMemory";
 import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
+import { officialPageTitleKey } from "@/layout/navigationModel";
 import ThemeToggle from "./ThemeToggle.vue";
 import AppearanceMenu from "./AppearanceMenu.vue";
 import RecentErrors from "./RecentErrors.vue";
@@ -82,10 +83,14 @@ const pluginCtx = computed(() => {
 const title = computed(() => {
   const ctx = pluginCtx.value;
   if (ctx) {
+    // An official page the console names by what it does (design 32 D3),
+    // the same name the sidebar row shows.
+    const plugin = findPlugin(ctx.pluginId);
+    const titleKey = officialPageTitleKey(ctx.pluginId, ctx.viewRoute, plugin?.publisher);
     return resolvePluginBreadcrumb({
       pluginId: ctx.pluginId,
-      pluginDisplayName: findPlugin(ctx.pluginId)?.name,
-      viewTitle: findView(ctx.pluginId, ctx.viewRoute)?.title,
+      pluginDisplayName: plugin?.name,
+      viewTitle: titleKey ? t(`nav.items.${titleKey}`) : findView(ctx.pluginId, ctx.viewRoute)?.title,
       viewRoute: ctx.viewRoute,
     }).title;
   }

@@ -78,7 +78,11 @@ export const NAV: NavSection[] = [
     icon: Server,
     items: [
       { name: "nodes", title: "Nodes", path: "/nodes", icon: Server, scopes: ["node:read"] },
-      { name: "groups", title: "Groups", path: "/groups", icon: FolderTree, scopes: ["group:read"] },
+      // Node groups (design 32 D3): the fleet-wide targeting primitive that
+      // checks, outbound policy, security-group bindings and mesh membership
+      // point at, so it stays under Fleet and lists its users. Formerly
+      // Groups at /groups, which redirects here.
+      { name: "groups", title: "Node groups", path: "/node-groups", icon: FolderTree, scopes: ["group:read"] },
       { name: "map", title: "Map", path: "/map", icon: Globe, scopes: ["node:read"] },
       { name: "inventory", title: "Inventory", path: "/inventory", icon: Boxes, scopes: ["inventory:read"] },
       // What runs out, across machine renewals, VPN users, shares and TLS
@@ -112,11 +116,16 @@ export const NAV: NavSection[] = [
     id: "networking",
     title: "Networking",
     icon: Network,
+    // By layer (design 32 D3): the traffic filters first (Inbound firewall,
+    // Outbound policy, then the WireGuard mesh; the two plugin pages are
+    // placed around Outbound policy by navigationModel.OFFICIAL_PLUGIN_PAGES),
+    // then naming services, then access.
     items: [
-      { name: "network-policy", title: "Network Policy", path: "/network/policy", icon: Network, scopes: ["netpolicy:read"] },
+      // Formerly Network Policy at /network/policy, which redirects here.
+      { name: "network-outbound-policy", title: "Outbound policy", path: "/network/outbound", icon: Network, scopes: ["netpolicy:read"] },
       { name: "network-dns", title: "Self-host DNS", path: "/network/dns", icon: Globe2, scopes: ["dns:admin"] },
-      { name: "network-geo-routing", title: "Geo-Routing", path: "/network/geo-routing", icon: Route, scopes: ["geo:read", "geo:admin"] },
       { name: "network-ddns", title: "DDNS", path: "/network/ddns", icon: RefreshCw, scopes: ["ddns:admin"] },
+      { name: "network-geo-routing", title: "Geo-Routing", path: "/network/geo-routing", icon: Route, scopes: ["geo:read", "geo:admin"] },
       { name: "network-tunnels", title: "Tunnels", path: "/network/tunnels", icon: Cable, scopes: ["tunnel:admin"] },
       // Shrinking SSH exposure is a two-approval flow, so the page needs the
       // plan scope as well as the capability's own.

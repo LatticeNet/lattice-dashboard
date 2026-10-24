@@ -463,6 +463,7 @@ export interface NodeDeletePlanView {
   net_policies: number;
   net_peer_rules_stripped: number;
   group_policy_rules_stripped: number;
+  group_policy_scopes_stripped?: number;
   geo_routing_stripped: number;
   geo_routing_deleted: number;
   agent_update_policies: number;
@@ -2025,6 +2026,8 @@ export interface NetPolicyView {
   target_node_name?: string;
   rules: NetRule[];
   enabled: boolean;
+  /** Built from outbound policies by the group plan rather than authored on its own. */
+  group_derived?: boolean;
   last_plan_sha?: string;
   last_applied_at?: string;
   last_error?: string;
@@ -2108,9 +2111,26 @@ export interface GroupNetRule {
   disabled?: boolean;
 }
 
+/**
+ * A target selector (design 32 D5, lattice-sdk model.TargetSelector): explicit
+ * nodes, node groups, the whole fleet, and nodes to leave out. Stored as
+ * written, resolved by the server when used.
+ */
+export interface TargetSelector {
+  nodes?: string[];
+  groups?: string[];
+  all?: boolean;
+  exclude?: string[];
+}
+
 export interface GroupNetPolicy {
   id: string;
+  /** The operator's label; a policy without one is named by its target. */
+  name?: string;
+  /** Older form of the target, kept as an alias: read as {groups: [scope_group_id]}. */
   scope_group_id: string;
+  /** The target, when the policy was written with a selector. */
+  scope?: TargetSelector;
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
@@ -2121,14 +2141,52 @@ export interface GroupNetPolicy {
 export interface GroupPolicyView extends GroupNetPolicy {
   scope_group_name?: string;
   group_rule_count: number;
+  /** The effective target: the stored scope, or the one-group selector scope_group_id stands for. */
+  target: TargetSelector;
+  /** The target resolved now, limited to nodes this session may read. */
+  target_node_ids: string[];
+  /** The name, or a description of the target. */
+  label: string;
+  /** For a session confined to some nodes: named or excluded nodes left out of target, scope and label. */
+  hidden_target_nodes?: number;
 }
 
+/**
+ * An outbound policy write. Send `scope`; `scope_group_id` alone is the older
+ * form for a one-group target and must agree with `scope` when both are sent.
+ */
 export interface GroupPolicyUpsertRequest {
   id?: string;
-  scope_group_id: string;
+  name?: string;
+  scope?: TargetSelector;
+  scope_group_id?: string;
   rules: GroupNetRule[];
   enabled: boolean;
   priority: number;
+}
+
+export interface NetPolicyConvertResult {
+  group_policy: GroupPolicyView;
+  /** The reviewed plan; null when the converted policy is disabled. */
+  approval: ApprovalView | null;
+}
+
+/** One object that names a node group (GET /api/groups/used-by). */
+export type GroupUseKind = "outbound_policy" | "check" | "security_group_binding" | "mesh_rule";
+
+export interface GroupUse {
+  kind: GroupUseKind;
+  id: string;
+  label: string;
+  /** "target": the group is what the object applies to; "remote": a rule points at it. */
+  role: string;
+}
+
+export interface GroupUsedByResponse {
+  group_id: string;
+  used_by: GroupUse[];
+  /** Uses of kinds this session cannot read. */
+  hidden: number;
 }
 
 export interface GroupPolicyPlanResult {

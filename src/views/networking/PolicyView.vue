@@ -1,29 +1,33 @@
 <script setup lang="ts">
 /**
- * Network Policy (design 23, section 4.4): who reaches whom, and what each
- * node enforces.
+ * Outbound policy (design 32 D3; design 23, section 4.4): which outbound
+ * connections each node may open. Inbound traffic is the Inbound firewall
+ * (NetGuard); the header says so and links there.
  *
- * Two layers on `?view=`. Overview is the group matrix, the page's one
- * picture: a cell click writes the rule for that pair. Policies is the
- * per-node collection; a row opens the node's policy in the sheet on
- * `?open=<node id>`, and the sheet lists the node-to-node edges the server
- * draws for it, when there are any. The old Graph tab is gone: 34 spokes
- * and no edges said nothing, and names cut to 8 characters made all 13
- * `[Metix]-` nodes read the same. An old `?tab=` link lands on its layer.
+ * Three layers on `?view=` (outboundPolicyModel): policies, the default, is
+ * every outbound policy and what it targets, one node, several nodes, node
+ * groups or the whole fleet, chosen with the shared selector; a row opens
+ * the policy in a sheet on `?policy=<id>`. Nodes is what each node's
+ * document holds: built from outbound policies by the plan, or a manual one
+ * from before selectors, which converts into an outbound policy in one
+ * reviewed plan; a row opens the node on `?open=<node id>`, and the sheet
+ * lists the node-to-node edges the server draws for it. Matrix is the
+ * group-pair view of the policies that target node groups: a cell click
+ * writes the rule for that pair. Old /network/policy links redirect here
+ * with their layer translated.
  *
  * Outbound only (design 32 D3 and D7): the policy compiles outbound rules
- * into lattice_policy, so neither the form nor the matrix offers a direction,
- * and inbound rules a policy still holds are listed as not applied, with a
- * link to the NetGuard firewall that owns inbound traffic.
- * Deleting a policy leaves its ruleset on the node (design 23, section 3.8,
- * "leaves config on a node"): the confirm names the node and what keeps
- * running, and asks for the node's name.
+ * into lattice_policy, so neither form offers a direction, and inbound rules
+ * a policy still holds are listed as not applied, with a link to the
+ * firewall that owns inbound traffic. Deleting a node's document leaves its
+ * ruleset on the node (design 23, section 3.8, "leaves config on a node"):
+ * the confirm names the node and what keeps running, and asks for its name.
  */
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { toast } from "@/lib/toast";
-import { AlertTriangle, FolderTree, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import { AlertTriangle, ArrowRightLeft, FolderTree, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import {
   api,
   unwrap,
@@ -31,6 +35,7 @@ import {
   type GroupPolicyPlanResult,
   type GroupPolicyUpsertRequest,
   type GroupPolicyView,
+  type GroupView,
   type MatrixGroup,
   type NetEndpointKind,
   type NetPolicyMatrix,
@@ -52,6 +57,8 @@ import { approvalTitleMessage } from "@/lib/approvalKind";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 import { NETGUARD_PLUGIN_ID, pluginPagePath } from "@/views/platform/pluginsModel";
+import { OUTBOUND_LAYERS, POLICY_PARAM, isNodeRestricted, outboundLock, type OutboundLayer } from "@/views/networking/outboundPolicyModel";
+import { selectorParts } from "@/components/selector/selectorModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
@@ -86,6 +93,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import PolicyMatrix from "@/components/networking/PolicyMatrix.vue";
+import OutboundPolicyDialog from "@/components/networking/OutboundPolicyDialog.vue";
+import GroupChip from "@/components/networking/GroupChip.vue";
+import RenameNote from "@/components/common/RenameNote.vue";
 import PolicyCellEditor from "@/components/networking/PolicyCellEditor.vue";
 import PolicyRulesEditor, { type InboundRuleLine, type PolicyRuleError } from "@/components/networking/PolicyRulesEditor.vue";
 import { assignRuleIds, draftPorts, ruleFieldError, type PolicyRuleDraft, type RuleFieldError } from "@/views/networking/policyRuleModel";
@@ -104,10 +114,11 @@ const router = useRouter();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("netpolicy:read"));
 const canAdmin = computed(() => auth.can("netpolicy:admin"));
+/** A session confined to some nodes may target only nodes it administers (design 32 D1 rule). */
+const restricted = computed(() => isNodeRestricted(auth.serverAllowlist));
 
-const LAYERS = ["overview", "policies"] as const;
-type Layer = (typeof LAYERS)[number];
-const layer = useLayer<Layer>(() => LAYERS, () => "overview");
+type Layer = OutboundLayer;
+const layer = useLayer<Layer>(() => OUTBOUND_LAYERS, () => "policies");
 
 const policiesQuery = useAsyncData((signal) => api.netpolicy.list({ signal }).then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
@@ -116,6 +127,9 @@ const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) 
   pollInterval: 0,
 });
 const graphQuery = useAsyncData((signal) => api.netpolicy.graph({ signal }), { immediate: false });
+/** Node groups with their members, for the target selector and the target chips. */
+const nodeGroupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: 0 });
+const nodeGroups = computed<GroupView[]>(() => nodeGroupsQuery.data.value?.groups ?? []);
 
 const policies = computed(() => policiesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -142,7 +156,7 @@ function refreshMatrix() {
 }
 
 function goToGroups() {
-  router.push("/groups");
+  router.push({ name: "groups" });
 }
 
 // ── Group-policy cell editor (source group to dest group) ──────────────────
@@ -157,8 +171,29 @@ const cellSourcePolicy = computed<GroupPolicyView | undefined>(() =>
     : undefined,
 );
 
+/**
+ * Other policies that reach the source group's nodes, by naming the group,
+ * by naming its nodes or by covering the whole fleet, and that hold rules
+ * toward the destination group. The cell edits only the source group's own
+ * policy, so removing its rule may leave the path open through one of these.
+ */
+const cellAlsoFrom = computed<string[]>(() => {
+  const source = cellSource.value;
+  const dest = cellDest.value;
+  if (!source || !dest) return [];
+  const members = new Set(nodeGroups.value.find((g) => g.id === source.id)?.resolved_members ?? []);
+  return groupPolicies.value
+    .filter((p) => p.id !== cellSourcePolicy.value?.id)
+    .filter((p) => (p.target?.groups ?? []).includes(source.id) || p.target_node_ids.some((id) => members.has(id)))
+    .filter((p) => p.rules.some((r) => r.remote.kind === "group" && r.remote.group_id === dest.id))
+    .map((p) => policyTitle(p));
+});
+
+/** A cell writes a group-targeted policy, which a token confined to some nodes may not. */
+const canEditCells = computed(() => canAdmin.value && !restricted.value);
+
 function openCellEditor(source: MatrixGroup, dest: MatrixGroup) {
-  if (!canAdmin.value) return;
+  if (!canEditCells.value) return;
   cellSource.value = source;
   cellDest.value = dest;
   cellEditorOpen.value = true;
@@ -230,6 +265,197 @@ function openPlanApprovals() {
   router.push("/approvals");
 }
 
+// ── Outbound policies (the default layer) ─────────────────────────────────
+const policySheet = useRouteOpen(POLICY_PARAM);
+
+const sortedGroupPolicies = computed(() =>
+  [...groupPolicies.value].sort((a, b) => a.priority - b.priority || policyTitle(a).localeCompare(policyTitle(b))),
+);
+
+function targetParts(p: GroupPolicyView) {
+  return selectorParts(p.target ?? {}, nodes.value, nodeGroups.value);
+}
+
+/** The target in words, for search and for the sheet subtitle. */
+function targetText(p: GroupPolicyView): string {
+  return targetParts(p)
+    .map((part) =>
+      part.kind === "fleet" ? t("selector.wholeFleetInline") : part.kind === "exclude" ? t("selector.except", { name: part.name }) : part.name,
+    )
+    .join(", ");
+}
+
+/**
+ * The policy's name, or its target in names. The server's label describes an
+ * unnamed target by node id, which is what it can say to every reader; the
+ * page has the node list, so it says the names.
+ */
+function policyTitle(p: GroupPolicyView): string {
+  const name = p.name?.trim();
+  if (name) return name;
+  const target = targetText(p);
+  return target ? t("networking.outbound.targeting", { target }) : p.label || p.id;
+}
+
+function groupColorOf(id: string): string | undefined {
+  return nodeGroups.value.find((g) => g.id === id)?.color ?? matrixGroups.value.find((g) => g.id === id)?.color;
+}
+
+function activeGroupRuleCount(p: GroupPolicyView): number {
+  return p.rules.filter((r) => !r.disabled && r.direction !== "ingress").length;
+}
+
+const outboundColumns = computed<DataTableColumn<GroupPolicyView>[]>(() => [
+  { key: "label", label: t("networking.outbound.colPolicy"), sortable: true, searchable: true, value: (p) => policyTitle(p) },
+  { key: "target", label: t("networking.outbound.colTarget"), searchable: true, value: (p) => targetText(p) },
+  { key: "reach", label: t("networking.outbound.colReach"), align: "right", sortable: true, value: (p) => p.target_node_ids?.length ?? 0 },
+  { key: "rules", label: t("networking.policy.colRules"), align: "right", sortable: true, value: (p) => activeGroupRuleCount(p) },
+  { key: "priority", label: t("networking.matrix.priority"), align: "right", sortable: true, value: (p) => p.priority },
+  { key: "state", label: t("networking.policyPage.colState"), sortable: true, value: (p) => (p.enabled ? 0 : 1) },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
+]);
+
+const openOutbound = computed(() => groupPolicies.value.find((p) => p.id === policySheet.openId.value));
+/** What a confined session may not do to the open policy, and why; it stays readable. */
+const openOutboundLock = computed(() => (openOutbound.value ? outboundLock(openOutbound.value, restricted.value) : {}));
+const outboundSheetState = computed(() => {
+  if (!policySheet.openId.value) return "ready" as const;
+  if (openOutbound.value) return groupPoliciesQuery.error.value ? ("stale" as const) : ("ready" as const);
+  if (groupPoliciesQuery.data.value === undefined) return groupPoliciesQuery.error.value ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
+});
+
+const outboundDialogOpen = ref(false);
+const outboundEditing = ref<GroupPolicyView | undefined>(undefined);
+const savingOutbound = ref(false);
+
+function openOutboundCreate(): void {
+  outboundEditing.value = undefined;
+  outboundDialogOpen.value = true;
+}
+
+function openOutboundEdit(p: GroupPolicyView): void {
+  outboundEditing.value = p;
+  outboundDialogOpen.value = true;
+}
+
+async function saveOutbound(payload: GroupPolicyUpsertRequest): Promise<void> {
+  savingOutbound.value = true;
+  try {
+    const saved = await api.groupPolicy.upsert(payload);
+    toast.success(payload.id ? t("networking.outbound.toastUpdated") : t("networking.outbound.toastCreated"));
+    outboundDialogOpen.value = false;
+    // Read the list before opening the new policy, or its sheet flashes "gone".
+    await Promise.all([groupPoliciesQuery.refresh(), matrixQuery.refresh()]);
+    if (!payload.id) policySheet.open(saved.id);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.outbound.toastSaveFailed"));
+  } finally {
+    savingOutbound.value = false;
+  }
+}
+
+const outboundDeleteTarget = ref<GroupPolicyView | undefined>(undefined);
+const deletingOutbound = ref(false);
+
+async function confirmOutboundDelete(): Promise<void> {
+  const target = outboundDeleteTarget.value;
+  if (!target) return;
+  deletingOutbound.value = true;
+  try {
+    await api.groupPolicy.delete(target.id);
+    toast.success(t("networking.outbound.toastDeleted"));
+    outboundDeleteTarget.value = undefined;
+    if (policySheet.openId.value === target.id) policySheet.close();
+    refreshMatrix();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.outbound.toastDeleteFailed"));
+  } finally {
+    deletingOutbound.value = false;
+  }
+}
+
+function outboundMenu(p: GroupPolicyView): RowMenuItem[] {
+  const lock = outboundLock(p, restricted.value);
+  const reason = t("networking.outbound.locked.menu");
+  return [
+    {
+      key: "edit",
+      label: t("common.actions.edit"),
+      icon: Pencil,
+      hidden: !canAdmin.value,
+      disabled: !!lock.edit,
+      reason,
+      run: () => openOutboundEdit(p),
+    },
+    {
+      key: "delete",
+      label: t("common.actions.delete"),
+      icon: Trash2,
+      danger: true,
+      hidden: !canAdmin.value,
+      disabled: !!lock.remove,
+      reason,
+      run: () => (outboundDeleteTarget.value = p),
+    },
+  ];
+}
+
+// ── Convert a manual node policy (design 32 D3) ───────────────────────────
+const convertTarget = ref<NetPolicyView | undefined>(undefined);
+const convertName = ref("");
+const convertPriority = ref(0);
+const converting = ref(false);
+/** Why the server refused the last convert; kept in the dialog, where the operator decides what to change. */
+const convertError = ref("");
+
+/** Outbound policies that already reach the node, which merge into it once it converts. */
+const convertMerges = computed(() => {
+  const node = convertTarget.value?.target_node_id;
+  if (!node) return [];
+  return groupPolicies.value.filter((p) => p.enabled && (p.target_node_ids ?? []).includes(node));
+});
+
+function openConvert(p: NetPolicyView): void {
+  convertTarget.value = p;
+  convertName.value = t("networking.outbound.convertDefaultName", { node: policyNodeLabel(p) });
+  convertPriority.value = 0;
+  convertError.value = "";
+}
+
+async function confirmConvert(): Promise<void> {
+  const target = convertTarget.value;
+  if (!target) return;
+  converting.value = true;
+  convertError.value = "";
+  try {
+    const result = await api.netpolicy.convert(target.target_node_id, { name: convertName.value.trim() || undefined, priority: Math.trunc(convertPriority.value || 0) });
+    convertTarget.value = undefined;
+    toast.success(t("networking.outbound.toastConverted", { node: policyNodeLabel(target) }));
+    // Read the lists before opening the new policy, or its sheet flashes "gone".
+    await Promise.all([groupPoliciesQuery.refresh(), policiesQuery.refresh(), matrixQuery.refresh()]);
+    owned.push({ ...owned.query(), view: undefined, open: undefined, [POLICY_PARAM]: result.group_policy.id });
+    if (result.approval) await showPlan(result.approval);
+  } catch (error) {
+    convertError.value = error instanceof Error ? error.message : t("networking.outbound.toastConvertFailed");
+  } finally {
+    converting.value = false;
+  }
+}
+
+/**
+ * Show a plan the server already created. The digest is a separate step: a
+ * failure to compute it must not read as a failure of what made the plan.
+ */
+async function showPlan(approval: ApprovalView): Promise<void> {
+  planApproval.value = approval;
+  try {
+    planSha.value = await planDigest.digestFor(approval);
+  } catch {
+    planSha.value = "";
+  }
+}
+
 const sortedPolicies = computed(() =>
   [...policies.value].sort((a, b) =>
     (a.target_node_name || a.target_node_id).localeCompare(b.target_node_name || b.target_node_id),
@@ -268,6 +494,7 @@ const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
     searchable: true,
     value: (p) => policyNodeLabel(p),
   },
+  { key: "source", label: t("networking.outbound.colSource"), sortable: true, value: (p) => (p.group_derived ? 1 : 0) },
   { key: "state", label: t("networking.policyPage.colState"), sortable: true, value: (p) => policyStateOrder(p) },
   { key: "rules", label: t("networking.policy.colRules"), align: "right", sortable: true, value: (p) => p.rules.length },
   { key: "last_applied", label: t("networking.policy.colLastApplied"), sortable: true, value: (p) => (hasRealTime(p.last_applied_at) ? p.last_applied_at : "") },
@@ -343,14 +570,13 @@ const proof = useProof(policiesQuery);
 
 const proofSegments = computed<ProofSegment[]>(() => {
   const parts: ProofSegment[] = [];
-  if (matrixQuery.data.value !== undefined) {
-    parts.push({ key: "groups", text: t("networking.policyPage.proof.groups", { n: matrixGroups.value.length }, matrixGroups.value.length) });
-  }
   if (groupPoliciesQuery.data.value !== undefined) {
-    parts.push({ key: "group-policies", text: t("networking.policyPage.proof.groupPolicies", { n: groupPolicies.value.length }, groupPolicies.value.length) });
+    parts.push({ key: "outbound", text: t("networking.outbound.proof.policies", { n: groupPolicies.value.length }, groupPolicies.value.length), to: { query: {} } });
   }
   const n = policies.value.length;
-  parts.push({ key: "policies", text: t("networking.policyPage.proof.nodePolicies", { n }, n), to: { query: { view: "policies" } } });
+  parts.push({ key: "policies", text: t("networking.outbound.proof.nodes", { n }, n), to: { query: { view: "nodes" } } });
+  const manual = policies.value.filter((p) => !p.group_derived).length;
+  if (manual) parts.push({ key: "manual", text: t("networking.outbound.proof.manual", { n: manual }, manual), to: { query: { view: "nodes" } } });
   const c = counts.value;
   if (c.applied) parts.push({ key: "applied", text: t("networking.policyPage.proof.applied", { n: c.applied }) });
   if (c.unapplied) parts.push({ key: "unapplied", text: t("networking.policyPage.proof.unapplied", { n: c.unapplied }), tone: "warning" });
@@ -364,6 +590,7 @@ function refreshAll(): void {
   void matrixQuery.refresh();
   void groupPoliciesQuery.refresh();
   void nodesQuery.refresh();
+  void nodeGroupsQuery.refresh();
   if (graphQuery.data.value !== undefined || graphQuery.error.value) void graphQuery.refresh();
 }
 
@@ -378,11 +605,11 @@ const owned = useOwnedRoute();
  * and the second would drop the first's key.
  */
 function openPolicy(p: NetPolicyView): void {
-  if (layer.value === "policies") {
+  if (layer.value === "nodes") {
     sheet.open(p.target_node_id);
     return;
   }
-  owned.push({ ...owned.query(), view: "policies", open: p.target_node_id });
+  owned.push({ ...owned.query(), view: "nodes", open: p.target_node_id, [POLICY_PARAM]: undefined });
 }
 
 function firstLine(text: string): string {
@@ -410,7 +637,7 @@ const attention = computed<AttentionItem[]>(() => {
         tone: "warning",
         claim: t("networking.policyPage.attention.blockedClaim", { node: policyNodeLabel(p) }),
         proof: t("networking.policyPage.attention.blockedProof"),
-        action: { label: t("common.actions.edit"), run: () => openEdit(p) },
+        action: p.group_derived ? action : { label: t("common.actions.edit"), run: () => openEdit(p) },
       });
     } else if (state === "unapplied") {
       items.push({
@@ -432,12 +659,17 @@ const attention = computed<AttentionItem[]>(() => {
 /* ------------------------------------------------------------------ */
 
 const layerTabs = computed<LayerTab<Layer>[]>(() => [
-  { value: "overview", label: t("networking.policyPage.layers.overview") },
   {
     value: "policies",
-    label: t("networking.policyPage.layers.policies"),
+    label: t("networking.outbound.layers.policies"),
+    count: groupPoliciesQuery.data.value !== undefined ? groupPolicies.value.length : undefined,
+  },
+  {
+    value: "nodes",
+    label: t("networking.outbound.layers.nodes"),
     count: policiesQuery.data.value !== undefined ? policies.value.length : undefined,
   },
+  { value: "matrix", label: t("networking.outbound.layers.matrix") },
 ]);
 
 /** NetGuard writes nftables too; the overview names it and links to its page. */
@@ -454,6 +686,13 @@ const netguardTo = computed(() => {
 /* ------------------------------------------------------------------ */
 
 const openPolicyRow = computed(() => policies.value.find((p) => p.target_node_id === sheet.openId.value));
+
+/** The enabled outbound policies that reach the open node, in the order they merge. */
+const openNodeSources = computed(() => {
+  const node = sheet.openId.value;
+  if (!node) return [];
+  return sortedGroupPolicies.value.filter((p) => p.enabled && (p.target_node_ids ?? []).includes(node));
+});
 
 const sheetState = computed(() => {
   if (!sheet.openId.value) return "ready" as const;
@@ -513,21 +752,33 @@ function remoteText(rule: NetRule): string {
 }
 
 function groupName(id: string): string {
-  return matrixGroups.value.find((g) => g.id === id)?.name ?? id;
+  return nodeGroups.value.find((g) => g.id === id)?.name ?? matrixGroups.value.find((g) => g.id === id)?.name ?? id;
 }
 
+/**
+ * A manual document plans, edits and converts on its own; a document built
+ * from outbound policies changes through those policies and their plan, so
+ * it offers neither edit nor a plan of its own.
+ */
 function menuFor(p: NetPolicyView): RowMenuItem[] {
   return [
     {
       key: "plan",
       label: t("networking.shared.plan"),
       icon: Play,
-      hidden: !canAdmin.value,
+      hidden: !canAdmin.value || !!p.group_derived,
       disabled: planning.value === p.target_node_id || holdsInbound(p),
       reason: holdsInbound(p) ? t("networking.policyPage.planBlocked") : undefined,
       run: () => void plan(p),
     },
-    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(p) },
+    {
+      key: "convert",
+      label: t("networking.outbound.convert"),
+      icon: ArrowRightLeft,
+      hidden: !canAdmin.value || !!p.group_derived,
+      run: () => openConvert(p),
+    },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value || !!p.group_derived, run: () => openEdit(p) },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = p) },
   ];
 }
@@ -625,16 +876,6 @@ function snapshotForm(): string {
 const isDirty = computed(() => dialogOpen.value && snapshotForm() !== formSnapshot.value);
 // Confirm dialog shown when the operator tries to discard unsaved edits.
 const discardConfirmOpen = ref(false);
-
-function openCreate() {
-  editingId.value = undefined;
-  form.target_node_id = "";
-  form.enabled = true;
-  form.rules = [emptyRule()];
-  form.inbound = [];
-  formSnapshot.value = snapshotForm();
-  dialogOpen.value = true;
-}
 
 function openEdit(p: NetPolicyView) {
   editingId.value = p.target_node_id;
@@ -804,9 +1045,16 @@ function closePlan(open: boolean) {
 
 <template>
   <div class="space-y-5 p-4 sm:p-6">
-    <PageHeader :title="$t('networking.policy.title')">
+    <PageHeader :title="$t('nav.items.network-outbound-policy')">
       <template #description>
-        <p class="text-sm text-muted-foreground">{{ $t('networking.policyPage.description') }}</p>
+        <p class="text-sm text-muted-foreground">
+          {{ $t('networking.outbound.description') }}
+          <template v-if="netguardTo">
+            {{ $t('networking.outbound.inboundOwner') }}
+            <RouterLink :to="netguardTo" class="whitespace-nowrap text-primary underline-offset-4 hover:underline">{{ $t('networking.outbound.openInbound') }}</RouterLink>
+          </template>
+          <template v-else>{{ $t('networking.outbound.inboundOwnerNoPlugin') }}</template>
+        </p>
         <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
@@ -815,7 +1063,7 @@ function closePlan(open: boolean) {
           {{ $t('common.actions.refresh') }}
         </Button>
         <Button
-          v-if="layer === 'overview' && canAdmin && hasGroupPolicies"
+          v-if="layer !== 'nodes' && canAdmin && hasGroupPolicies"
           variant="outline"
           size="sm"
           :disabled="planningGroups"
@@ -823,25 +1071,102 @@ function closePlan(open: boolean) {
         >
           <RefreshCw v-if="planningGroups" class="size-4 animate-spin" aria-hidden="true" />
           <Play v-else class="size-4" aria-hidden="true" />
-          {{ $t('networking.policyPage.planGroups') }}
+          {{ $t('networking.outbound.planAll') }}
         </Button>
-        <Button v-else-if="layer === 'policies' && canAdmin && policies.length > 0" size="sm" @click="openCreate">
+        <Button v-if="layer === 'policies' && canAdmin" size="sm" @click="openOutboundCreate">
           <Plus class="size-4" aria-hidden="true" />
-          {{ $t('networking.policyPage.newNodePolicy') }}
+          {{ $t('networking.outbound.newPolicy') }}
         </Button>
       </template>
     </PageHeader>
 
-    <LayerTabs v-model="layer" :tabs="layerTabs" :label="$t('networking.policyPage.layersLabel')" />
+    <RenameNote id="outboundPolicy" />
+
+    <LayerTabs v-model="layer" :tabs="layerTabs" :label="$t('networking.outbound.layersLabel')" />
 
     <AttentionList :items="attention" />
 
-    <!-- Overview: the group matrix is the picture; a cell click writes the rule for that pair. -->
-    <section v-if="layer === 'overview'" class="space-y-3" aria-labelledby="policy-matrix-heading">
+    <!-- Policies: every outbound policy and what it targets; a row opens it in the sheet. -->
+    <DataTable
+      v-if="layer === 'policies'"
+      state-key="outbound"
+      :columns="outboundColumns"
+      :rows="sortedGroupPolicies"
+      :row-key="(p) => p.id"
+      :loading="groupPoliciesQuery.loading.value"
+      :error="groupPoliciesQuery.error.value"
+      :has-data="groupPoliciesQuery.data.value !== undefined"
+      searchable
+      :expression-filter="false"
+      :search-placeholder="$t('networking.outbound.searchPlaceholder')"
+      :row-click="(p, el) => policySheet.open(p.id, el)"
+      :active-row-id="policySheet.openId.value"
+      :show-summary="false"
+      :empty-title="$t('networking.outbound.emptyTitle')"
+      :empty-description="$t('networking.outbound.emptyDescription')"
+      :no-match-title="$t('networking.shared.noMatchTitle')"
+      :no-match-description="$t('networking.shared.noMatchDescription')"
+      @retry="refreshAll"
+    >
+      <template #no-match>
+        <EmptyState :title="$t('networking.shared.noMatchTitle')" :description="$t('networking.shared.noMatchDescription')" />
+      </template>
+      <template #empty>
+        <EmptyState :title="$t('networking.outbound.emptyTitle')" :description="$t('networking.outbound.emptyDescription')">
+          <Button v-if="canAdmin" size="sm" type="button" @click="openOutboundCreate">
+            <Plus aria-hidden="true" />
+            {{ $t('networking.outbound.newPolicy') }}
+          </Button>
+        </EmptyState>
+      </template>
+      <template #cell-label="{ row: p }">
+        <span :class="cn('font-medium', !p.name && 'text-muted-foreground')">{{ policyTitle(p) }}</span>
+      </template>
+      <template #cell-target="{ row: p }">
+        <span class="flex max-w-md flex-wrap items-center gap-1">
+          <template v-for="part in targetParts(p).slice(0, 4)" :key="`${part.kind}:${'id' in part ? part.id : ''}`">
+            <GroupChip v-if="part.kind === 'group'" :name="part.name" :color="groupColorOf(part.id)" pill />
+            <span v-else :class="cn('rounded-full border px-2 py-0.5 text-xs', part.kind === 'exclude' ? 'border-dashed text-muted-foreground' : 'border-border')">
+              {{ part.kind === 'fleet' ? $t('selector.wholeFleet') : part.kind === 'exclude' ? $t('selector.except', { name: part.name }) : part.name }}
+            </span>
+          </template>
+          <span v-if="targetParts(p).length > 4" class="text-xs text-muted-foreground">+{{ targetParts(p).length - 4 }}</span>
+        </span>
+      </template>
+      <template #cell-reach="{ row: p }">
+        <span :class="cn('whitespace-nowrap text-xs tabular-nums', (p.target_node_ids?.length ?? 0) === 0 && 'text-warning-text')">
+          {{ $t('networking.outbound.reach', { n: p.target_node_ids?.length ?? 0 }, p.target_node_ids?.length ?? 0) }}
+        </span>
+      </template>
+      <template #cell-rules="{ row: p }">
+        <span class="font-mono text-xs tabular-nums">{{ activeGroupRuleCount(p) }}</span>
+      </template>
+      <template #cell-priority="{ row: p }">
+        <span class="font-mono text-xs tabular-nums">{{ p.priority }}</span>
+      </template>
+      <template #cell-state="{ row: p }">
+        <span :class="cn('whitespace-nowrap text-xs', p.enabled ? 'text-foreground' : 'text-muted-foreground')">
+          {{ p.enabled ? $t('networking.outbound.enabled') : $t('networking.policyPage.state.disabled') }}
+        </span>
+      </template>
+      <template #cell-actions="{ row: p }">
+        <RowMenu v-if="canAdmin" :name="policyTitle(p)" :items="outboundMenu(p)" />
+      </template>
+    </DataTable>
+
+    <!-- Matrix: the group-pair view of the policies that target node groups; a cell click writes the rule for that pair. -->
+    <section v-else-if="layer === 'matrix'" class="space-y-3" aria-labelledby="policy-matrix-heading">
       <div class="space-y-0.5">
         <h2 id="policy-matrix-heading" class="text-sm font-medium">{{ $t('networking.matrix.title') }}</h2>
         <p class="text-xs text-muted-foreground">
-          {{ canAdmin && hasGroups ? $t('networking.policyPage.matrixHintAdmin') : $t('networking.matrix.description') }}
+          {{
+            canEditCells && hasGroups
+              ? $t('networking.policyPage.matrixHintAdmin')
+              : canAdmin && restricted
+                ? $t('networking.outbound.locked.matrix')
+                : $t('networking.matrix.description')
+          }}
+          {{ $t('networking.outbound.matrixScope') }}
         </p>
       </div>
       <DataState
@@ -869,7 +1194,7 @@ function closePlan(open: boolean) {
           <PolicyMatrix
             v-if="matrix"
             :matrix="matrix"
-            :can-admin="canAdmin"
+            :can-admin="canEditCells"
             @edit="openCellEditor"
           />
           <p v-if="matrix && !hasGroupPolicies" class="text-xs text-muted-foreground">
@@ -877,21 +1202,9 @@ function closePlan(open: boolean) {
           </p>
         </div>
       </DataState>
-
-      <div class="space-y-1 rounded-md border border-border px-3 py-2.5 text-sm">
-        <p v-if="policiesQuery.data.value !== undefined && counts.applied === 0" class="text-foreground">
-          {{ $t('networking.policyPage.noneEnforced') }}
-        </p>
-        <p class="text-muted-foreground">
-          {{ netguardTo ? $t('networking.policyPage.netguardNote') : $t('networking.policyPage.netguardAbsent') }}
-          <RouterLink v-if="netguardTo" :to="netguardTo" class="whitespace-nowrap text-primary underline-offset-4 hover:underline">
-            {{ $t('networking.policyPage.openNetguard') }}
-          </RouterLink>
-        </p>
-      </div>
     </section>
 
-    <!-- Policies: one row per node; a row opens the node's policy in the sheet. -->
+    <!-- Nodes: what each node's document holds; a row opens the node in the sheet. -->
     <DataTable
       v-else
       state-key="policies"
@@ -913,19 +1226,27 @@ function closePlan(open: boolean) {
       :no-match-description="$t('networking.shared.noMatchDescription')"
       @retry="refreshAll"
     >
+      <template #no-match>
+        <EmptyState :title="$t('networking.shared.noMatchTitle')" :description="$t('networking.shared.noMatchDescription')" />
+      </template>
       <template #empty>
         <EmptyState
           :title="$t('networking.policy.emptyTitle')"
           :description="canRead ? $t('networking.policy.emptyWithRead') : $t('networking.policy.emptyNeedRead')"
         >
-          <Button v-if="canAdmin" size="sm" type="button" @click="openCreate">
+          <Button v-if="canAdmin" size="sm" type="button" @click="openOutboundCreate">
             <Plus aria-hidden="true" />
-            {{ $t('networking.policyPage.newNodePolicy') }}
+            {{ $t('networking.outbound.newPolicy') }}
           </Button>
         </EmptyState>
       </template>
       <template #cell-target="{ row: p }">
         <NodeLabel :id="p.target_node_id" class="font-medium" />
+      </template>
+      <template #cell-source="{ row: p }">
+        <span :class="cn('whitespace-nowrap text-xs', p.group_derived ? 'text-muted-foreground' : 'text-foreground')">
+          {{ p.group_derived ? $t('networking.outbound.sourceDerived') : $t('networking.outbound.sourceManual') }}
+        </span>
       </template>
       <template #cell-state="{ row: p }">
         <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[policyState(p)])">
@@ -984,6 +1305,29 @@ function closePlan(open: boolean) {
           </div>
         </dl>
 
+        <section v-if="openPolicyRow.group_derived" class="space-y-1.5" data-testid="node-policy-source">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.outbound.builtFrom') }}</h3>
+          <ul v-if="openNodeSources.length" class="divide-y divide-border rounded-md border border-border">
+            <li v-for="source in openNodeSources" :key="source.id">
+              <RouterLink
+                :to="{ query: { [POLICY_PARAM]: source.id } }"
+                class="flex items-center gap-2 px-3 py-2 text-xs outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+              >
+                <span class="min-w-0 flex-1 truncate font-medium text-foreground">{{ policyTitle(source) }}</span>
+                <span class="shrink-0 text-muted-foreground">{{ $t('networking.outbound.priorityN', { n: source.priority }) }}</span>
+              </RouterLink>
+            </li>
+          </ul>
+          <p v-else class="text-xs text-warning-text">{{ $t('networking.outbound.orphaned') }}</p>
+        </section>
+        <section v-else class="space-y-1.5 rounded-md border border-border px-3 py-2.5" data-testid="node-policy-source">
+          <p class="text-xs text-foreground">{{ $t('networking.outbound.manualExplain') }}</p>
+          <Button v-if="canAdmin" variant="outline" size="sm" type="button" @click="openConvert(openPolicyRow)">
+            <ArrowRightLeft aria-hidden="true" />
+            {{ $t('networking.outbound.convert') }}
+          </Button>
+        </section>
+
         <section class="space-y-1.5">
           <h3 class="text-xs font-medium text-muted-foreground">
             {{ $t('networking.policyPage.rulesActive', { active: activeRuleCount(openPolicyRow), total: openPolicyRow.rules.length }) }}
@@ -1027,6 +1371,7 @@ function closePlan(open: boolean) {
       </div>
       <template v-if="openPolicyRow" #actions>
         <Button
+          v-if="!openPolicyRow.group_derived"
           variant="outline"
           size="sm"
           type="button"
@@ -1038,13 +1383,163 @@ function closePlan(open: boolean) {
           <Play v-else aria-hidden="true" />
           {{ $t('networking.shared.plan') }}
         </Button>
-        <Button variant="outline" size="sm" type="button" @click="openEdit(openPolicyRow)">
+        <Button v-if="!openPolicyRow.group_derived" variant="outline" size="sm" type="button" @click="openEdit(openPolicyRow)">
           <Pencil aria-hidden="true" />
           {{ $t('common.actions.edit') }}
         </Button>
         <RowMenu :name="policyNodeLabel(openPolicyRow)" :items="menuFor(openPolicyRow).filter((item) => item.key === 'delete')" />
       </template>
     </ObjectSheet>
+
+    <!-- One outbound policy: its target, the nodes it reaches now, its rules. -->
+    <ObjectSheet
+      :open="!!policySheet.openId.value"
+      :title="openOutbound ? policyTitle(openOutbound) : $t('networking.outbound.sheetTitle')"
+      :subtitle="openOutbound ? $t('networking.outbound.sheetSubtitle', { priority: openOutbound.priority }) : undefined"
+      :mono-subtitle="false"
+      :state="outboundSheetState"
+      :error="groupPoliciesQuery.error.value ? proofReason(groupPoliciesQuery.error.value) : null"
+      :read-only="!canAdmin"
+      :return-focus="policySheet.returnFocus"
+      :gone-title="$t('networking.outbound.goneTitle')"
+      :gone-description="$t('networking.outbound.goneDescription')"
+      @close="policySheet.close"
+    >
+      <div v-if="openOutbound" class="space-y-5 text-sm" data-testid="outbound-sheet">
+        <p v-if="!openOutbound.enabled" class="text-muted-foreground">{{ $t('networking.outbound.disabledExplain') }}</p>
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.outbound.target') }}</h3>
+          <p class="flex flex-wrap items-center gap-1">
+            <template v-for="part in targetParts(openOutbound)" :key="`${part.kind}:${'id' in part ? part.id : ''}`">
+              <GroupChip v-if="part.kind === 'group'" :name="part.name" :color="groupColorOf(part.id)" pill />
+              <span v-else :class="cn('rounded-full border px-2 py-0.5 text-xs', part.kind === 'exclude' ? 'border-dashed text-muted-foreground' : 'border-border')">
+                {{ part.kind === 'fleet' ? $t('selector.wholeFleet') : part.kind === 'exclude' ? $t('selector.except', { name: part.name }) : part.name }}
+              </span>
+            </template>
+            <span v-if="openOutbound.hidden_target_nodes" class="text-xs text-muted-foreground">
+              {{ $t('networking.outbound.hiddenTargetNodes', { n: openOutbound.hidden_target_nodes }, openOutbound.hidden_target_nodes) }}
+            </span>
+          </p>
+        </section>
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">
+            {{ $t('networking.outbound.reachesNow', { n: openOutbound.target_node_ids?.length ?? 0 }, openOutbound.target_node_ids?.length ?? 0) }}
+          </h3>
+          <ul v-if="openOutbound.target_node_ids?.length" class="flex flex-wrap gap-x-3 gap-y-1 rounded-md border border-border px-3 py-2 text-xs">
+            <li v-for="id in openOutbound.target_node_ids" :key="id" class="max-w-full truncate"><NodeLabel :id="id" link /></li>
+          </ul>
+          <p v-else class="text-xs text-warning-text">{{ $t('networking.outbound.reachesNone') }}</p>
+        </section>
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">
+            {{ $t('networking.policyPage.rulesActive', { active: activeGroupRuleCount(openOutbound), total: openOutbound.rules.length }) }}
+          </h3>
+          <p v-if="openOutbound.rules.length === 0" class="text-xs text-muted-foreground">{{ $t('networking.policy.noRules') }}</p>
+          <ol v-else class="divide-y divide-border rounded-md border border-border">
+            <li
+              v-for="rule in openOutbound.rules"
+              :key="rule.id"
+              :class="cn('flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-2 text-xs', rule.disabled && 'text-muted-foreground')"
+            >
+              <span :class="cn('font-medium', rule.action === 'allow' ? 'text-foreground' : 'text-destructive')">
+                {{ $t(`networking.policyPage.action.${rule.action}`) }}
+              </span>
+              <span>{{ $t(`networking.policyPage.direction.${rule.direction}`) }}</span>
+              <span class="font-mono">{{ rule.protocol }}{{ rule.ports?.length ? `:${rule.ports.join(',')}` : '' }}</span>
+              <span class="min-w-0 break-all font-mono">{{ remoteText(rule) }}</span>
+              <span v-if="rule.comment" class="text-muted-foreground">{{ rule.comment }}</span>
+              <span v-if="rule.disabled" class="text-muted-foreground">{{ $t('networking.policyPage.ruleDisabled') }}</span>
+              <span v-if="rule.direction === 'ingress'" class="text-warning-text">{{ $t('networking.policyPage.ruleInboundInactive') }}</span>
+            </li>
+          </ol>
+        </section>
+        <p v-if="canAdmin && (openOutboundLock.edit || openOutboundLock.remove)" class="text-xs text-muted-foreground" data-testid="outbound-locked">
+          {{ $t(`networking.outbound.locked.${openOutboundLock.edit ?? openOutboundLock.remove}`) }}
+        </p>
+        <p class="text-xs text-muted-foreground">{{ $t('networking.outbound.planHint') }}</p>
+      </div>
+      <template v-if="openOutbound && canAdmin" #actions>
+        <Button variant="outline" size="sm" type="button" :disabled="!!openOutboundLock.edit" @click="openOutboundEdit(openOutbound)">
+          <Pencil aria-hidden="true" />
+          {{ $t('common.actions.edit') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" :disabled="planningGroups" @click="planGroupPolicies">
+          <RefreshCw v-if="planningGroups" class="animate-spin" aria-hidden="true" />
+          <Play v-else aria-hidden="true" />
+          {{ $t('networking.outbound.planAll') }}
+        </Button>
+        <RowMenu :name="policyTitle(openOutbound)" :items="outboundMenu(openOutbound).filter((item) => item.key === 'delete')" />
+      </template>
+    </ObjectSheet>
+
+    <OutboundPolicyDialog
+      :open="outboundDialogOpen"
+      :existing="outboundEditing"
+      :nodes="nodes"
+      :groups="nodeGroups"
+      :saving="savingOutbound"
+      :can-admin="canAdmin"
+      :restricted="restricted"
+      :firewall-to="netguardTo"
+      @update:open="(v) => (outboundDialogOpen = v)"
+      @save="saveOutbound"
+    />
+
+    <!-- Deleting a definition sends nothing to a node: its nodes keep what they applied until the next plan. -->
+    <ConfirmDialog
+      :open="!!outboundDeleteTarget"
+      :title="$t('networking.outbound.delete.title', { name: outboundDeleteTarget ? policyTitle(outboundDeleteTarget) : '' })"
+      :description="$t('networking.outbound.delete.description')"
+      :impact="outboundDeleteTarget ? [$t('networking.outbound.delete.impactNodes', { n: outboundDeleteTarget.target_node_ids?.length ?? 0 }, outboundDeleteTarget.target_node_ids?.length ?? 0), $t('networking.outbound.delete.impactPlan')] : []"
+      :impact-title="$t('networking.policyPage.delete.impactTitle')"
+      :confirm-label="$t('networking.outbound.delete.confirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deletingOutbound"
+      @update:open="(v) => { if (!v) outboundDeleteTarget = undefined; }"
+      @confirm="confirmOutboundDelete"
+    />
+
+    <!-- Convert a manual node policy into an outbound policy targeting that node, in one reviewed plan. -->
+    <Dialog :open="!!convertTarget" @update:open="(v) => { if (!v) convertTarget = undefined; }">
+      <DialogScrollContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.outbound.convertTitle', { node: convertTarget ? policyNodeLabel(convertTarget) : '' }) }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.outbound.convertDescription') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4 text-sm" @submit.prevent="confirmConvert">
+          <ul class="list-disc space-y-1 ps-5 text-muted-foreground">
+            <li>{{ $t('networking.outbound.convertKeeps', { n: convertTarget?.rules.length ?? 0 }, convertTarget?.rules.length ?? 0) }}</li>
+            <li v-if="convertTarget?.enabled">{{ $t('networking.outbound.convertPlans') }}</li>
+            <li v-else>{{ $t('networking.outbound.convertDisabled') }}</li>
+            <li v-if="convertMerges.length" class="text-warning-text">
+              {{ $t('networking.outbound.convertMerges', { policies: convertMerges.map((p) => policyTitle(p)).join(', ') }) }}
+            </li>
+            <li v-if="convertTarget && holdsInbound(convertTarget)" class="text-warning-text">{{ $t('networking.outbound.convertInbound') }}</li>
+          </ul>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
+            <div class="grid gap-1.5">
+              <Label for="convert-name">{{ $t('networking.outbound.name') }}</Label>
+              <Input id="convert-name" v-model="convertName" maxlength="120" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="convert-priority">{{ $t('networking.matrix.priority') }}</Label>
+              <Input id="convert-priority" v-model.number="convertPriority" type="number" inputmode="numeric" aria-describedby="convert-priority-hint" />
+              <p id="convert-priority-hint" class="text-xs text-muted-foreground">{{ $t('networking.outbound.priorityHint') }}</p>
+            </div>
+          </div>
+          <p v-if="convertError" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground" role="alert">
+            {{ convertError }}
+          </p>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="convertTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="submit" :disabled="converting || !canAdmin">
+              <RefreshCw v-if="converting" class="size-4 animate-spin" aria-hidden="true" />
+              {{ $t('networking.outbound.convertConfirm') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
 
     <!-- Create / edit policy dialog -->
     <Dialog :open="dialogOpen" @update:open="onDialogOpenChange">
@@ -1192,7 +1687,9 @@ function closePlan(open: boolean) {
       :source="cellSource"
       :dest="cellDest"
       :existing="cellSourcePolicy"
+      :existing-title="cellSourcePolicy ? policyTitle(cellSourcePolicy) : undefined"
       :firewall-to="netguardTo"
+      :also-from="cellAlsoFrom"
       :saving="savingCell"
       :can-admin="canAdmin"
       @update:open="(v) => (cellEditorOpen = v)"
