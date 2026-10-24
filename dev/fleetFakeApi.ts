@@ -253,7 +253,7 @@ function refuse<T>(status: number, code: string, message: string): Promise<T> {
  * broad selector from a restricted token, and `?paths=old` answers the
  * routes 404, as a server from before design 32 does.
  */
-const definitionNodes = () => nodes.map((n) => ({ id: n.id, name: n.name ?? n.id, public_ip: n.public_ip, online: n.online }));
+const definitionNodes = () => nodes.map((n) => ({ id: n.id, name: n.name ?? n.id, public_ip: n.public_ip, online: n.online, probe_methods: n.probe_methods, probe_refusals: n.probe_refusals }));
 const heldBy = (id: string) => monitors.filter((m) => m.check_definition_id === id);
 const planOf = (def: CheckDefinition) => planDefinition(def, heldBy(def.id), definitionNodes(), GROUPS, new Date().toISOString());
 function writeDefinition(def: CheckDefinition) {

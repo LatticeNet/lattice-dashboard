@@ -9,9 +9,10 @@
  * that serves nothing the method can dial holds a monitor with nothing to
  * dial and says why on the target.
  *
- * One source, the Shanghai probe, already sends every node 1.9 packets a
+ * One source, the Chengdu VDS, already sends every node 1.9 packets a
  * second through Fleet mesh, so a definition that adds more from it shows
- * the budget at work.
+ * the budget at work. A source that cannot run the method says so first,
+ * as the server judges a pair (checkPairReason).
  */
 import type {
   CheckDefinition,
@@ -27,17 +28,26 @@ import type {
 } from "@/lib/api/types";
 import { resolveTargetSelector, type SelectorGroup } from "@/lib/targetSelector";
 import { takesSources, takesTargetNodes } from "@/views/fleet/definitionsModel";
+import { effectiveProbeMethods } from "@/views/fleet/checkRulesModel";
 
 export interface DefinitionNode {
   id: string;
   name: string;
   public_ip?: string;
   online?: boolean;
+  probe_methods?: string[];
+  probe_refusals?: Record<string, string>;
+}
+
+/** latencyProbeGate: "" when the source can run the method; an agent that reports none runs tcp and http. */
+function probeGate(node: DefinitionNode | undefined, kind: string): string {
+  if (!node || effectiveProbeMethods(node).includes(kind)) return "";
+  return node.probe_refusals?.[kind] || "agent_too_old";
 }
 
 /** model.MonitorPacketsPerSecondMax: packets a second one source may send one address across its checks. */
 const BUDGET = 2;
-const BUSY_SOURCE = "[cd]-volcengine-shanghai";
+const BUSY_SOURCE = "[cd]-qqpw-vds-cd1";
 const BUSY_LOAD = 1.9;
 
 function hash(text: string): string {
@@ -120,7 +130,9 @@ export function planDefinition(def: CheckDefinition, held: readonly MonitorView[
       let reason = e.reason;
       if (!reason && source) {
         const node = byId.get(source);
-        if (def.type === "beacon" && index > 0) reason = "beacon_source_pending";
+        const gate = probeGate(node, def.type);
+        if (gate) reason = gate;
+        else if (def.type === "beacon" && index > 0) reason = "beacon_source_pending";
         else if (def.enabled && rate > 0 && e.targetNode && node?.name === BUSY_SOURCE && BUSY_LOAD + rate > BUDGET + 1e-9) {
           reason = "packet_budget";
           overBudget.push(source);
@@ -234,7 +246,7 @@ export function fleetMeshOf(plan: LatencyProbePlan, stored: boolean): CheckFleet
 export function seedDefinitions(nodes: readonly DefinitionNode[], groupIds: readonly string[], at: (offsetMs: number) => string): CheckDefinition[] {
   const id = (name: string) => nodes.find((n) => n.name === name)?.id;
   const some = (...names: string[]) => names.map(id).filter((x): x is string => Boolean(x));
-  const sources: TargetSelector = { nodes: some(BUSY_SOURCE, "[cd]-qqpw-vds-cd1", "[cd]-homeserver") };
+  const sources: TargetSelector = { nodes: some("[cd]-volcengine-shanghai", BUSY_SOURCE, "[cd]-homeserver") };
   const ping: CheckDefinition = {
     id: "chk_apac_ping",
     name: "Ping APAC from domestic",
