@@ -247,6 +247,8 @@ export const UNKNOWN_REASONS = [
   "beacon_unknown_epoch",
   "beacon_rate_limited",
   "beacon_no_key",
+  // Design 32 D1: a check definition's pair the control plane paused to keep its source under the packet budget.
+  "packet_budget",
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
 

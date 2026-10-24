@@ -1,0 +1,287 @@
+<script setup lang="ts">
+/**
+ * One check definition (design 32 D1): what it measures now, its paths
+ * worst first (each opens its path sheet on the Network view), and the
+ * targets that left its set, kept paused with their runs. Forgetting those
+ * targets and deleting the definition both name the monitors and their runs
+ * before they confirm, and the server refuses either when the list it was
+ * shown no longer matches.
+ */
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { Pencil, Trash2 } from "lucide-vue-next";
+
+import { api, type CheckDefinitionView, type GroupView, type Node } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { OwnedRoute } from "@/composables/useOwnedRoute";
+
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import { Button } from "@/components/ui/button";
+
+import { formatMs } from "./latencyModel";
+import { stateRank, type PathItem } from "./pathsModel";
+import { usePathsCopy } from "./pathsCopy";
+
+const props = defineProps<{
+  open: boolean;
+  /** The definition as the list read it; the sheet reads its monitors itself. */
+  definition?: CheckDefinitionView;
+  /** The open id, for the gone state when the list no longer has it. */
+  openId?: string | null;
+  listLoading: boolean;
+  /** The matrix paths of this definition's monitors. */
+  paths: PathItem[];
+  nodes: Node[];
+  groups: GroupView[];
+  canAdmin: boolean;
+  owned: OwnedRoute;
+  returnFocus?: () => HTMLElement | null;
+}>();
+
+const emit = defineEmits<{ close: []; edit: [definition: CheckDefinitionView]; changed: [] }>();
+
+const { t } = useI18n();
+const { displayLabel, whyText, methodName } = usePathsCopy();
+
+const detail = ref<CheckDefinitionView>();
+const detailError = ref<string>();
+const detailLoading = ref(false);
+
+async function load(id: string): Promise<void> {
+  detailLoading.value = true;
+  try {
+    detail.value = await api.monitors.definitions.get(id);
+    detailError.value = undefined;
+  } catch (error) {
+    detailError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
+watch(
+  () => [props.open, props.definition?.id, props.definition?.version, props.definition?.summary.monitors] as const,
+  ([open, id]) => {
+    if (open && id) void load(id);
+    if (!open) detail.value = undefined;
+  },
+  { immediate: true },
+);
+
+const def = computed(() => detail.value ?? props.definition);
+const sheetState = computed(() => {
+  if (!props.definition) return props.listLoading ? ("loading" as const) : ("gone" as const);
+  return "ready" as const;
+});
+
+function nodeName(id: string): string {
+  return props.nodes.find((n) => n.id === id)?.name || id;
+}
+function groupName(id: string): string {
+  return props.groups.find((g) => g.id === id)?.name || id;
+}
+
+/** A selector in words: "the whole fleet except hk-2", "group asia and jp-1". */
+function selectorText(sel: { nodes?: string[]; groups?: string[]; all?: boolean; exclude?: string[] } | undefined): string {
+  if (!sel) return "";
+  const parts: string[] = [];
+  if (sel.all) parts.push(t("common.selector.wholeFleet"));
+  for (const id of sel.groups ?? []) parts.push(t("fleet.monitoring.checkDefs.sheet.group", { name: groupName(id) }));
+  for (const id of sel.nodes ?? []) parts.push(nodeName(id));
+  const base = parts.join(", ");
+  if (!sel.exclude?.length) return base;
+  return t("fleet.monitoring.checkDefs.sheet.except", { base, names: sel.exclude.map(nodeName).join(", ") });
+}
+
+const fromText = computed(() => (def.value?.type === "tls" ? t("fleet.monitoring.assignment.controlPlane") : selectorText(def.value?.sources)));
+const toText = computed(() => {
+  const d = def.value;
+  if (!d) return "";
+  const nodes = selectorText(d.targets);
+  const addresses = d.addresses ?? [];
+  if (!addresses.length) return nodes;
+  const shown = addresses.length > 3 ? `${addresses.slice(0, 3).join(", ")} +${addresses.length - 3}` : addresses.join(", ");
+  return nodes ? `${nodes}, ${shown}` : shown;
+});
+
+/* ---- Paths, worst first ---- */
+
+const sortedPaths = computed(() => [...props.paths].sort((a, b) => stateRank(a.state) - stateRank(b.state) || a.sourceName.localeCompare(b.sourceName) || a.targetName.localeCompare(b.targetName)));
+const counts = computed(() => {
+  const by = { up: 0, degraded: 0, down: 0, unknown: 0 };
+  for (const p of props.paths) by[p.state as keyof typeof by]++;
+  return by;
+});
+const PATHS_SHOWN = 50;
+
+function openPath(path: PathItem): void {
+  props.owned.push({ ...props.owned.query(), view: "network", as: "list", path: path.key, open: undefined });
+}
+
+/* ---- Paused targets: forget, with the monitors and their runs named ---- */
+
+const paused = computed(() => (detail.value?.monitors ?? []).filter((m) => !m.in_set));
+const pausedRuns = computed(() => paused.value.reduce((sum, m) => sum + m.runs, 0));
+function monitorLabel(m: { target_node?: string; target: string; method: string }): string {
+  return m.target_node ? `${methodName(m.method)} ${nodeName(m.target_node)}` : `${methodName(m.method)} ${m.target}`;
+}
+
+const forgetOpen = ref(false);
+const forgetPending = ref(false);
+const forgetImpact = computed(() => paused.value.map((m) => t("fleet.monitoring.checkDefs.sheet.monitorRuns", { name: monitorLabel(m), n: m.runs }, m.runs)));
+
+async function forget(): Promise<void> {
+  const d = def.value;
+  if (!d) return;
+  forgetPending.value = true;
+  try {
+    const answer = await api.monitors.definitions.forget({ id: d.id, monitor_ids: paused.value.map((m) => m.monitor_id) });
+    toast.success(t("fleet.monitoring.checkDefs.toast.forgot", { n: answer.forgotten.length, runs: answer.runs }, answer.forgotten.length));
+    forgetOpen.value = false;
+    emit("changed");
+    await load(d.id);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checkDefs.toast.failed"));
+    await load(d.id);
+  } finally {
+    forgetPending.value = false;
+  }
+}
+
+/* ---- Delete: every monitor and its history ---- */
+
+const deleteOpen = ref(false);
+const deletePending = ref(false);
+const allMonitors = computed(() => detail.value?.monitors ?? []);
+const totalRuns = computed(() => allMonitors.value.reduce((sum, m) => sum + m.runs, 0));
+const deleteImpact = computed(() => {
+  const lines = allMonitors.value.slice(0, 12).map((m) => t("fleet.monitoring.checkDefs.sheet.monitorRuns", { name: monitorLabel(m), n: m.runs }, m.runs));
+  if (allMonitors.value.length > 12) lines.push(t("fleet.monitoring.checkDefs.sheet.moreMonitors", { n: allMonitors.value.length - 12 }));
+  return lines;
+});
+
+async function remove(): Promise<void> {
+  const d = detail.value;
+  if (!d) return;
+  deletePending.value = true;
+  try {
+    const answer = await api.monitors.definitions.delete({ id: d.id, version: d.version, monitor_ids: allMonitors.value.map((m) => m.monitor_id) });
+    toast.success(t("fleet.monitoring.checkDefs.toast.deleted", { name: d.name, runs: answer.runs }));
+    deleteOpen.value = false;
+    emit("changed");
+    emit("close");
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.checkDefs.toast.failed"));
+    await load(d.id);
+  } finally {
+    deletePending.value = false;
+  }
+}
+</script>
+
+<template>
+  <ObjectSheet
+    :open="open"
+    :title="def?.name || openId || ''"
+    :subtitle="def ? `${methodName(def.type)} · ${t('fleet.monitoring.checkDefs.sheet.subtitle', { n: def.summary.paths }, def.summary.paths)}` : undefined"
+    :mono-subtitle="false"
+    :state="sheetState"
+    :return-focus="returnFocus"
+    :gone-title="$t('fleet.monitoring.checkDefs.sheet.goneTitle')"
+    :gone-description="$t('fleet.monitoring.checkDefs.sheet.goneDescription')"
+    @close="emit('close')"
+  >
+    <div v-if="def" class="space-y-5 text-sm" data-testid="definition-sheet">
+      <p v-if="!def.enabled" class="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.pausedNote') }}</p>
+
+      <dl class="grid grid-cols-[minmax(0,6rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-md border border-border p-3 text-xs" data-testid="definition-sets">
+        <dt class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.from') }}</dt>
+        <dd class="min-w-0 break-words">{{ fromText }}</dd>
+        <dt class="text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.to') }}</dt>
+        <dd class="min-w-0 break-words">{{ toText }}</dd>
+        <dt class="text-muted-foreground">{{ $t('fleet.monitoring.checks.editor.step.often') }}</dt>
+        <dd class="min-w-0">{{ $t('fleet.monitoring.checkDefs.sheet.every', { interval: def.interval_sec, timeout: def.timeout_sec }) }}</dd>
+      </dl>
+
+      <!-- The paths, worst first; each opens its path sheet where every path lives. -->
+      <section class="space-y-1.5" :aria-label="$t('fleet.monitoring.checkDefs.sheet.paths')">
+        <h3 class="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-muted-foreground">
+          <span>{{ $t('fleet.monitoring.checkDefs.sheet.paths') }}</span>
+          <span class="font-normal tabular" data-testid="definition-path-counts">
+            {{ $t('fleet.monitoring.checkDefs.sheet.counts', { up: counts.up, degraded: counts.degraded, down: counts.down, unknown: counts.unknown }) }}
+          </span>
+        </h3>
+        <ul v-if="sortedPaths.length" class="divide-y divide-border rounded-md border border-border" data-testid="definition-paths">
+          <li v-for="path in sortedPaths.slice(0, PATHS_SHOWN)" :key="path.key">
+            <button
+              type="button"
+              class="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              @click="openPath(path)"
+            >
+              <span class="min-w-0">
+                <span class="block truncate font-medium">{{ $t('fleet.monitoring.checkDefs.sheet.pair', { source: path.sourceName, target: path.targetNodeName || path.target }) }}</span>
+                <span v-if="path.state !== 'up'" :class="cn('block text-xs break-words', path.state === 'down' ? 'text-destructive' : path.state === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')">
+                  {{ displayLabel(path) }}: {{ whyText(path) }}
+                </span>
+              </span>
+              <span class="text-end font-mono text-xs tabular">{{ path.p50Ms !== undefined && path.state !== 'unknown' ? formatMs(path.p50Ms) : displayLabel(path) }}</span>
+            </button>
+          </li>
+          <li v-if="sortedPaths.length > PATHS_SHOWN" class="px-3 py-2 text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.morePaths', { n: sortedPaths.length - PATHS_SHOWN }) }}</li>
+        </ul>
+        <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.noPaths') }}</p>
+      </section>
+
+      <!-- Targets that left the set: kept paused with their history until forgotten. -->
+      <section v-if="paused.length" class="space-y-1.5" data-testid="definition-paused" :aria-label="$t('fleet.monitoring.checkDefs.sheet.paused')">
+        <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.pausedTitle', { n: paused.length, runs: pausedRuns }, paused.length) }}</h3>
+        <ul class="grid gap-1 rounded-md border border-border p-2.5 text-xs">
+          <li v-for="m in paused" :key="m.monitor_id" class="flex justify-between gap-3">
+            <span class="min-w-0 break-words">{{ monitorLabel(m) }}</span>
+            <span class="shrink-0 font-mono tabular text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.runs', { n: m.runs }, m.runs) }}</span>
+          </li>
+        </ul>
+        <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.sheet.pausedHint') }}</p>
+        <Button v-if="canAdmin" variant="outline" size="sm" type="button" data-testid="definition-forget" @click="forgetOpen = true">
+          {{ $t('fleet.monitoring.checkDefs.sheet.forget') }}
+        </Button>
+      </section>
+      <p v-if="detailError" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.checkDefs.sheet.detailFailed', { reason: detailError }) }}</p>
+    </div>
+    <template v-if="canAdmin && def" #actions>
+      <Button variant="outline" size="sm" type="button" class="text-destructive" :disabled="!detail || deletePending" data-testid="definition-delete" @click="deleteOpen = true">
+        <Trash2 class="size-4" aria-hidden="true" />
+        {{ $t('common.actions.delete') }}
+      </Button>
+      <Button size="sm" type="button" data-testid="definition-edit" @click="emit('edit', def)">
+        <Pencil class="size-4" aria-hidden="true" />
+        {{ $t('fleet.monitoring.checks.actions.edit') }}
+      </Button>
+    </template>
+  </ObjectSheet>
+
+  <ConfirmDialog
+    v-model:open="forgetOpen"
+    :title="$t('fleet.monitoring.checkDefs.confirm.forgetTitle')"
+    :description="$t('fleet.monitoring.checkDefs.confirm.forget', { n: paused.length, runs: pausedRuns }, paused.length)"
+    :impact="forgetImpact"
+    :impact-title="$t('fleet.monitoring.checkDefs.confirm.impactTitle')"
+    :confirm-label="$t('fleet.monitoring.checkDefs.confirm.forgetConfirm')"
+    :cancel-label="$t('common.actions.cancel')"
+    :pending="forgetPending"
+    @confirm="forget"
+  />
+  <ConfirmDialog
+    v-model:open="deleteOpen"
+    :title="$t('fleet.monitoring.checkDefs.confirm.deleteTitle')"
+    :description="def ? $t('fleet.monitoring.checkDefs.confirm.delete', { name: def.name, n: allMonitors.length, runs: totalRuns }, allMonitors.length) : ''"
+    :impact="deleteImpact"
+    :impact-title="$t('fleet.monitoring.checkDefs.confirm.impactTitle')"
+    :confirm-label="$t('common.actions.delete')"
+    :cancel-label="$t('common.actions.cancel')"
+    :pending="deletePending"
+    @confirm="remove"
+  />
+</template>

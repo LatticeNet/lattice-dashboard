@@ -4,6 +4,30 @@
 
 export default {
   common: {
+    // Design 32 D5: the target selector.
+    selector: {
+      wholeFleet: "Whole fleet",
+      wholeFleetHint: "Every node, including nodes that join later",
+      nodesOnly: "This session can name nodes only: a group or the whole fleet needs a token without a node allowlist.",
+      groupChip: "{name} ({n} node) | {name} ({n} nodes)",
+      exceptChip: "except {name}",
+      remove: "Remove {name}",
+      chosen: "Chosen for {field}",
+      search: "Search groups and nodes",
+      searchNodes: "Search nodes",
+      searchLabel: "Search {field}",
+      groups: "Node groups",
+      groupMembers: "{n} node | {n} nodes",
+      groupFollows: "follows its selector",
+      excluded: "excluded",
+      viaFleet: "in the whole fleet",
+      viaGroup: "via {name}",
+      unknownNode: "not a node this session can read",
+      noMatch: "Nothing matches.",
+      resolves: "Resolves to {n} node | Resolves to {n} nodes",
+      showNames: "show",
+      hideNames: "hide",
+    },
     regions: {
       AS: "Asia",
       EU: "Europe",

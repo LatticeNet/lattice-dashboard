@@ -3,6 +3,30 @@
 
 export default {
   common: {
+    // Design 32 D5: the target selector.
+    selector: {
+      wholeFleet: "全网",
+      wholeFleetHint: "所有节点，包括以后加入的节点",
+      nodesOnly: "当前会话只能点名节点：节点组或全网需要没有节点白名单的令牌。",
+      groupChip: "{name}（{n} 个节点）",
+      exceptChip: "除 {name}",
+      remove: "移除 {name}",
+      chosen: "{field}已选",
+      search: "搜索节点组和节点",
+      searchNodes: "搜索节点",
+      searchLabel: "搜索{field}",
+      groups: "节点组",
+      groupMembers: "{n} 个节点",
+      groupFollows: "按选择器自动更新",
+      excluded: "已排除",
+      viaFleet: "属于全网",
+      viaGroup: "来自 {name}",
+      unknownNode: "当前会话无法读取此节点",
+      noMatch: "没有匹配项。",
+      resolves: "解析为 {n} 个节点",
+      showNames: "查看",
+      hideNames: "收起",
+    },
     regions: {
       AS: "亚洲",
       EU: "欧洲",
