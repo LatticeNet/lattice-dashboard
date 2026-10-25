@@ -19,6 +19,8 @@ const props = defineProps<{
   refusal?: SaveRefusal;
   /** The changed paths of a conflict, absent when there is none. */
   changed?: readonly string[];
+  /** The server's value of changed paths that read at a glance (useSaveRefusal's theirs). */
+  values?: Readonly<Record<string, string | boolean>>;
   /** Who saved the newer version and when, when the object records it. */
   by?: string;
   at?: string;
@@ -41,10 +43,20 @@ const fieldLabel = computed(() => {
   return path ? props.labels[path] : undefined;
 });
 
+// One entry per label, quoting the server's value when exactly one changed
+// path carries that label and the value reads at a glance.
 const changedLabels = computed(() => {
-  const seen = new Set<string>();
-  for (const path of props.changed ?? []) seen.add(props.labels[path] ?? path);
-  return [...seen];
+  const byLabel = new Map<string, string[]>();
+  for (const path of props.changed ?? []) {
+    const label = props.labels[path] ?? path;
+    byLabel.set(label, [...(byLabel.get(label) ?? []), path]);
+  }
+  return [...byLabel].map(([label, paths]) => {
+    const value = paths.length === 1 ? props.values?.[paths[0]!] : undefined;
+    if (value === undefined) return label;
+    const shown = typeof value === "boolean" ? t(value ? "common.saveRefusal.on" : "common.saveRefusal.off") : value;
+    return t("common.saveRefusal.changedValue", { field: label, value: shown });
+  });
 });
 
 const savedBy = computed(() => {
@@ -80,7 +92,7 @@ watch(
       <span>{{ $t('common.saveRefusal.conflictTitle', { noun: noun ?? $t('common.saveRefusal.nounDefault') }) }}</span>
     </p>
     <p v-if="savedBy" class="mt-1 ps-5.5 text-muted-foreground" data-testid="save-conflict-by">{{ savedBy }}</p>
-    <p class="mt-1 ps-5.5 text-muted-foreground" data-testid="save-conflict-changed">
+    <p class="mt-1 break-words ps-5.5 text-muted-foreground" data-testid="save-conflict-changed">
       {{ changedLabels.length ? $t('common.saveRefusal.changed', { fields: changedLabels.join($t('common.saveRefusal.join')) }) : $t('common.saveRefusal.changedNone') }}
     </p>
     <p class="mt-1 ps-5.5 text-muted-foreground">{{ $t('common.saveRefusal.keptDraft') }}</p>
