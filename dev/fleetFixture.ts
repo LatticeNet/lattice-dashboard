@@ -539,6 +539,8 @@ function someMonitors(): MonitorView[] {
     { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
+    // Design 32 S5a: a DoH resolver asked from two sources; the first gets an answer without the expected address.
+    { id: "mon_dns_doh", name: "Resolver DoH", type: "dns", target: "https://dns.example.net/dns-query", dns_name: "www.example.org", dns_type: "A", dns_expect: ["192.0.2.10"], interval_sec: 300, timeout_sec: 3, assign_all: false, node_ids: NODES.slice(0, 2).map((n) => n.id), enabled: true, created_at: iso(-DAY) },
     // dev/latencyFixture.ts: node_x000 and node_x009 are in Los Angeles, node_x001 in San Jose.
     ...(PARAMS.get("topo") === "many"
       ? [{ id: "mon_bulk_us", name: "US edge health", type: "http", target: "https://edge.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: ["node_x000", "node_x001", "node_x009"], enabled: true, created_at: iso(-2 * DAY) }]
@@ -574,15 +576,18 @@ export function monitorResults(monitorId: string): MonitorResult[] {
   const quiet = QUIET_PORTS.has(monitorId) ? 30 * MINUTE : 0;
   for (let i = 0; i < 24; i++) {
     for (const node of nodes) {
-      const failing = (monitorId === "mon_hk_tcp" && i < 3 && node === nodes[0]) || (FAILING_PORTS.has(monitorId) && i < 4);
+      const failing = (monitorId === "mon_hk_tcp" && i < 3 && node === nodes[0]) || (FAILING_PORTS.has(monitorId) && i < 4) || (monitorId === "mon_dns_doh" && i < 2 && node === nodes[0]);
+      const dns = monitor.type === "dns";
       out.push({
         monitor_id: monitorId,
         node_id: node,
         at: iso(-quiet - i * (tls ? 60 : 5) * MINUTE),
         success: !failing,
         latency_ms: failing ? undefined : monitorId === "mon_console" ? 118 + ((i * 7) % 23) : 42 + ((i * 5) % 17),
-        error: failing ? `dial tcp ${monitor.target}: i/o timeout` : undefined,
-        cert_not_after: monitor.type === "tls" ? dateIn(SHAPE === "dense" ? 6 : 44) : undefined,
+        error: failing ? (dns ? "dns_mismatch: the A answer for www.example.org lacks 192.0.2.10" : `dial tcp ${monitor.target}: i/o timeout`) : undefined,
+        cert_not_after: monitor.type === "tls" || dns ? dateIn(SHAPE === "dense" ? 6 : 44) : undefined,
+        dns_rcode: dns ? "NOERROR" : undefined,
+        dns_answers: dns ? (failing ? ["192.0.2.66", "192.0.2.67", "192.0.2.68", "192.0.2.69", "192.0.2.70", "2001:db8::1"].slice(0, 6) : ["192.0.2.10"]) : undefined,
       });
     }
   }
@@ -615,6 +620,8 @@ export function monitorLatest(monitorId: string): MonitorLatest[] {
         error: newest.error,
         cert_not_after: newest.cert_not_after,
         received_at: newest.at,
+        dns_rcode: newest.dns_rcode,
+        dns_answers: newest.dns_answers,
         fail_streak: newest.success ? 0 : run,
         since: rows[run - 1]!.at,
       };

@@ -20,7 +20,8 @@
 import type { LatencyProbeNode, MonitorAlertPolicy, MonitorCreateInput, MonitorType, MonitorUpdateInput, MonitorView, Node } from "@/lib/api/types";
 
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderProblems, type HeaderRow } from "@/views/fleet/checkHeadersModel";
-import { canonicalStatusSet, destinationProblem, isHttpsUrl, needsCurrentAgent, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { canonicalStatusSet, isHttpsUrl, needsCurrentAgent, parseStatusSet, publicIPv4, sourceSupport } from "@/views/fleet/checkRulesModel";
+import { canonicalResolver, checkDestination, expectBlocks, expectText, normalizeDnsName, parseExpect, parseResolver, DNS_RCODE_NXDOMAIN } from "@/views/fleet/dnsCheckModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { beaconTargetBlock } from "@/views/fleet/beaconModel";
 import { isChosenUnknown } from "@/views/fleet/pathsModel";
@@ -38,15 +39,16 @@ import {
 } from "@/views/fleet/monitorTypeModel";
 
 /**
- * The kinds a check can be created as: M1's, icmp on an M2a server, and
- * beacon on an M2b server, first because it is the method design 29 D2
+ * The kinds a check can be created as: M1's, icmp and dns on an M2a server,
+ * and beacon on an M2b server, first because it is the method design 29 D2
  * prefers for a node.
  */
-export const CHECK_KINDS: readonly MonitorType[] = ["beacon", "tcp", "icmp", "http", "tls"];
+export const CHECK_KINDS: readonly MonitorType[] = ["beacon", "tcp", "icmp", "http", "dns", "tls"];
 
 export function offeredKinds(m2a: boolean, m2b = false, canReadNodes = true): MonitorType[] {
   // A beacon check names its target node and nothing else, so a session that cannot read the node list cannot write one.
-  return CHECK_KINDS.filter((k) => (k === "icmp" ? m2a : k === "beacon" ? m2a && m2b && canReadNodes : true));
+  // dns needs agents that report their methods, so a server before M2a, whose agents report none, is offered none.
+  return CHECK_KINDS.filter((k) => (k === "icmp" || k === "dns" ? m2a : k === "beacon" ? m2a && m2b && canReadNodes : true));
 }
 
 /** Kinds that send several packets a run, 200 ms apart, and report loss (icmp, beacon). */
@@ -214,6 +216,14 @@ export interface CheckDraft {
   expectStatus: string;
   /** http: request headers. */
   headers: HeaderRow[];
+  /** dns (design 32 S5a): the name asked, as typed. */
+  dnsName: string;
+  /** dns: the question type, one of DNS_TYPES. */
+  dnsType: string;
+  /** dns: the expected values as typed, one per line. */
+  dnsExpect: string;
+  /** dns: "" for NOERROR, or NXDOMAIN for a name that must not resolve. */
+  dnsExpectRcode: string;
   intervalSec: number;
   timeoutSec: number;
   thresholdDays: number;
@@ -242,6 +252,10 @@ export function emptyDraft(type: MonitorType = "http"): CheckDraft {
     packets: PACKETS_DEFAULT,
     expectStatus: "",
     headers: [],
+    dnsName: "",
+    dnsType: "A",
+    dnsExpect: "",
+    dnsExpectRcode: "",
     intervalSec: tls ? TLS_DEFAULT_INTERVAL_SEC : AGENT_DEFAULT_INTERVAL_SEC,
     timeoutSec: tls ? TLS_DEFAULT_TIMEOUT_SEC : AGENT_DEFAULT_TIMEOUT_SEC,
     thresholdDays: TLS_DEFAULT_THRESHOLD_DAYS,
@@ -269,6 +283,10 @@ export function draftFromMonitor(monitor: MonitorView): CheckDraft {
     packets: monitor.packets && monitor.packets > 0 ? monitor.packets : PACKETS_DEFAULT,
     expectStatus: monitor.expect_status ?? "",
     headers: rowsFromHeaders(monitor.headers),
+    dnsName: monitor.dns_name ?? "",
+    dnsType: monitor.dns_type || "A",
+    dnsExpect: expectText(monitor.dns_expect),
+    dnsExpectRcode: monitor.dns_expect_rcode === DNS_RCODE_NXDOMAIN ? DNS_RCODE_NXDOMAIN : "",
     intervalSec: monitor.interval_sec,
     timeoutSec: monitor.timeout_sec,
     thresholdDays: monitor.threshold_days ?? TLS_DEFAULT_THRESHOLD_DAYS,
@@ -301,6 +319,10 @@ export function suggestName(type: string, target: string, nodeName?: string): st
       shown = value;
     }
   }
+  if (type === "dns") {
+    const parsed = parseResolver(value);
+    if (parsed.ok) shown = `${parsed.resolver.transport.toUpperCase()} ${parsed.resolver.host}`;
+  }
   return `${type.toUpperCase()} ${shown}`.slice(0, 80);
 }
 
@@ -322,7 +344,11 @@ export type DraftProblem =
   /** down_and_degraded on a tls check, which measures a certificate and is never judged degraded. */
   | "alertTls"
   /** A degraded threshold outside its bounds (D13): the field is in DraftRules' answer from degradedProblems. */
-  | "degraded";
+  | "degraded"
+  /** dns: the name asked does not parse. */
+  | "dnsName"
+  /** dns: an expected value does not fit the type, there are too many, or NXDOMAIN is expected with values. */
+  | "dnsExpect";
 
 /**
  * What the rules need besides the draft. `m2a` turns on the M2a rules; the
@@ -357,8 +383,12 @@ export function draftProblems(draft: CheckDraft, rules: DraftRules = { m2a: fals
     else if (rules.nodeTarget?.state === "refused") out.push("targetNode");
   } else if (targetError(draft.type, draft.target)) {
     out.push("target");
-  } else if (rules.newCheck && (rules.m2a || draft.type === "icmp") && destinationProblem(draft.type, draft.target)) {
+  } else if (rules.newCheck && (rules.m2a || draft.type === "icmp") && checkDestination(draft.type, draft.target)) {
     out.push("destination");
+  }
+  if (draft.type === "dns") {
+    if (!normalizeDnsName(draft.dnsName).ok) out.push("dnsName");
+    if (expectBlocks(parseExpect(draft.dnsType, draft.dnsExpect, draft.dnsExpectRcode))) out.push("dnsExpect");
   }
   const interval = Number(draft.intervalSec);
   const timeout = Number(draft.timeoutSec);
@@ -422,6 +452,8 @@ export function identityChanged(monitor: Pick<MonitorView, "type" | "target" | "
   const node = usesNodeTarget(draft);
   if (node !== !!monitor.target_node) return true;
   if (node) return monitor.target_node !== draft.targetNode;
+  // Two spellings of one resolver are one target, as the server stores it.
+  if (draft.type === "dns") return canonicalResolver(monitor.target ?? "") !== canonicalResolver(draft.target);
   return (monitor.target ?? "").trim() !== draft.target.trim();
 }
 
@@ -471,6 +503,7 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft, options: Bo
     const ops = buildHeaderEdits(monitor.headers, draft.headers);
     if (ops) body.headers = ops;
   }
+  if (draft.type === "dns") Object.assign(body, dnsQuestionEdit(before, draft));
   if (isServerEvaluated(draft.type)) {
     if (Number(draft.thresholdDays) !== before.thresholdDays) body.threshold_days = Number(draft.thresholdDays);
   } else {
@@ -491,6 +524,30 @@ export function buildUpdate(monitor: MonitorView, draft: CheckDraft, options: Bo
   return body;
 }
 
+/** A dns draft's question as the server stores it: the canonical name, type and values; NOERROR as absent. */
+export function dnsQuestion(draft: Pick<CheckDraft, "dnsName" | "dnsType" | "dnsExpect" | "dnsExpectRcode">): { dns_name: string; dns_type: string; dns_expect?: string[]; dns_expect_rcode?: string } {
+  const name = normalizeDnsName(draft.dnsName);
+  const values = parseExpect(draft.dnsType, draft.dnsExpect, draft.dnsExpectRcode).values;
+  const out: { dns_name: string; dns_type: string; dns_expect?: string[]; dns_expect_rcode?: string } = { dns_name: name.ok ? name.name : draft.dnsName.trim(), dns_type: draft.dnsType || "A" };
+  if (values.length) out.dns_expect = values;
+  if (draft.dnsExpectRcode === DNS_RCODE_NXDOMAIN) out.dns_expect_rcode = DNS_RCODE_NXDOMAIN;
+  return out;
+}
+
+/** The dns fields of an edit that changed, compared by meaning; dns_expect is sent whole, [] to clear it. */
+function dnsQuestionEdit(before: CheckDraft, draft: CheckDraft): Partial<MonitorUpdateInput> {
+  const was = dnsQuestion(before);
+  const now = dnsQuestion(draft);
+  const out: Partial<MonitorUpdateInput> = {};
+  if (now.dns_name !== was.dns_name) out.dns_name = now.dns_name;
+  if (now.dns_type !== was.dns_type) out.dns_type = now.dns_type;
+  const a = now.dns_expect ?? [];
+  const b = was.dns_expect ?? [];
+  if (a.length !== b.length || a.some((v, i) => v !== b[i])) out.dns_expect = a;
+  if ((now.dns_expect_rcode ?? "") !== (was.dns_expect_rcode ?? "")) out.dns_expect_rcode = now.dns_expect_rcode ?? "NOERROR";
+  return out;
+}
+
 /** The create body for a new check (or the replacement of one whose method or target changed). */
 export function buildCreate(draft: CheckDraft, withAlert: boolean, options: BodyOptions = {}): MonitorCreateInput {
   const base: MonitorCreateInput = {
@@ -508,6 +565,7 @@ export function buildCreate(draft: CheckDraft, withAlert: boolean, options: Body
     const headers = headersForCreate(draft.headers);
     if (headers) base.headers = headers;
   }
+  if (draft.type === "dns") Object.assign(base, dnsQuestion(draft));
   if (isServerEvaluated(draft.type)) {
     base.threshold_days = Number(draft.thresholdDays);
     base.assign_all = false;

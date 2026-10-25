@@ -55,6 +55,7 @@ import { everyPath, stateRank, type PathAddress, type PathItem } from "./pathsMo
 import { usePathsCopy } from "./pathsCopy";
 import { verdictFor } from "./triangulationModel";
 import { EXPECT_STATUS_DEFAULT } from "./checkRulesModel";
+import { DNS_RCODE_NXDOMAIN, dnsFailure, failedAnswer } from "./dnsCheckModel";
 import type { PathsData } from "./usePathsData";
 
 const props = defineProps<{
@@ -384,11 +385,23 @@ function certDaysLeft(monitor: MonitorView): number | undefined {
   return expires === undefined ? undefined : Math.floor((expires - Date.now()) / DAY_MS);
 }
 
-/** A check's newest failure on one source, from the list's newest results. */
+/** A check's newest failure on one source, from the list's newest results. A dns failure's code reads as words. */
 function failureOn(monitor: MonitorView | undefined, source: string): string | undefined {
   const latest = monitor?.latest?.find((l) => (l.node_id ?? "") === source);
   // A run with a reason measured nothing; it is not the failure.
-  return latest && !latest.success && !latest.reason ? latest.error || undefined : undefined;
+  const error = latest && !latest.success && !latest.reason ? latest.error || undefined : undefined;
+  const dns = monitor?.type === "dns" ? dnsFailure(error) : undefined;
+  return dns ? t("fleet.monitoring.checks.sheet.dnsFailure", { what: t(`fleet.monitoring.checks.sheet.dnsFailureCode.${dns.code}`), detail: dns.detail }) : error;
+}
+
+/** What a dns check's newest failed run on one source got back, as one line; undefined when it got no response. */
+function answerOn(monitor: MonitorView | undefined, source: string): string | undefined {
+  if (monitor?.type !== "dns") return undefined;
+  const got = failedAnswer(monitor.latest?.find((l) => (l.node_id ?? "") === source));
+  if (!got) return undefined;
+  if (!got.answers.length) return t("fleet.monitoring.checks.sheet.dnsAnswerNone", { rcode: got.rcode, type: monitor.dns_type || "A" });
+  const answers = got.more ? t("fleet.monitoring.checks.sheet.dnsAnswerMore", { answers: got.answers.join(", "), n: got.more }) : got.answers.join(", ");
+  return t("fleet.monitoring.checks.sheet.dnsAnswer", { rcode: got.rcode, answers });
 }
 
 /**
@@ -595,6 +608,17 @@ const settingsRows = computed(() => {
     rows.push({ key: `header-${i}`, label: h.name, value: h.secret ? t("fleet.monitoring.checks.sheet.secretSet") : (h.value ?? ""), mono: true });
   }
   if (m.secrets_origin) rows.push({ key: "origin", label: t("fleet.monitoring.checks.sheet.secretsOrigin"), value: m.secrets_origin, mono: true });
+  if (m.type === "dns") {
+    const type = m.dns_type || "A";
+    rows.push({ key: "dns-question", label: t("fleet.monitoring.checks.sheet.dnsQuestion"), value: `${type} ${m.dns_name ?? ""}`, mono: true });
+    const passes =
+      m.dns_expect_rcode === DNS_RCODE_NXDOMAIN
+        ? t("fleet.monitoring.checks.sheet.dnsPassesNxdomain")
+        : m.dns_expect?.length
+          ? m.dns_expect.join(", ")
+          : t("fleet.monitoring.checks.sheet.dnsPassesAny", { type });
+    rows.push({ key: "dns-passes", label: t("fleet.monitoring.checks.sheet.dnsPasses"), value: passes, mono: !!m.dns_expect?.length });
+  }
   return rows;
 });
 const sheetState = computed(() => {
@@ -900,6 +924,12 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
                   <span v-else-if="row.latest?.reason" class="block text-xs break-words text-muted-foreground">{{ reasonText(row.latest.reason) }}</span>
                   <span v-else-if="row.latest && !row.latest.success" class="block text-xs break-words text-destructive">{{ row.latest.error || $t('fleet.monitoring.result.failing') }}</span>
                   <span v-else-if="!row.path && !row.latest" class="block text-xs text-muted-foreground">{{ $t('fleet.monitoring.checks.sheet.noResults') }}</span>
+                  <!-- What a failed dns run got back, under the failure it explains (design 32 S5a). -->
+                  <span
+                    v-if="!row.paused && (row.path ? row.path.state === 'down' : !!row.latest && !row.latest.success && !row.latest.reason) && answerOn(selected, row.source)"
+                    class="block font-mono text-xs [overflow-wrap:anywhere] text-muted-foreground"
+                    data-testid="check-dns-answer"
+                  >{{ answerOn(selected, row.source) }}</span>
                 </span>
                 <span class="text-end font-mono text-xs tabular">
                   <template v-if="row.path">
