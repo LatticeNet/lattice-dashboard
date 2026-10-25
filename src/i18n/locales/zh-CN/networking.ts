@@ -755,6 +755,10 @@ export default {
         confirm: "测量 {n} 个监听端口",
         toast: "证书检查:新建 {created} 个,关联 {linked} 个。第一次读数会在一分钟内出来。",
         failed: "证书测量失败",
+        blocked: {
+          no_hostname: "{name} 没有登记 hostname。证书要对照解析器应答的域名来检查,请先用「编辑」填上 hostname。",
+          address: "{name} 的 hostname 填的是地址。证书要对照域名来检查,请把 hostname 改成解析器应答的域名。",
+        },
       },
       realityCollected: "实况采集于 {time}",
       driftFindingsToggle: "1 条差异 | {count} 条差异",

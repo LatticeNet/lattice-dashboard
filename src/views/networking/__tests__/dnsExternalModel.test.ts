@@ -18,6 +18,7 @@ import {
   certShown,
   linkedCertWatch,
   listenerProcesses,
+  measureBlock,
 } from "../dnsExternalModel.ts";
 
 function deployment(over: Partial<DNSDeploymentView>): DNSDeploymentView {
@@ -331,6 +332,16 @@ test("a measure offers every tcp listener and ticks the ones that look like DoT 
   assert.deepEqual(certPortCandidates({ hostname: "dns.roobli.org", listeners: [{ protocol: "udp", port: 853 }] }), []);
 });
 
+test("a record is measured only against a name, never an address", () => {
+  assert.equal(measureBlock({ hostname: "dns.roobli.org" }), undefined);
+  assert.equal(measureBlock({ hostname: " " }), "no_hostname");
+  assert.equal(measureBlock({}), "no_hostname");
+  assert.equal(measureBlock({ hostname: "203.0.113.5" }), "address");
+  assert.equal(measureBlock({ hostname: "2001:db8::5" }), "address");
+  // A name that starts with digits is still a name.
+  assert.equal(measureBlock({ hostname: "1.dns.example" }), undefined);
+});
+
 test("DnsView reads the watch through the link and offers the measure", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
   assert.match(view, /linkedCertWatch\(dep, canReadMonitors\.value\)/);
@@ -341,6 +352,9 @@ test("DnsView reads the watch through the link and offers the measure", () => {
   assert.match(sheet, /certShown\(openDep\)\.source === 'measured'/, "the sheet no longer says which expiry it shows");
   assert.match(sheet, /certWatch\(openDep\)\.state === 'unwatched'/);
   assert.match(sheet, /openMeasure\(openDep\)/);
+  // Without a name to hold the certificate to, the action is disabled and says why.
+  assert.match(sheet, /:disabled="!!measureBlock\(openDep\)"/);
+  assert.match(view, /disabled: !!measureBlock\(dep\)/);
   assert.match(sheet, /name: 'monitor-detail'/);
   assert.match(sheet, /name: 'monitoring'/);
   assert.match(view, /api\.dns\.measureCert\(dep\.id, measurePorts\.value\)/);

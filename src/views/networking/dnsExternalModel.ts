@@ -206,6 +206,23 @@ export function certVerdict(
 
 // ── Measure this certificate ──────────────────────────────────────────────
 
+/** Why a record cannot be measured, or undefined when it can. */
+export type MeasureBlock = "no_hostname" | "address";
+
+/**
+ * A certificate is held to the name the resolver answers at, never to an
+ * address, and the server refuses a record without one. A save requires a
+ * hostname and refuses an address, so this only catches a record stored
+ * some other way; the action is disabled with the reason rather than offered
+ * and refused.
+ */
+export function measureBlock(dep: Pick<DNSDeploymentView, "hostname">): MeasureBlock | undefined {
+  const host = (dep.hostname ?? "").trim();
+  if (!host) return "no_hostname";
+  if (host.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return "address";
+  return undefined;
+}
+
 export interface CertPortCandidate {
   port: number;
   /** Ticked when the dialog opens: the listener looks like DoT or DoH. */

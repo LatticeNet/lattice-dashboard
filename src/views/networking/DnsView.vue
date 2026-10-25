@@ -62,6 +62,7 @@ import {
   isObservedEngine,
   linkedCertWatch,
   listenSummary,
+  measureBlock,
   listenerProcesses,
   type CertWatchLookup,
 } from "./dnsExternalModel";
@@ -304,9 +305,10 @@ const attention = computed<AttentionItem[]>(() => {
           tone: "warning",
           claim: t("networking.dnsPage.attention.unwatchedClaim", { hostname: dep.hostname ?? dep.name }),
           proof: t("networking.dnsPage.attention.unwatchedProof"),
-          action: canMeasure.value
-            ? { label: t("networking.dns.measure.action"), run: () => openMeasure(dep) }
-            : { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
+          action:
+            canMeasure.value && !measureBlock(dep)
+              ? { label: t("networking.dns.measure.action"), run: () => openMeasure(dep) }
+              : { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
         });
       }
     }
@@ -412,6 +414,8 @@ function menuFor(dep: DNSDeploymentView): RowMenuItem[] {
       label: t("networking.dns.measure.action"),
       icon: ShieldCheck,
       hidden: !observed || !canMeasure.value,
+      disabled: !!measureBlock(dep),
+      reason: measureBlockReason(dep),
       run: () => openMeasure(dep),
     },
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(dep) },
@@ -866,7 +870,14 @@ const measuring = ref(false);
 const measureError = ref("");
 const measureCandidates = computed(() => (measureTarget.value ? certPortCandidates(measureTarget.value) : []));
 
+/** The sentence a disabled measure action gives, naming the field to set. */
+function measureBlockReason(dep: DNSDeploymentView): string | undefined {
+  const block = measureBlock(dep);
+  return block ? t(`networking.dns.measure.blocked.${block}`, { name: dep.name }) : undefined;
+}
+
 function openMeasure(dep: DNSDeploymentView) {
+  if (measureBlock(dep)) return;
   measureTarget.value = dep;
   measurePorts.value = certPortCandidates(dep)
     .filter((candidate) => candidate.suggested)
@@ -1208,10 +1219,20 @@ function closePlan(open: boolean) {
             </li>
           </ul>
           <template v-if="certWatch(openDep).state === 'unwatched'">
-            <Button v-if="canMeasure" variant="outline" size="sm" type="button" @click="openMeasure(openDep)">
-              <ShieldCheck aria-hidden="true" />
-              {{ $t('networking.dns.measure.action') }}
-            </Button>
+            <template v-if="canMeasure">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                :disabled="!!measureBlock(openDep)"
+                :aria-describedby="measureBlock(openDep) ? 'dns-measure-blocked' : undefined"
+                @click="openMeasure(openDep)"
+              >
+                <ShieldCheck aria-hidden="true" />
+                {{ $t('networking.dns.measure.action') }}
+              </Button>
+              <p v-if="measureBlock(openDep)" id="dns-measure-blocked" class="text-xs text-muted-foreground">{{ measureBlockReason(openDep) }}</p>
+            </template>
             <RouterLink v-else :to="{ name: 'monitoring' }" class="block text-xs text-warning-text underline-offset-2 hover:underline">
               {{ $t('networking.dns.certUnwatched') }}
             </RouterLink>

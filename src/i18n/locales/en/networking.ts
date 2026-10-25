@@ -789,6 +789,10 @@ export default {
         confirm: "Measure {n} listener | Measure {n} listeners",
         toast: "Certificate checks: {created} created, {linked} linked. The first reading arrives within a minute.",
         failed: "The certificate could not be measured",
+        blocked: {
+          no_hostname: "{name} records no hostname. A certificate is checked against the name the resolver answers at, so set the hostname with Edit first.",
+          address: "{name} records an address as its hostname. A certificate is checked against a name, so set the hostname to the name the resolver answers at.",
+        },
       },
       realityCollected: "reality collected {time}",
       driftFindingsToggle: "1 finding | {count} findings",
