@@ -404,19 +404,38 @@ function fastestMs(run: () => void, runs = 5): number {
   return best;
 }
 
-// growthOf reports how many times longer the tokenizer takes on eight times
-// the input. One pass grows about eight times and a quadratic one about
-// sixty-four. A ratio of two sizes measured in the same process keeps the
-// check about the tokenizer rather than about the machine, which a fixed
-// millisecond budget never was. The wide step leaves room for noise both ways.
-function growthOf(make: (n: number) => string, n: number): number {
+// growthOf reports how many times longer run takes on eight times the input:
+// the median of three ratios of two sizes measured in the same process, so the
+// check is about the code rather than about the machine, which a fixed
+// millisecond budget never was. One pass grows about eight times and a
+// quadratic one about sixty-four. A linear pass that allocates a token per few
+// bytes reads higher than eight, because the collector's work grows with the
+// live token array: about fourteen locally for a storm of `#`, and once 25.5 on
+// a CI runner. The median drops a single collection landing in one sample.
+function growthOf(make: (n: number) => string, n: number, run: (source: string) => unknown = tokenizeShell): number {
   const small = make(n);
   const large = make(8 * n);
-  tokenizeShell(small);
-  return fastestMs(() => tokenizeShell(large)) / Math.max(fastestMs(() => tokenizeShell(small)), 0.5);
+  run(small);
+  const ratios: number[] = [];
+  for (let i = 0; i < 3; i++) ratios.push(fastestMs(() => run(large)) / Math.max(fastestMs(() => run(small)), 0.5));
+  return ratios.sort((a, b) => a - b)[1]!;
 }
 
-const LINEAR_GROWTH_MAX = 24;
+// Linear with allocation stays well under it; quadratic lands near sixty-four
+// and above, so twice the margin is left on that side (the guard test below).
+const LINEAR_GROWTH_MAX = 32;
+
+// The limit must still catch the bug these checks exist for: a scan that walks
+// back over everything before each character.
+test("the growth guard still sees a quadratic pass", () => {
+  const quadratic = (source: string) => {
+    let found = 0;
+    for (let i = 0; i < source.length; i++) if (source.lastIndexOf("#", i) >= 0) found++;
+    return found;
+  };
+  const growth = growthOf((n) => "a".repeat(n), 4000, quadratic);
+  assert.ok(growth > LINEAR_GROWTH_MAX, `a quadratic pass grew only ${growth.toFixed(1)} times`);
+});
 
 test("a deep nest of substitutions neither overflows the stack nor loses text", () => {
   const source = "echo " + "$(".repeat(20000) + "x" + ")".repeat(20000);

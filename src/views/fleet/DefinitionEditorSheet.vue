@@ -715,6 +715,7 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
       <SaveRefusal
         :refusal="refusals.refusal.value"
         :changed="refusals.conflict.value?.changed"
+        :values="refusals.conflict.value?.theirs"
         :by="refusals.conflict.value?.latest.updated_by"
         :at="refusals.conflict.value?.latest.updated_at"
         :labels="fieldLabels"

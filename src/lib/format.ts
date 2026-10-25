@@ -173,8 +173,12 @@ export function formatAge(ms: number, locale?: string): string {
   return `${Math.floor(h / 24)}${u.d}`;
 }
 
-/** Short, copy-friendly id (first 8 chars). */
+/**
+ * An id's first `len` characters, followed by an ellipsis when that is not
+ * all of it, so a shortened id never passes for a whole one (a 21-character
+ * node id cut to 20 read as complete). Copy the id itself, not this.
+ */
 export function shortId(id?: string, len = 8): string {
   if (!id) return NO_VALUE;
-  return id.length > len ? id.slice(0, len) : id;
+  return id.length > len ? `${id.slice(0, len)}…` : id;
 }

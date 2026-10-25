@@ -428,9 +428,10 @@ function cellPinClass(column: DataTableColumn<T>, index: number): string | undef
     // pinned name; the name gives up those 4 px. Below md the width is the
     // cap too: min and max alone let the table hand its spare width to this
     // column, and the pair ran to 149 px against 142.5 at 375.
+    // The share is 38vw unless the column's own class sets --pin-share (app.css).
     const cap = props.selectable
-      ? "[--pin-left:2.5rem] [--pin-max:calc(38vw_-_2.5rem)] [--pin-min:calc(38vw_-_2.5rem)] pointer-coarse:[--pin-left:2.75rem] pointer-coarse:[--pin-max:calc(38vw_-_2.75rem)] pointer-coarse:[--pin-min:calc(38vw_-_2.75rem)] max-md:w-(--pin-min)"
-      : "[--pin-max:38vw]";
+      ? "[--pin-left:2.5rem] [--pin-max:calc(var(--pin-share,38vw)_-_2.5rem)] [--pin-min:calc(var(--pin-share,38vw)_-_2.5rem)] pointer-coarse:[--pin-left:2.75rem] pointer-coarse:[--pin-max:calc(var(--pin-share,38vw)_-_2.75rem)] pointer-coarse:[--pin-min:calc(var(--pin-share,38vw)_-_2.75rem)] max-md:w-(--pin-min)"
+      : "[--pin-max:var(--pin-share,38vw)]";
     return cn("pin-start", cap, !column.wrap && "max-md:truncate");
   }
   if (pinnedEnd(column)) return cn("pin-end", props.rowTo && "[--pin-right:2rem]");

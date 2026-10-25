@@ -39,6 +39,9 @@
  *                         paths stopped 25 minutes ago), DMIT-4 is down from all three,
  *                         so every triangulation verdict appears; with one source every
  *                         verdict reads "this path"
+ *   ?spike=1              one bucket two thirds of the way along every series
+ *                         answers in about a second, as one stalled run does,
+ *                         to see the chart keep the normal range readable
  *   ?names=long           two nodes the matrix names with long names, to see
  *                         truncation in cells, lists, sheets and the attention list
  *   ?m3=golden            the M3 server's golden responses (src/testing/m3Golden.ts),
@@ -106,6 +109,7 @@ export const MIGRATED = PARAMS.get("migrated") !== "0" && PATHS_SHAPE !== "old" 
 export const FLEET_MESH_ID = "chk_fleet_mesh";
 // The M3 fixture shows a method switch on gomami-hk as well.
 const SWITCH = PARAMS.get("switch") === "1" || M3;
+const SPIKE = PARAMS.get("spike") === "1";
 const SEVERAL = PATHS_SHAPE === "three" || PATHS_SHAPE === "six";
 /** `?names=long`: the names the matrix carries for two nodes, long enough to wrap or truncate everywhere. */
 const LONG_NAMES: Record<string, string> = PARAMS.get("names") === "long"
@@ -830,6 +834,11 @@ export function seriesFor(plan: LatencyProbePlan, checks: MonitorView[], query: 
     if (!plan.config.enabled) shape = { ...shape, pausedSince: Infinity };
   }
   const { step, from, to, buckets } = bucketsFor(shape, query.window);
+  if (SPIKE) {
+    const i = Math.floor((buckets.length * 2) / 3);
+    const b = buckets[i];
+    if (b && b.n > b.fail && b.p50_ms != null) buckets[i] = { ...b, p50_ms: 1012, p95_ms: 1046, max_ms: 1071 };
+  }
   // As the server: the method in force from the first bucket with data, then each switch.
   const firstHeard = buckets.find((b) => b.n > 0)?.t ?? from;
   const switched = SWITCH && shape.target?.name === "[cd]-gomami-hk-turin-mini";

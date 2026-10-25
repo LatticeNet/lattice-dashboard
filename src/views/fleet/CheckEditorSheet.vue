@@ -876,6 +876,7 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
       <SaveRefusal
         :refusal="refusals.refusal.value"
         :changed="refusals.conflict.value?.changed"
+        :values="refusals.conflict.value?.theirs"
         :at="refusals.conflict.value?.latest.updated_at"
         :labels="fieldLabels"
         :message-id="refusals.messageId"

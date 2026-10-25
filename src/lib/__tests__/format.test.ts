@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NO_VALUE, formatAge, formatDateTime, formatDateTimeRange, formatMoney, isZeroTime, setFormatLocale } from "../format.ts";
+import { NO_VALUE, formatAge, formatDateTime, formatDateTimeRange, formatMoney, isZeroTime, setFormatLocale, shortId } from "../format.ts";
 import { canonicalCurrency, currencyInputCode, currencyRewrittenOnSave } from "../currency.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
@@ -112,4 +112,13 @@ test("formatDateTimeRange drops the year in the current year and the end's date 
   } finally {
     setFormatLocale(undefined);
   }
+});
+
+test("a shortened id says it is shortened; a whole one is left alone", () => {
+  assert.equal(shortId("node_0123456789abcdef", 20), "node_0123456789abcde…", "one character over still shows the cut");
+  assert.equal(shortId("apr_8f2c41d07e", 8), "apr_8f2c…");
+  assert.equal(shortId("node_001f596b", 20), "node_001f596b", "an id that fits is printed whole, with no mark");
+  assert.equal(shortId("abcdefgh"), "abcdefgh", "exactly the length is whole");
+  assert.equal(shortId(undefined), NO_VALUE);
+  assert.equal(shortId(""), NO_VALUE);
 });

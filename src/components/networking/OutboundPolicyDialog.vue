@@ -396,6 +396,7 @@ async function submit(): Promise<void> {
           <SaveRefusal
             :refusal="saveState.refusal.value"
             :changed="saveState.conflict.value?.changed"
+            :values="saveState.conflict.value?.theirs"
             :at="saveState.conflict.value?.latest.updated_at"
             :labels="fieldLabels"
             :message-id="saveState.messageId"

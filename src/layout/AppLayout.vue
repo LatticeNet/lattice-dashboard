@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { useUiStore } from "@/stores/ui";
+import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useAuthStore } from "@/stores/auth";
 import { missingRouteScopes } from "@/router/accessModel";
 import AppSidebar from "./components/AppSidebar.vue";
@@ -23,9 +24,12 @@ const { density } = storeToRefs(ui);
 // Sidebar collapse persists via the ui store (localStorage-backed) so the rail
 // state survives reloads. The store is the single source of truth; we expose a
 // computed proxy so AppSidebar's `v-model:collapsed` keeps working unchanged.
+// Between md and lg the sidebar starts on its rail and that band keeps its own
+// toggle (ui store), so a page there is not left about 480 px wide by default.
+const mediumBand = useMediaQuery("(min-width: 768px) and (max-width: 1023.98px)");
 const collapsed = computed({
-  get: () => ui.sidebarCollapsed,
-  set: (v: boolean) => ui.setSidebarCollapsed(v),
+  get: () => (mediumBand.value ? ui.sidebarCollapsedMedium : ui.sidebarCollapsed),
+  set: (v: boolean) => (mediumBand.value ? ui.setSidebarCollapsedMedium(v) : ui.setSidebarCollapsed(v)),
 });
 
 const desktopWidth = computed({

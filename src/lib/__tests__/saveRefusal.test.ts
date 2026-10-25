@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ApiError } from "../api/client.ts";
-import { changedFields, isVersionConflict, pathSteps, refusalFocusIndex, refusalOf, resolveField, valueAt } from "../saveRefusal.ts";
+import { changedFields, conflictValue, isVersionConflict, pathSteps, refusalFocusIndex, refusalOf, resolveField, theirValues, valueAt } from "../saveRefusal.ts";
 
 // Design 32 R6: the server names the deepest field it can; the editor
 // registers the controls it has. The longest registered ancestor wins.
@@ -54,6 +54,25 @@ test("the changed fields are the paths whose values differ", () => {
   assert.deepEqual(changedFields(base, current, ["name", "interval_sec", "sources", "excluded_pairs"]), ["name", "sources"]);
   assert.deepEqual(changedFields(base, base, ["name", "sources"]), []);
   assert.deepEqual(changedFields({ targets: { all: true, exclude: [] } }, { targets: { all: true } }, ["targets"]), []);
+});
+
+// The conflict says what a changed field holds now when that reads at a
+// glance: a name, a number, a switch. Lists and objects (node ids, selectors)
+// stay a label only.
+test("a conflict shows the server's value for scalar fields only", () => {
+  assert.equal(conflictValue(" edge check "), "edge check");
+  assert.equal(conflictValue(60), "60");
+  assert.equal(conflictValue(false), false);
+  assert.equal(conflictValue(""), undefined);
+  assert.equal(conflictValue(Number.NaN), undefined);
+  assert.equal(conflictValue(["node_a"]), undefined);
+  assert.equal(conflictValue({ all: true }), undefined);
+  assert.equal(conflictValue(null), undefined);
+  const long = conflictValue("x".repeat(80));
+  assert.equal(typeof long === "string" && long.length, 60);
+  assert.ok(typeof long === "string" && long.endsWith("\u2026"));
+  const current = { name: "web edge", interval_sec: 60, enabled: false, sources: { nodes: ["a", "b"] } };
+  assert.deepEqual(theirValues(current, ["name", "interval_sec", "enabled", "sources", "missing"]), { name: "web edge", interval_sec: "60", enabled: false });
 });
 
 test("an error reads as a conflict only by its code, and a refusal keeps its field", () => {

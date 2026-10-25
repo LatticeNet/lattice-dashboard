@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { CheckDefinitionPreview, CheckDefinitionView, MonitorView } from "@/lib/api/types";
+import type { CheckDefinitionPreview, CheckDefinitionView, LatencyProbePlan, MonitorView } from "@/lib/api/types";
 
 import {
   addressesOf,
@@ -9,6 +9,7 @@ import {
   buildDefinitionSave,
   checkRowGroup,
   checkRows,
+  pathSetEditable,
   definitionDirty,
   definitionProblems,
   draftFromDefinition,
@@ -180,6 +181,14 @@ test("R1: a migrated Fleet mesh is an ordinary definition; the list has no built
   const mesh = { name: "Fleet mesh", enabled: true, stored: true, version: 5, method: "tcp", sources: 0, targets: 0, paths: 0, paused_targets: 0, migrated: true, definitions: ["chk_fleet_mesh"] };
   const rows = checkRows(monitors, [stored({ id: "chk_fleet_mesh", name: "Fleet mesh" })], mesh);
   assert.deepEqual(rows.map((r) => [r.kind, r.key, checkRowGroup(r)]), [["definition", "def:chk_fleet_mesh", "checks"]]);
+});
+
+test("R1: the path set's editor is offered only before migration, so no header button opens nothing", () => {
+  const config = { enabled: true, interval_sec: 60, sources: ["n-sh"] } as unknown as LatencyProbePlan["config"];
+  assert.equal(pathSetEditable(undefined), false, "not read yet");
+  assert.equal(pathSetEditable({ config }), true, "a path set of its own");
+  assert.equal(pathSetEditable({ config: { ...config, migrated: { at: "2026-10-24T10:00:00Z", definitions: ["chk_fleet_mesh"] } } }), false, "migrated: Fleet mesh is a check row");
+  assert.equal(pathSetEditable({ config: { ...config, migrated: null } }), true, "a server that sends null has not migrated");
 });
 
 test("R1: auto takes target nodes only, sends packets for its icmp and beacon pairs, and keeps its excluded pairs through an edit", () => {

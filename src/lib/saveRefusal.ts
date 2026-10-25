@@ -89,6 +89,35 @@ export function changedFields(base: unknown, current: unknown, paths: readonly s
   return paths.filter((path) => JSON.stringify(comparable(valueAt(base, path))) !== JSON.stringify(comparable(valueAt(current, path))));
 }
 
+/** The longest value a conflict quotes; longer strings end in an ellipsis. */
+const CONFLICT_VALUE_MAX = 60;
+
+/**
+ * What a changed field holds on the server now, as the conflict quotes it:
+ * a trimmed string, a finite number as text, or a boolean (the footer says
+ * on or off). Undefined for empty values, lists and objects, which the
+ * conflict names by label only: a list of node ids or a selector is noise
+ * in a sentence.
+ */
+export function conflictValue(value: unknown): string | boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : undefined;
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  return text.length > CONFLICT_VALUE_MAX ? `${text.slice(0, CONFLICT_VALUE_MAX - 1)}\u2026` : text;
+}
+
+/** The quotable server values of paths in current (conflictValue), by path. */
+export function theirValues(current: unknown, paths: readonly string[]): Record<string, string | boolean> {
+  const out: Record<string, string | boolean> = {};
+  for (const path of paths) {
+    const value = conflictValue(valueAt(current, path));
+    if (value !== undefined) out[path] = value;
+  }
+  return out;
+}
+
 /** What a refusal's focus reads of a focusable control inside the marked holder. */
 export interface FocusCandidate {
   tag: string;

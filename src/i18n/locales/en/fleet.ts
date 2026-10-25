@@ -553,7 +553,7 @@ export default {
         sampleTime: "Sample time",
         download: "Download",
         upload: "Upload",
-        transferred: "Transferred (rx / tx)",
+        transferred: "Transferred (up / down)",
         network: "Network & IP",
         networkDesc: "Addressing, mesh, and geolocation",
         sameAsPublic: "same as public / not separately reported",
