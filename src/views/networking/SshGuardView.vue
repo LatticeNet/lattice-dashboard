@@ -1369,14 +1369,19 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
          point, and the one password-open chip is what an operator asking
          "which nodes are not secure" clicks. Arm history second: what is
          still in motion. The two compose. At phone width the strip scrolls
-         sideways, edge to edge, instead of wrapping into five lines. -->
+         sideways, edge to edge, instead of wrapping into five lines. From
+         sm up each group may shrink to its widest chip and wraps inside
+         itself, so the strip never pushes the page sideways (in the 768
+         shell the column is 528 px and the chips need about 1100). The rule
+         between the groups is the second group's own left edge, so a group
+         that wraps to a line of its own never leaves it standing alone. -->
     <div
       v-if="states.length"
       class="flex items-center gap-1 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:pb-1 sm:flex-wrap sm:gap-y-1.5"
       data-testid="chip-strip"
     >
     <div
-      class="flex shrink-0 gap-1 sm:flex-wrap"
+      class="flex shrink-0 gap-1 sm:shrink sm:flex-wrap sm:gap-y-1.5"
       role="group"
       :aria-label="$t('networking.sshGuard.coverage.postureLabel')"
       data-testid="posture-chips"
@@ -1402,9 +1407,8 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         <span class="font-mono tabular">{{ postureChipCounts[key] }}</span>
       </button>
     </div>
-    <span aria-hidden="true" class="mx-1 h-5 w-px shrink-0 bg-border" />
     <div
-      class="flex shrink-0 gap-1 sm:flex-wrap"
+      class="ms-1 flex shrink-0 gap-1 border-s border-border ps-2 sm:shrink sm:flex-wrap sm:gap-y-1.5"
       role="group"
       :aria-label="$t('networking.sshGuard.coverage.filterLabel')"
       data-testid="history-chips"

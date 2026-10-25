@@ -66,3 +66,25 @@ test("ui store persists desktop sidebar width updates and resets", () => {
   assert.equal(ui.sidebarDesktopWidth, 240);
   assert.equal(storage.getItem("lattice.ui.sidebarDesktopWidth"), "240");
 });
+
+test("ui store starts the 768 to 1023 px band on the rail and keeps that band's toggle apart", () => {
+  const storage = installStorage();
+  setActivePinia(createPinia());
+
+  const ui = useUiStore();
+  assert.equal(ui.sidebarCollapsed, false, "wide screens keep the open sidebar by default");
+  assert.equal(ui.sidebarCollapsedMedium, true, "the medium band starts on the rail");
+
+  ui.setSidebarCollapsedMedium(false);
+  assert.equal(ui.sidebarCollapsedMedium, false);
+  assert.equal(ui.sidebarCollapsed, false);
+  assert.equal(storage.getItem("lattice.ui.sidebarCollapsedMedium"), "false");
+
+  ui.setSidebarCollapsed(true);
+  assert.equal(ui.sidebarCollapsedMedium, false, "collapsing on a wide screen leaves the medium band's choice alone");
+
+  setActivePinia(createPinia());
+  const again = useUiStore();
+  assert.equal(again.sidebarCollapsedMedium, false, "the operator's toggle survives a reload");
+  assert.equal(again.sidebarCollapsed, true);
+});

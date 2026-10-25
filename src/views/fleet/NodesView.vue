@@ -337,8 +337,11 @@ const columns = computed<DataTableColumn<Node>[]>(() => [
       sortable: true,
       align: ALIGN_RIGHT.has(column.id) ? "right" : undefined,
       value: SORT_VALUE[column.id],
-      // From 768 px only: on a phone the pinned column's cap (38vw with the checkbox) governs.
-      class: column.id === "name" ? "md:min-w-48" : undefined,
+      // From 768 px a floor of 12rem. On a phone the pinned column's share
+      // governs: 38vw with the checkbox left a name about five characters at
+      // 375, so the name gets 12rem with the checkbox (half the screen at
+      // most, never less than the 38vw it had) and IPv4 is what scrolls.
+      class: column.id === "name" ? "md:min-w-48 max-md:[--pin-share:max(38vw,min(50vw,12rem))]" : undefined,
     }),
   ),
   // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
@@ -1048,7 +1051,8 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           <span class="font-mono text-xs">{{ row.public_ip || '' }}</span>
         </template>
         <template #cell-agent="{ row }">
-          <span class="font-mono text-xs">{{ row.agent_version || '' }}</span>
+          <!-- "0.3.10-alpha.7" broke at its hyphen and doubled the row. -->
+          <span class="whitespace-nowrap font-mono text-xs">{{ row.agent_version || '' }}</span>
         </template>
         <template #cell-lastSeen="{ row }">
           <span

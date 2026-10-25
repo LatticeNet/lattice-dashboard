@@ -48,9 +48,10 @@ export function formatSeconds(seconds: number | undefined): string {
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 
-const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+// 1024 steps, so binary units: the Nodes list and the node page print KiB/s.
+const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 
-/** Bytes with 1024 steps, as the rest of the console prints them. */
+/** Bytes with 1024 steps and binary units, as the rest of the console prints them. */
 export function formatBytesShort(bytes: number | undefined, digits = 1): string {
   if (bytes === undefined || !Number.isFinite(bytes)) return NO_VALUE;
   const negative = bytes < 0;
@@ -64,7 +65,7 @@ export function formatBytesShort(bytes: number | undefined, digits = 1): string 
   return `${negative ? "-" : ""}${v.toFixed(i === 0 ? 0 : digits)} ${BYTE_UNITS[i]}`;
 }
 
-/** A signed byte change: "+120.0 MB", "-3.0 KB", "±0 B". */
+/** A signed byte change: "+120.0 MiB", "-3.0 KiB", "±0 B". */
 export function formatByteChange(delta: number | undefined): string | undefined {
   if (delta === undefined || !Number.isFinite(delta)) return undefined;
   if (Math.abs(delta) < 1) return "±0 B";

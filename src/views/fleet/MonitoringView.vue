@@ -65,7 +65,7 @@ import { isReachabilityCheck, replanMissingScopes, replanStep, replanSurface, ty
 import { BEACON_REPLAN } from "./useBeaconReplan";
 import { serverSpeaksM2a, serverSpeaksM2b } from "./checkRulesModel";
 import { withPathVerdict } from "./checksModel";
-import type { DefinitionFix } from "./definitionsModel";
+import { pathSetEditable, type DefinitionFix } from "./definitionsModel";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -283,10 +283,7 @@ provide(BEACON_REPLAN, {
 });
 
 /** The path set is read and not migrated into check definitions (design 32 R1): only then is its editor offered. */
-const canEditPathSet = computed(() => {
-  const plan = data.planQuery.data.value;
-  return !!plan && !plan.config.migrated;
-});
+const canEditPathSet = computed(() => pathSetEditable(data.planQuery.data.value));
 
 /** The path set exists, is not migrated, and has no source: nothing is measured, and the empty state says why. */
 const noSources = computed(() => {
@@ -583,7 +580,8 @@ const refreshing = computed(() => monitorsQuery.refreshing.value || data.pathsQu
         <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template v-if="canReadMonitors" #actions>
-        <Button v-if="canAdminMonitors && layer === 'checks' && plan" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="openPathSet">
+        <!-- Only while the path set has an editor of its own: after migration Fleet mesh is a check row, edited there. -->
+        <Button v-if="canAdminMonitors && layer === 'checks' && canEditPathSet" variant="outline" size="sm" type="button" data-testid="pathset-open" @click="openPathSet">
           <Settings2 class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.checks.actions.pathSet') }}
         </Button>

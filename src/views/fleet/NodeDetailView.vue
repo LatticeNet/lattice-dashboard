@@ -554,6 +554,12 @@ const statusBadge = computed(() => ({
   label: t(statusInfo.value.labelKey),
 }));
 
+/** Why the header offers no terminal: the node is disabled, or its agent is not reporting. */
+const terminalOffText = computed(() => {
+  const n = node.value;
+  return n && (n.disabled || nodeStatus(n) === "disabled") ? t("fleet.nodes.detail.terminalOffDisabled") : t("fleet.nodes.detail.terminalOffNotReporting");
+});
+
 /**
  * The server's account of the word: since when, and the one sentence naming
  * the evidence. A node offline since 2026-08-27 and one that never reported
@@ -1528,14 +1534,18 @@ async function saveDebug(): Promise<void> {
         <SquareTerminal class="size-4" aria-hidden="true" />
         <span class="hidden sm:inline">{{ $t('fleet.nodes.list.openTerminal') }}</span>
       </Button>
-      <!-- No session without the agent: say why instead of a dimmed teal button. -->
+      <!-- No session without the agent: say why instead of a dimmed teal button.
+           On a phone the name needs the line ("[Metix]-D..." beside this
+           sentence made the DMIT nodes look alike): the dimmed icon stays
+           beside the status word, the sentence is its title and is read out. -->
       <span
         v-else-if="canOpenTerminal"
         class="ms-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+        :title="terminalOffText"
         data-testid="node-terminal-off"
       >
         <SquareTerminal class="size-4 opacity-60" aria-hidden="true" />
-        {{ node.disabled || nodeStatus(node) === 'disabled' ? $t('fleet.nodes.detail.terminalOffDisabled') : $t('fleet.nodes.detail.terminalOffNotReporting') }}
+        <span class="max-sm:sr-only">{{ terminalOffText }}</span>
       </span>
     </div>
 
@@ -1589,8 +1599,11 @@ async function saveDebug(): Promise<void> {
               {{ g.name }}
               <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
             </button>
-            <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground tabular">
-              {{ shortId(node.id, 20) }}
+            <!-- The whole id: it is what gets copied and quoted, and a cut one
+                 dropped its last character with no mark. Only a line too
+                 narrow for it truncates it, with an ellipsis. -->
+            <span class="inline-flex min-w-0 max-w-full items-center gap-1.5 font-mono text-xs text-muted-foreground tabular">
+              <span class="truncate" :title="node.id">{{ node.id }}</span>
               <CopyButton :value="node.id" />
             </span>
           </div>
@@ -1752,14 +1765,8 @@ async function saveDebug(): Promise<void> {
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sampleTime') }}</p>
                     <p class="mt-1 font-mono text-sm tabular">{{ noSample ? NO_VALUE : formatRelativeTime(node.metrics?.collected_at) }}</p>
                   </div>
-                  <!-- A rate is a reading of now; a node that is not reporting has none. -->
-                  <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
-                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.download') }}</p>
-                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
-                      <ArrowDown class="size-3.5 text-success" aria-hidden="true" />
-                      {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
-                    </p>
-                  </div>
+                  <!-- A rate is a reading of now; a node that is not reporting has none.
+                       Upload, then Download, as the Nodes list (design 32 R5). -->
                   <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.upload') }}</p>
                     <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
@@ -1767,13 +1774,20 @@ async function saveDebug(): Promise<void> {
                       {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
                     </p>
                   </div>
+                  <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.download') }}</p>
+                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
+                      <ArrowDown class="size-3.5 text-success" aria-hidden="true" />
+                      {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
+                    </p>
+                  </div>
                   <div class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.transferred') }}</p>
                     <p v-if="noSample" class="mt-1 font-mono text-sm tabular">{{ NO_VALUE }}</p>
                     <p v-else class="mt-1 font-mono text-sm tabular">
-                      <span class="text-success">{{ formatBytes(node.metrics?.net_rx_bytes) }}</span>
-                      /
                       <span class="text-primary">{{ formatBytes(node.metrics?.net_tx_bytes) }}</span>
+                      /
+                      <span class="text-success">{{ formatBytes(node.metrics?.net_rx_bytes) }}</span>
                     </p>
                   </div>
                 </div>
