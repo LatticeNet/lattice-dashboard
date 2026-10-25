@@ -8,6 +8,7 @@ import {
 export type Density = "comfortable" | "compact";
 
 const SIDEBAR_KEY = "lattice.ui.sidebarCollapsed";
+const SIDEBAR_MEDIUM_KEY = "lattice.ui.sidebarCollapsedMedium";
 const SIDEBAR_WIDTH_KEY = "lattice.ui.sidebarDesktopWidth";
 const DENSITY_KEY = "lattice.ui.density";
 
@@ -16,13 +17,19 @@ function isDensity(v: string | null): v is Density {
 }
 
 /**
- * Shell/UI preferences (sidebar collapse, density). Persisted to localStorage
+ * Shell/UI preferences (sidebar collapse per width band, density). Persisted to localStorage
  * under `lattice.*` keys, mirroring the manual persistence pattern in the theme
  * store so values survive reloads without depending on a global plugin.
  */
 export const useUiStore = defineStore("ui", () => {
   const sidebarCollapsed = ref<boolean>(
     localStorage.getItem(SIDEBAR_KEY) === "true",
+  );
+  // From 768 to 1023 px a 240 px sidebar leaves a table about 480 px, so
+  // that band starts on the 64 px rail and remembers its own toggle; the
+  // wide band keeps the preference it always had.
+  const sidebarCollapsedMedium = ref<boolean>(
+    localStorage.getItem(SIDEBAR_MEDIUM_KEY) !== "false",
   );
   const persistedSidebarWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
   const sidebarDesktopWidth = ref<number>(
@@ -47,6 +54,11 @@ export const useUiStore = defineStore("ui", () => {
     setSidebarCollapsed(!sidebarCollapsed.value);
   }
 
+  function setSidebarCollapsedMedium(next: boolean) {
+    sidebarCollapsedMedium.value = next;
+    localStorage.setItem(SIDEBAR_MEDIUM_KEY, String(next));
+  }
+
   function setSidebarDesktopWidth(next: number) {
     const clamped = clampSidebarDesktopWidth(next);
     sidebarDesktopWidth.value = clamped;
@@ -68,10 +80,12 @@ export const useUiStore = defineStore("ui", () => {
 
   return {
     sidebarCollapsed,
+    sidebarCollapsedMedium,
     sidebarDesktopWidth,
     density,
     setSidebarCollapsed,
     toggleSidebar,
+    setSidebarCollapsedMedium,
     setSidebarDesktopWidth,
     resetSidebarDesktopWidth,
     setDensity,

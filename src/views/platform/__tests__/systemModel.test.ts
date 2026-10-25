@@ -63,10 +63,10 @@ test("durations read in the unit an operator thinks in", () => {
 
 test("bytes and byte changes", () => {
   assert.equal(formatBytesShort(0), "0 B");
-  assert.equal(formatBytesShort(930 * 1024 * 1024), "930.0 MB");
-  assert.equal(formatBytesShort(1.5 * 1024 ** 3), "1.5 GB");
-  assert.equal(formatByteChange(120 * 1024 * 1024), "+120.0 MB");
-  assert.equal(formatByteChange(-3 * 1024), "-3.0 KB");
+  assert.equal(formatBytesShort(930 * 1024 * 1024), "930.0 MiB");
+  assert.equal(formatBytesShort(1.5 * 1024 ** 3), "1.5 GiB");
+  assert.equal(formatByteChange(120 * 1024 * 1024), "+120.0 MiB");
+  assert.equal(formatByteChange(-3 * 1024), "-3.0 KiB");
   assert.equal(formatByteChange(0.2), "±0 B");
   assert.equal(formatByteChange(undefined), undefined);
 });
@@ -74,7 +74,7 @@ test("bytes and byte changes", () => {
 test("a value prints in its series' unit", () => {
   assert.equal(formatUnit("percent", 7.25), "7.3%");
   assert.equal(formatUnit("percent", 62.4), "62%");
-  assert.equal(formatUnit("bytes_per_second", 2048), "2.0 KB/s");
+  assert.equal(formatUnit("bytes_per_second", 2048), "2.0 KiB/s");
   assert.equal(formatUnit("load", 0.5), "0.50");
   assert.equal(formatUnit("count", 1204.4), "1,204");
   assert.equal(formatUnit("seconds", 0.25), "250 ms");

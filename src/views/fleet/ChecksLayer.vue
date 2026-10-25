@@ -480,8 +480,11 @@ const columns = computed<DataTableColumn<CheckRow>[]>(() => [
   { key: "name", label: t("fleet.monitoring.checks.table.name"), sortable: true, searchable: true, wrap: true, class: "max-w-80", value: (r) => checkRowName(r) },
   { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (r) => healthRank(rowHealth(r)) },
   { key: "type", label: t("fleet.monitoring.checks.table.method"), sortable: true, searchable: true, value: (r) => checkRowMethod(r) },
-  { key: "target", label: t("fleet.monitoring.checkDefs.list.to"), searchable: true, value: (r) => rowTarget(r) },
-  { key: "assignment", label: t("fleet.monitoring.checks.table.from"), value: (r) => rowAssignment(r) },
+  // From names nodes, which break only at their hyphens: without a floor the
+  // table gave it about 80 px and a name ran over four lines while To had
+  // room. To breaks a long URL anywhere instead of holding the table open.
+  { key: "target", label: t("fleet.monitoring.checkDefs.list.to"), searchable: true, class: "min-w-48", value: (r) => rowTarget(r) },
+  { key: "assignment", label: t("fleet.monitoring.checks.table.from"), class: "min-w-44", value: (r) => rowAssignment(r) },
   { key: "interval", label: t("fleet.monitoring.table.every"), sortable: true, value: (r) => (r.kind === "check" ? r.monitor.interval_sec : r.kind === "definition" ? r.definition.interval_sec : 0) },
   { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
@@ -795,7 +798,7 @@ const settings = computed<MonitorSettings | undefined>(() => props.data.settings
         <span v-if="row.kind === 'check' && row.monitor.type === 'tls'" class="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.monitor.threshold_days ?? 14 }) }}</span>
       </template>
       <template #cell-target="{ row }">
-        <span :class="cn('text-xs break-words', row.kind === 'check' && 'font-mono')">{{ rowTarget(row) }}</span>
+        <span :class="cn('text-xs [overflow-wrap:anywhere]', row.kind === 'check' && 'font-mono')">{{ rowTarget(row) }}</span>
       </template>
       <template #cell-assignment="{ row }">
         <span class="text-xs break-words text-muted-foreground">{{ rowAssignment(row) }}</span>
