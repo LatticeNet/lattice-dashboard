@@ -66,9 +66,10 @@ const panels = computed<Panel[]>(() => [
     key: "net",
     title: t("platform.system.nodeHistory.network"),
     unit: "bytes_per_second",
+    // Upload (out) before download (in), as the Nodes list and the live readings (design 32 R5).
     lines: [
-      { series: byName.value.get("net_rx"), label: t("platform.system.nodeHistory.rx") },
-      { series: byName.value.get("net_tx"), label: t("platform.system.nodeHistory.tx"), tone: "muted" },
+      { series: byName.value.get("net_tx"), label: t("platform.system.nodeHistory.tx") },
+      { series: byName.value.get("net_rx"), label: t("platform.system.nodeHistory.rx"), tone: "muted" },
     ],
   },
   {

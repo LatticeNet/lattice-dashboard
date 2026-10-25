@@ -545,7 +545,7 @@ export default {
         sampleTime: "采样时间",
         download: "下行",
         upload: "上行",
-        transferred: "累计流量(收 / 发)",
+        transferred: "累计流量(上行 / 下行)",
         network: "网络与 IP",
         networkDesc: "地址、网格与地理位置",
         sameAsPublic: "与公网相同 / 未单独上报",
