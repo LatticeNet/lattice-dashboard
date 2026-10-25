@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+import DnsQuestionFields from "./DnsQuestionFields.vue";
 import DegradedRuleFields from "./DegradedRuleFields.vue";
 import HeaderRows from "./HeaderRows.vue";
 import { EXPECT_STATUS_DEFAULT, isHttpsUrl, monitorOrigin, sourceSupport } from "./checkRulesModel";
@@ -173,7 +174,12 @@ function groupName(id: string): string {
 
 const suggested = computed(() => suggestDefinitionName(draft.value, nodeName, groupName, t("selector.wholeFleetInline")));
 const problems = computed<DefinitionProblem[]>(() => definitionProblems(draft.value, { newDefinition: !editing.value, m3: props.m3 }));
-const missing = computed(() => missingParts(problems.value));
+const missing = computed<string[]>(() => {
+  const out: string[] = [...missingParts(problems.value)];
+  // A dns check asks a name; an empty one is missing, a malformed one is marked on its field.
+  if (draft.value.type === "dns" && !draft.value.dnsName.trim()) out.push("dnsName");
+  return out;
+});
 const dirty = computed(() => (base.value ? definitionDirty(base.value, draft.value, suggested.value) : true));
 
 /** The sources that cannot run the method, flagged on the From list (their pairs read unknown with that reason). */
@@ -430,6 +436,10 @@ const fieldLabels = computed<Record<string, string>>(() => ({
   threshold_days: t("fleet.monitoring.create.thresholdDays"),
   expect_status: t("fleet.monitoring.checks.editor.expectStatus.label"),
   headers: t("fleet.monitoring.checkDefs.editor.headers"),
+  dns_name: t("fleet.monitoring.checks.editor.dns.name"),
+  dns_type: t("fleet.monitoring.checks.editor.dns.type"),
+  dns_expect: t("fleet.monitoring.checks.editor.dns.expect"),
+  dns_expect_rcode: t("fleet.monitoring.checks.editor.dns.answer"),
   interval_sec: t("fleet.monitoring.checks.editor.interval"),
   timeout_sec: t("fleet.monitoring.checks.editor.timeout"),
   alert: t("fleet.monitoring.checks.editor.step.fail"),
@@ -633,6 +643,15 @@ const STEP = "text-xs font-medium uppercase tracking-wide text-muted-foreground"
           <div data-field="headers"><HeaderRows v-model="draft.headers" :problems="headerProblemsNow" :origin="origin" :new-check="!editing" /></div>
           <p v-if="draft.headers.some((h) => h.secret)" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.checkDefs.editor.secretsNodes') }}</p>
         </template>
+        <DnsQuestionFields
+          v-else-if="draft.type === 'dns'"
+          v-model:name="draft.dnsName"
+          v-model:type="draft.dnsType"
+          v-model:expect="draft.dnsExpect"
+          v-model:rcode="draft.dnsExpectRcode"
+          id-prefix="definition-dns"
+          :targets="addresses"
+        />
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
       </fieldset>
 

@@ -209,9 +209,9 @@ const M2A = { m2a: true };
 /** A create, or a replacement: the destination rules apply. */
 const NEW = { m2a: true, newCheck: true };
 
-test("ICMP is offered only by an M2a server", () => {
+test("ICMP and DNS are offered only by an M2a server", () => {
   assert.deepEqual(offeredKinds(false), ["tcp", "http", "tls"]);
-  assert.deepEqual(offeredKinds(true), ["tcp", "icmp", "http", "tls"]);
+  assert.deepEqual(offeredKinds(true), ["tcp", "icmp", "http", "dns", "tls"]);
 });
 
 test("a read check's M2a fields become the draft: node target, packets, statuses, headers", () => {
@@ -529,10 +529,10 @@ test("a check's sources: its own and every source its paths name, with how many 
 /* ---- Beacon checks (design 29 M2b, D12) ---- */
 
 test("Beacon is offered on an M2b server only, first, as the method D2 prefers for a node", () => {
-  assert.deepEqual(offeredKinds(true, true), ["beacon", "tcp", "icmp", "http", "tls"]);
-  assert.deepEqual(offeredKinds(true, false), ["tcp", "icmp", "http", "tls"]);
+  assert.deepEqual(offeredKinds(true, true), ["beacon", "tcp", "icmp", "http", "dns", "tls"]);
+  assert.deepEqual(offeredKinds(true, false), ["tcp", "icmp", "http", "dns", "tls"]);
   assert.deepEqual(offeredKinds(false, true), ["tcp", "http", "tls"], "M2b without M2a is not a server that exists; nothing new is offered");
-  assert.deepEqual(offeredKinds(true, true, false), ["tcp", "icmp", "http", "tls"], "a beacon check names a node, so a session without node:read is not offered one");
+  assert.deepEqual(offeredKinds(true, true, false), ["tcp", "icmp", "http", "dns", "tls"], "a beacon check names a node, so a session without node:read is not offered one");
   assert.equal(multiPacket("beacon"), true);
   assert.equal(nodeOnly("beacon"), true);
   assert.equal(nodeOnly("icmp"), false);

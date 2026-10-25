@@ -1190,7 +1190,7 @@ export interface AuditVerifyResponse {
  * to expiry; the probe fails once fewer than `threshold_days` remain, so the
  * result log turns red before the certificate lapses rather than after.
  */
-export type MonitorType = "tcp" | "http" | "icmp" | "tls" | "beacon";
+export type MonitorType = "tcp" | "http" | "icmp" | "tls" | "beacon" | "dns";
 
 export interface MonitorView {
   id: string;
@@ -1214,6 +1214,18 @@ export interface MonitorView {
   headers?: MonitorHeader[];
   /** The origin the secret headers are bound to (scheme://host:port), set by the server. */
   secrets_origin?: string;
+  /**
+   * dns (design 32 S5a): the name asked, canonical (lower case, no trailing
+   * dot); the target is the resolver endpoint (https://host/path, tls://,
+   * udp:// or tcp://host).
+   */
+  dns_name?: string;
+  /** dns: A, AAAA, CNAME, TXT, MX or NS; absent reads as A. */
+  dns_type?: string;
+  /** dns: values every one of which must be in the answer, canonical; absent means any answer of the type passes. */
+  dns_expect?: string[];
+  /** dns: NXDOMAIN for a name that must not resolve; absent reads as NOERROR. */
+  dns_expect_rcode?: string;
   assign_all?: boolean;
   node_ids?: string[];
   enabled: boolean;
@@ -1300,6 +1312,11 @@ export interface MonitorUpdateInput {
   expect_status?: string;
   /** Header operations; absent leaves the headers as they are. */
   headers?: MonitorHeaderEdit[];
+  /** dns: the question and judgement; dns_expect replaces the stored values whole, so [] clears them. */
+  dns_name?: string;
+  dns_type?: string;
+  dns_expect?: string[];
+  dns_expect_rcode?: string;
   assign_all?: boolean;
   node_ids?: string[];
   paused_node_ids?: string[];
@@ -1323,7 +1340,7 @@ export interface CheckDefinitionSpec {
   sources: TargetSelector;
   /** Target nodes, for tcp, icmp and beacon. */
   targets: TargetSelector;
-  /** External targets: URLs for http, host:port for tcp and tls, IPv4 for icmp. */
+  /** External targets: URLs for http, host:port for tcp and tls, IPv4 for icmp, resolver endpoints for dns. */
   addresses?: string[];
   interval_sec: number;
   timeout_sec: number;
@@ -1336,6 +1353,11 @@ export interface CheckDefinitionSpec {
   enabled: boolean;
   /** Source to target pairs the check never measures although both ends are in its sets ("Stop measuring this pair"). */
   excluded_pairs?: LatencyPair[];
+  /** dns: the question and judgement every expanded monitor carries, as on a MonitorView. */
+  dns_name?: string;
+  dns_type?: string;
+  dns_expect?: string[];
+  dns_expect_rcode?: string;
 }
 
 export interface CheckDefinition extends CheckDefinitionSpec {
@@ -1763,7 +1785,7 @@ export interface MonitorResult {
   success: boolean;
   latency_ms?: number;
   error?: string;
-  /** `tls` only: the leaf certificate expiry the probe read, set whenever the handshake completed. */
+  /** `tls`, and `dns` over DoH or DoT: the leaf certificate expiry the probe read, set whenever the handshake completed. */
   cert_not_after?: string;
   /** When the server received it. Well after `at`, the result waited in an agent's buffer. */
   received_at?: string;
@@ -1773,6 +1795,9 @@ export interface MonitorResult {
   rtts_ms?: number[];
   /** Set when the run measured nothing (icmp_not_permitted, destination_refused, agent_too_old): neither up nor down. */
   reason?: string;
+  /** dns: the response code's mnemonic (NOERROR, SERVFAIL) and at most 16 answers of the asked type, canonical. */
+  dns_rcode?: string;
+  dns_answers?: string[];
 }
 
 /** One node's newest result for a monitor, and the run it ends. */
@@ -1795,6 +1820,9 @@ export interface MonitorLatest {
   /** Set when the newest run measured nothing; the fields above are then the last real outcome. */
   reason?: string;
   reason_at?: string;
+  /** dns: what the newest run got back. */
+  dns_rcode?: string;
+  dns_answers?: string[];
 }
 
 export interface MonitorCreateInput {
@@ -1813,6 +1841,11 @@ export interface MonitorCreateInput {
   /** http only. */
   expect_status?: string;
   headers?: MonitorHeader[];
+  /** dns only. */
+  dns_name?: string;
+  dns_type?: string;
+  dns_expect?: string[];
+  dns_expect_rcode?: string;
   assign_all?: boolean;
   node_ids?: string[];
   alert?: MonitorAlertPolicy;

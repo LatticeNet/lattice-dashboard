@@ -21,8 +21,9 @@ import type {
 } from "@/lib/api/types";
 import { isEmptySelector, normalizeSelector, selectorParts, type SelectorGroup, type SelectorNode } from "@/components/selector/selectorModel";
 import { buildHeaderEdits, headerProblems, headersForCreate, rowsFromHeaders, type HeaderRow } from "@/views/fleet/checkHeadersModel";
-import { canonicalStatusSet, destinationProblem, isHttpsUrl, parseStatusSet } from "@/views/fleet/checkRulesModel";
-import { CHECK_MAX_INTERVAL_SEC, CHECK_MAX_TIMEOUT_SEC, CHECK_MIN_INTERVAL_SEC, PACKETS_DEFAULT, PACKETS_MAX, icmpRunSeconds, multiPacket } from "@/views/fleet/checksModel";
+import { canonicalStatusSet, isHttpsUrl, parseStatusSet } from "@/views/fleet/checkRulesModel";
+import { CHECK_MAX_INTERVAL_SEC, CHECK_MAX_TIMEOUT_SEC, CHECK_MIN_INTERVAL_SEC, PACKETS_DEFAULT, PACKETS_MAX, dnsQuestion, icmpRunSeconds, multiPacket } from "@/views/fleet/checksModel";
+import { DNS_RCODE_NXDOMAIN, checkDestination, expectBlocks, expectText, normalizeDnsName, parseExpect, parseResolver } from "@/views/fleet/dnsCheckModel";
 import { ALERT_DEFAULT_AFTER, ALERT_MAX_AFTER, defaultDegradedDraft, degradedDraftFrom, degradedForSave, degradedProblems, effectiveAlert, pagesDown, type DegradedDraft } from "@/views/fleet/degradedRuleModel";
 import type { MonitorHealth } from "@/views/fleet/monitorHealthModel";
 import { AGENT_DEFAULT_INTERVAL_SEC, AGENT_DEFAULT_TIMEOUT_SEC, TLS_DEFAULT_INTERVAL_SEC, TLS_DEFAULT_THRESHOLD_DAYS, TLS_DEFAULT_TIMEOUT_SEC, TLS_MAX_THRESHOLD_DAYS, targetError } from "@/views/fleet/monitorTypeModel";
@@ -57,7 +58,7 @@ export function describeSelector(sel: TargetSelector | undefined, nodes: readonl
  * plane's choice per pair (design 32 R1): the beacon where the target's plan
  * approved the source, else icmp, else tcp to the port rule's endpoint.
  */
-export const DEFINITION_KINDS: readonly CheckMethod[] = ["tcp", "icmp", "beacon", "auto", "http", "tls"];
+export const DEFINITION_KINDS: readonly CheckMethod[] = ["tcp", "icmp", "beacon", "auto", "http", "dns", "tls"];
 
 /** The bounds lattice-sdk model.CheckDefinition* sets; the server refuses past them. */
 export const DEFINITION_NAME_MAX = 120;
@@ -85,7 +86,7 @@ export function takesTargetNodes(kind: string): boolean {
   return kind === "tcp" || kind === "icmp" || kind === "beacon" || kind === "auto";
 }
 
-/** Every method but beacon and auto takes addresses: URLs for http, host:port for tcp and tls, IPv4 for icmp. */
+/** Every method but beacon and auto takes addresses: URLs for http, host:port for tcp and tls, IPv4 for icmp, resolver endpoints for dns. */
 export function takesAddresses(kind: string): boolean {
   return kind !== "beacon" && kind !== "auto";
 }
@@ -110,6 +111,13 @@ export interface DefinitionDraft {
   packets: number;
   expectStatus: string;
   headers: HeaderRow[];
+  /** dns (design 32 S5a): the question and the answer that passes, as the check editor holds them. */
+  dnsName: string;
+  dnsType: string;
+  /** One expected value per line. */
+  dnsExpect: string;
+  /** "" for NOERROR, or NXDOMAIN. */
+  dnsExpectRcode: string;
   intervalSec: number;
   timeoutSec: number;
   thresholdDays: number;
@@ -132,6 +140,10 @@ export function emptyDefinitionDraft(type: CheckMethod = "tcp"): DefinitionDraft
     packets: PACKETS_DEFAULT,
     expectStatus: "",
     headers: [],
+    dnsName: "",
+    dnsType: "A",
+    dnsExpect: "",
+    dnsExpectRcode: "",
     intervalSec: tls ? TLS_DEFAULT_INTERVAL_SEC : AGENT_DEFAULT_INTERVAL_SEC,
     timeoutSec: tls ? TLS_DEFAULT_TIMEOUT_SEC : AGENT_DEFAULT_TIMEOUT_SEC,
     thresholdDays: TLS_DEFAULT_THRESHOLD_DAYS,
@@ -154,6 +166,10 @@ export function draftFromDefinition(def: CheckDefinitionView): DefinitionDraft {
     packets: def.packets && def.packets > 0 ? def.packets : PACKETS_DEFAULT,
     expectStatus: def.expect_status ?? "",
     headers: rowsFromHeaders(def.headers),
+    dnsName: def.dns_name ?? "",
+    dnsType: def.dns_type || "A",
+    dnsExpect: expectText(def.dns_expect),
+    dnsExpectRcode: def.dns_expect_rcode === DNS_RCODE_NXDOMAIN ? DNS_RCODE_NXDOMAIN : "",
     intervalSec: def.interval_sec,
     timeoutSec: def.timeout_sec,
     thresholdDays: def.threshold_days && def.threshold_days > 0 ? def.threshold_days : TLS_DEFAULT_THRESHOLD_DAYS,
@@ -202,6 +218,8 @@ export type DefinitionProblem =
   | "alertAfter"
   | "alertTls"
   | "degraded"
+  | "dnsName"
+  | "dnsExpect"
   | "name";
 
 /** What blocks a save before the server is asked. `newDefinition` applies the rules a new check meets (a kept secret cannot be carried). */
@@ -212,7 +230,7 @@ export function definitionProblems(draft: DefinitionDraft, options: { newDefinit
   const nodeTargets = takesTargetNodes(draft.type) && !isEmptySelector(draft.targets);
   if (!nodeTargets && addresses.length === 0) out.push("target");
   if (addresses.some((a) => targetError(draft.type, a))) out.push("address");
-  else if (addresses.some((a) => destinationProblem(draft.type, a))) out.push("destination");
+  else if (addresses.some((a) => checkDestination(draft.type, a))) out.push("destination");
   if (addresses.length > DEFINITION_ADDRESSES_MAX) out.push("tooManyAddresses");
   if (utf8Bytes(draft.name.trim()) > DEFINITION_NAME_MAX) out.push("name");
   const interval = Number(draft.intervalSec);
@@ -231,6 +249,10 @@ export function definitionProblems(draft: DefinitionDraft, options: { newDefinit
     const https = addresses.length > 0 && addresses.every(isHttpsUrl);
     if (headerProblems(draft.headers, { https, newCheck: options.newDefinition }).any) out.push("headers");
     if (draft.headers.some((h) => h.secret) && selectorIsBroad(draft.sources)) out.push("secretSources");
+  }
+  if (draft.type === "dns") {
+    if (!normalizeDnsName(draft.dnsName).ok) out.push("dnsName");
+    if (expectBlocks(parseExpect(draft.dnsType, draft.dnsExpect, draft.dnsExpectRcode))) out.push("dnsExpect");
   }
   if (draft.type === "tls") {
     const days = Number(draft.thresholdDays);
@@ -271,6 +293,10 @@ export function suggestDefinitionName(draft: DefinitionDraft, nodeName: (id: str
         shown = a;
       }
     }
+    if (draft.type === "dns") {
+      const parsed = parseResolver(a);
+      if (parsed.ok) shown = parsed.resolver.host;
+    }
     parts.push(shown);
   }
   if (!parts.length) return "";
@@ -305,6 +331,7 @@ export function buildDefinitionSave(draft: DefinitionDraft, existing: CheckDefin
     const degraded = degradedForSave(draft.degraded);
     if (degraded) body.degraded = degraded;
   }
+  if (draft.type === "dns") Object.assign(body, dnsQuestion(draft));
   if (draft.type === "http") {
     if (draft.expectStatus.trim()) body.expect_status = canonicalStatusSet(draft.expectStatus) ?? draft.expectStatus.trim();
     if (existing) {

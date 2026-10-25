@@ -13,6 +13,7 @@
 import type { MonitorCreateInput, MonitorType } from "@/lib/api";
 
 import { parseIPv4 } from "@/views/fleet/checkRulesModel";
+import { parseResolver } from "@/views/fleet/dnsCheckModel";
 
 export const MONITOR_TYPES: MonitorType[] = ["tcp", "http", "tls"];
 
@@ -63,6 +64,8 @@ export function targetError(type: string, target: string): string | undefined {
   if (!value) return "empty";
   // ICMP sends echoes to an address: an IPv4 literal, no name and no port (design 29 D11).
   if (type === "icmp") return parseIPv4(value) ? undefined : "not_ipv4";
+  // A dns check asks a resolver endpoint whose scheme picks the transport (design 32 S5a).
+  if (type === "dns") return parseResolver(value).ok ? undefined : "not_resolver";
   if (type === "http") {
     let url: URL;
     try {

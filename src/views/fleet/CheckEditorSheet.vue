@@ -50,7 +50,9 @@ import DegradedRuleFields from "./DegradedRuleFields.vue";
 import HeaderRows from "./HeaderRows.vue";
 import NodeTargetPicker from "./NodeTargetPicker.vue";
 import SourcePicker from "./SourcePicker.vue";
-import { EXPECT_STATUS_DEFAULT, agentReportsMethods, destinationProblem, isHttpsUrl, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
+import { EXPECT_STATUS_DEFAULT, agentReportsMethods, isHttpsUrl, monitorOrigin, parseStatusSet, sourceSupport } from "./checkRulesModel";
+import DnsQuestionFields from "./DnsQuestionFields.vue";
+import { checkDestination, parseResolver } from "./dnsCheckModel";
 import {
   ALERT_MAX_AFTER,
   CHECK_MAX_INTERVAL_SEC,
@@ -306,7 +308,13 @@ const targetProblem = computed(() => {
   if (targetError(draft.value.type, draft.value.target)) return "shape";
   return problems.value.includes("destination") ? "destination" : undefined;
 });
-const destination = computed(() => destinationProblem(draft.value.type, draft.value.target));
+const destination = computed(() => checkDestination(draft.value.type, draft.value.target));
+const isDns = computed(() => draft.value.type === "dns");
+/** Why a resolver endpoint does not parse, for the target's error line. */
+const resolverProblem = computed(() => {
+  const parsed = parseResolver(draft.value.target);
+  return parsed.ok ? undefined : parsed.problem;
+});
 /** Nodes whose agent reports no methods: a check that needs a current agent does not run on them. */
 const olderAgents = computed(() => (currentAgent.value ? props.nodes.filter((n) => !agentReportsMethods(n)).length : 0));
 const offerHttp = computed(() => draft.value.type === "tcp" && /^https?:\/\//i.test(draft.value.target.trim()));
@@ -344,7 +352,7 @@ function formatPps(pps: number): string {
   return pps >= 10 ? pps.toFixed(0) : pps.toFixed(2).replace(/\.?0+$/, "");
 }
 /** Problems shown at the form's end: the ones with no field of their own. */
-const FIELD_PROBLEMS = new Set(["interval", "timeout", "timeoutVsInterval", "runLength", "packets", "budget", "threshold", "target", "destination", "targetNode", "expectStatus", "headers", "alertAfter", "alertTls", "degraded"]);
+const FIELD_PROBLEMS = new Set(["interval", "timeout", "timeoutVsInterval", "runLength", "packets", "budget", "threshold", "target", "destination", "targetNode", "expectStatus", "headers", "alertAfter", "alertTls", "degraded", "dnsName", "dnsExpect"]);
 const problemText = computed(() => problems.value.filter((p) => !FIELD_PROBLEMS.has(p)).map(problemOf));
 const missing = computed(() => {
   const out: string[] = [];
@@ -353,6 +361,7 @@ const missing = computed(() => {
   // An empty header field says so only once it is left; until then this line explains the disabled save.
   const emptyHeader = draft.value.headers.some((h) => (headerProblemsNow.value.rows[h.key] ?? []).some((p) => p === "valueRequired" || (p === "nameLength" && !h.name.trim())));
   if (showHttpExpect.value && emptyHeader) out.push(t("fleet.monitoring.checks.editor.missing.header"));
+  if (isDns.value && !draft.value.dnsName.trim()) out.push(t("fleet.monitoring.checks.editor.missing.dnsName"));
   return out;
 });
 
@@ -441,6 +450,10 @@ const fieldLabels = computed<Record<string, string>>(() => ({
   threshold_days: t("fleet.monitoring.create.thresholdDays"),
   expect_status: t("fleet.monitoring.checks.editor.expectStatus.label"),
   headers: t("fleet.monitoring.checkDefs.editor.headers"),
+  dns_name: t("fleet.monitoring.checks.editor.dns.name"),
+  dns_type: t("fleet.monitoring.checks.editor.dns.type"),
+  dns_expect: t("fleet.monitoring.checks.editor.dns.expect"),
+  dns_expect_rcode: t("fleet.monitoring.checks.editor.dns.answer"),
   interval_sec: t("fleet.monitoring.checks.editor.interval"),
   timeout_sec: t("fleet.monitoring.checks.editor.timeout"),
   alert: t("fleet.monitoring.checks.editor.step.fail"),
@@ -669,9 +682,13 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
             class="font-mono"
             :aria-invalid="!!targetProblem"
             :aria-describedby="targetProblem ? 'check-target-error' : undefined"
-            :placeholder="isTls ? $t('fleet.monitoring.create.targetTlsPlaceholder') : draft.type === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : draft.type === 'icmp' ? $t('fleet.monitoring.create.targetIcmpPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
+            :placeholder="isTls ? $t('fleet.monitoring.create.targetTlsPlaceholder') : draft.type === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : draft.type === 'icmp' ? $t('fleet.monitoring.create.targetIcmpPlaceholder') : isDns ? $t('fleet.monitoring.create.targetDnsPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
           />
-          <p v-if="targetProblem === 'shape'" id="check-target-error" role="alert" class="text-xs text-destructive">
+          <p v-if="isDns && !targetProblem" class="text-xs text-muted-foreground" data-testid="check-dns-target-hint">{{ $t('fleet.monitoring.checks.editor.dns.targetHint') }}</p>
+          <p v-if="targetProblem === 'shape' && isDns" id="check-target-error" role="alert" class="text-xs text-destructive" data-testid="check-dns-target-error">
+            {{ $t(`fleet.monitoring.checks.editor.dns.resolver.${resolverProblem ?? 'shape'}`) }}
+          </p>
+          <p v-else-if="targetProblem === 'shape'" id="check-target-error" role="alert" class="text-xs text-destructive">
             {{ isTls ? $t('fleet.monitoring.create.targetTlsError') : draft.type === 'http' ? $t('fleet.monitoring.create.targetHttpError') : draft.type === 'icmp' ? $t('fleet.monitoring.create.targetIcmpError') : $t('fleet.monitoring.create.targetTcpError') }}
             <button v-if="offerHttp" type="button" class="ms-1 font-medium text-foreground underline underline-offset-2" @click="setKind('http')">
               {{ $t('fleet.monitoring.create.switchToHttp') }}
@@ -743,6 +760,15 @@ const SEGMENT = "rounded px-2 py-1.5 outline-none transition-colors focus-visibl
           <!-- The server sends such a check only to agents that report their methods (monitorNeedsCurrentAgent); From where marks the others. -->
           <p v-if="olderAgents > 0" class="text-xs text-muted-foreground" data-testid="check-older-agents">{{ $t('fleet.monitoring.checks.editor.expectStatus.olderAgents', { n: olderAgents }, olderAgents) }}</p>
         </template>
+        <DnsQuestionFields
+          v-else-if="isDns"
+          v-model:name="draft.dnsName"
+          v-model:type="draft.dnsType"
+          v-model:expect="draft.dnsExpect"
+          v-model:rcode="draft.dnsExpectRcode"
+          id-prefix="check-dns"
+          :targets="[draft.target]"
+        />
         <p v-else class="text-xs text-muted-foreground">{{ $t(`fleet.monitoring.checks.editor.expect.${draft.type}`) }}</p>
       </fieldset>
 

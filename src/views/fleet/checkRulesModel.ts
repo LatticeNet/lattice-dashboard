@@ -16,7 +16,7 @@ import type { LatencyProbePlan, MonitorView, Node } from "@/lib/api/types";
 
 /** What an agent that reports nothing runs: every agent before M2a. */
 export const LEGACY_PROBE_METHODS: readonly string[] = ["http", "tcp"];
-const KNOWN_PROBE_METHODS = new Set(["tcp", "http", "icmp", "beacon"]);
+const KNOWN_PROBE_METHODS = new Set(["tcp", "http", "icmp", "beacon", "dns"]);
 
 /** The known kinds of a report, once each and sorted (model.NormalizeProbeMethods). */
 export function normalizeProbeMethods(list: readonly string[] | undefined): string[] {
@@ -87,7 +87,7 @@ export function serverSpeaksM2b(
 
 /** Kinds a node runs as a source: the agent kinds. tls runs on the control plane. */
 export function runsOnAgent(kind: string): boolean {
-  return kind === "tcp" || kind === "http" || kind === "icmp" || kind === "beacon";
+  return kind === "tcp" || kind === "http" || kind === "icmp" || kind === "beacon" || kind === "dns";
 }
 
 export type SourceSupport = { ok: true } | { ok: false; reason: string };
