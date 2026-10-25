@@ -11,7 +11,8 @@
  * This module is the pure half: matching a server path to the controls an
  * editor registered, and comparing the version the editor opened with the
  * server's current one. useSaveRefusal and SaveRefusal.vue are the rest.
- * Shared by the check, check definition and outbound policy editors.
+ * Shared by the check, check definition, outbound policy and DNS deployment
+ * editors.
  */
 import { ApiError } from "@/lib/api/client";
 

@@ -2642,8 +2642,10 @@ export interface DNSDeploymentView {
   enable_tcp: boolean;
   exposure: DNSExposure | string;
   zones: DNSZone[];
-  /** Public exposure with a forward zone, stored before the server refused it. */
+  /** Public exposure with a forward zone and no allowed clients, stored before the server refused it. */
   open_resolver?: boolean;
+  /** `coredns` only: the client networks it answers, rendered as an acl; everyone else gets REFUSED. */
+  allowed_clients?: string[];
   hostname?: string;
   /** `external` only: the daemon's sockets, each stamped with the process reality reported. */
   listeners?: DNSListener[];
@@ -2651,6 +2653,10 @@ export interface DNSDeploymentView {
   cert_not_after?: string;
   /** `external` only: what the node's latest reality disagrees with. */
   drift?: DNSDriftView;
+  /** `external` only: the linked tls checks this session may read (design 32 S5c). */
+  cert_checks?: DNSCertCheckView[];
+  /** `external` only: the expiry to show, measured by a linked check or typed. */
+  cert_expiry?: DNSCertExpiryView;
   publish_ipv4: boolean;
   publish_ipv6: boolean;
   record_ttl?: number;
@@ -2669,6 +2675,35 @@ export interface DNSDeploymentView {
   updated_at: string;
 }
 
+/** A tls check linked to an external engine; the measured fields come from its newest handshake. */
+export interface DNSCertCheckView {
+  monitor_id: string;
+  name: string;
+  target: string;
+  threshold_days: number;
+  enabled: boolean;
+  cert_not_after?: string;
+  measured_at?: string;
+}
+
+/**
+ * The certificate expiry an external engine's sheet shows: the soonest one an
+ * enabled linked check measured, or the date the operator typed.
+ */
+export interface DNSCertExpiryView {
+  not_after: string;
+  source: "measured" | "typed" | string;
+  monitor_id?: string;
+}
+
+export interface DNSMeasureCertResponse {
+  deployment: DNSDeploymentView;
+  /** The checks this measure created. */
+  created: string[];
+  /** The checks already on those endpoints that it linked instead. */
+  linked: string[];
+}
+
 export interface DNSDeploymentBody {
   id?: string;
   name: string;
@@ -2679,6 +2714,8 @@ export interface DNSDeploymentBody {
   enable_tcp?: boolean;
   exposure?: DNSExposure | string;
   zones: DNSZone[];
+  /** `coredns` only: at most 64 CIDRs with no host bits; required for public exposure with a forward zone. */
+  allowed_clients?: string[];
   hostname?: string;
   /** `external` only: the sockets the observed daemon owns. At least one is required. */
   listeners?: DNSListener[];

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import type { DNSDeploymentView } from "@/lib/api";
+import type { DNSCertCheckView, DNSDeploymentView } from "@/lib/api";
 import {
   buildExternalDnsBody,
   canPlanDeployment,
@@ -14,9 +14,10 @@ import {
   isExternalHostnameValid,
   isObservedEngine,
   listenSummary,
+  certPortCandidates,
+  certShown,
+  linkedCertWatch,
   listenerProcesses,
-  lookupCertWatch,
-  tlsTargetHost,
 } from "../dnsExternalModel.ts";
 
 function deployment(over: Partial<DNSDeploymentView>): DNSDeploymentView {
@@ -231,58 +232,73 @@ test("the hostname cell prints the whole hostname", () => {
   assert.doesNotMatch(cell, /:title=/, "a tooltip is back standing in for the value");
 });
 
-// ── Who owns the expiry question ──────────────────────────────────────────
+// ── Which expiry, and who judges it ───────────────────────────────────────
 
 const NOW = new Date("2026-09-04T00:00:00Z");
 
-/** The production watch: dns.roobli.org on the DoH port, failing under 30 days. */
-const watch60 = { id: "mon_tls_dns", name: "dns.roobli.org certificate", type: "tls", target: "dns.roobli.org:8443", threshold_days: 60, enabled: true };
-const watch7 = { ...watch60, id: "mon_tls_short", threshold_days: 7 };
-const tcpMonitor = { id: "mon_tcp", name: "plain DNS", type: "tcp", target: "dns.roobli.org:53", enabled: true };
+/** The production watch: dns.roobli.org on the DoH port, linked to the record. */
+const watch60: DNSCertCheckView = {
+  monitor_id: "mon_tls_dns",
+  name: "operator dnsproxy certificate (dns.roobli.org:8443)",
+  target: "dns.roobli.org:8443",
+  threshold_days: 60,
+  enabled: true,
+};
+const watch7: DNSCertCheckView = { ...watch60, monitor_id: "mon_tls_short", threshold_days: 7 };
 
-test("a tls target names a host, whatever port it was dialled on", () => {
-  assert.equal(tlsTargetHost("dns.roobli.org:8443"), "dns.roobli.org");
-  assert.equal(tlsTargetHost("DNS.Roobli.ORG:853"), "dns.roobli.org");
-  // A bracketed literal keeps its address and loses the brackets, so it can be
-  // compared with a hostname the same way everything else is.
-  assert.equal(tlsTargetHost("[2606:4700::1111]:853"), "2606:4700::1111");
-  assert.equal(tlsTargetHost(undefined), "");
+test("the sheet prefers the measured expiry over the typed date, and says which it shows", () => {
+  const measured = { ...watch60, cert_not_after: "2027-01-20T00:00:00Z", measured_at: "2026-09-03T12:00:00Z" };
+  // Measured later than the typed date: the endpoint's certificate is the
+  // truth, not the sooner of the two.
+  const shown = certShown({
+    cert_not_after: "2026-11-17T00:00:00Z",
+    cert_checks: [measured],
+    cert_expiry: { not_after: "2027-01-20T00:00:00Z", source: "measured", monitor_id: "mon_tls_dns" },
+  });
+  assert.equal(shown.source, "measured");
+  assert.equal(shown.notAfter, "2027-01-20T00:00:00Z");
+  assert.equal(shown.check?.monitor_id, "mon_tls_dns");
+
+  // Nothing measured yet: the typed date, labelled as typed.
+  const typed = certShown({ cert_not_after: "2026-11-17T00:00:00Z", cert_expiry: { not_after: "2026-11-17T00:00:00Z", source: "typed" } });
+  assert.deepEqual(typed, { notAfter: "2026-11-17T00:00:00Z", source: "typed" });
+  // An answer without the choice still shows the typed field as typed.
+  assert.equal(certShown({ cert_not_after: "2026-11-17T00:00:00Z" }).source, "typed");
+  // A zero time from Go is no date at all.
+  assert.deepEqual(certShown({ cert_not_after: "0001-01-01T00:00:00Z" }), { notAfter: "", source: "none" });
+  assert.deepEqual(certShown({}), { notAfter: "", source: "none" });
 });
 
-test("the watch for a hostname is the enabled tls monitor pointed at it, and nothing else", () => {
-  assert.equal(lookupCertWatch("dns.roobli.org", [tcpMonitor, watch60]).state, "watched");
-  assert.equal(lookupCertWatch("DNS.roobli.org ", [watch60]).state, "watched");
-  // A tcp probe on the same host is not a certificate watch.
-  assert.equal(lookupCertWatch("dns.roobli.org", [tcpMonitor]).state, "unwatched");
-  assert.equal(lookupCertWatch("dns.roobli.org", [{ ...watch60, enabled: false }]).state, "unwatched");
-  assert.equal(lookupCertWatch("resolver.xuezhang.example", [watch60]).state, "unwatched");
-  // No monitor list is not a claim that nothing watches: a token without
-  // monitor:read cannot see one either way, and must not say so.
-  assert.equal(lookupCertWatch("dns.roobli.org", undefined).state, "unknown");
-  assert.equal(lookupCertWatch("", [watch60]).state, "unknown");
+test("the watch is a linked check, found through the link and never by hostname", () => {
+  assert.equal(linkedCertWatch({ cert_checks: [watch60] }, true).state, "watched");
+  // Nothing linked, or only a paused check: nothing judges the expiry.
+  assert.equal(linkedCertWatch({ cert_checks: [] }, true).state, "unwatched");
+  assert.equal(linkedCertWatch({}, true).state, "unwatched");
+  assert.equal(linkedCertWatch({ cert_checks: [{ ...watch60, enabled: false }] }, true).state, "unwatched");
+  // Without monitor:read the page cannot know, and must not say "unwatched".
+  assert.equal(linkedCertWatch({ cert_checks: [watch60] }, false).state, "unknown");
+  // The check that measured the shown expiry judges it.
+  const both = linkedCertWatch(
+    { cert_checks: [watch7, watch60], cert_expiry: { not_after: "2027-01-20T00:00:00Z", source: "measured", monitor_id: "mon_tls_dns" } },
+    true,
+  );
+  assert.equal(both.check?.monitor_id, "mon_tls_dns");
+  assert.equal(both.thresholdDays, 60);
+  // A missing threshold falls to the server's own default, not to no threshold.
+  assert.equal(linkedCertWatch({ cert_checks: [{ ...watch60, threshold_days: 0 }] }, true).thresholdDays, 14);
 });
 
-test("a missing threshold falls to the server's own default, not to no threshold", () => {
-  const found = lookupCertWatch("dns.roobli.org", [{ ...watch60, threshold_days: undefined }]);
-  assert.equal(found.state, "watched");
-  assert.equal(found.thresholdDays, 14);
-  assert.equal(lookupCertWatch("dns.roobli.org", [watch60]).thresholdDays, 60);
-});
-
-test("the row's verdict is the watch's verdict, so the two pages cannot disagree", () => {
-  // 55 days left. The operator set the watch to 60, so the watch is failing;
-  // the row used to print this in neutral grey against its own hard-coded 30.
+test("the row's verdict is the linked check's verdict, so the two pages cannot disagree", () => {
+  // 55 days left against a 60-day check: the check is failing, and so is the row.
   const cert = "2026-10-29T00:00:00Z";
-  assert.equal(certVerdict(cert, NOW, lookupCertWatch("dns.roobli.org", [watch60])).tone, "warn");
-  // The reverse: 25 days against a seven-day watch that is green. The row used
-  // to go amber on its own.
+  assert.equal(certVerdict(cert, NOW, linkedCertWatch({ cert_checks: [watch60] }, true)).tone, "warn");
+  // 25 days against a seven-day check that is green.
   const nearer = "2026-09-29T00:00:00Z";
-  assert.equal(certVerdict(nearer, NOW, lookupCertWatch("dns.roobli.org", [watch7])).tone, "ok");
+  assert.equal(certVerdict(nearer, NOW, linkedCertWatch({ cert_checks: [watch7] }, true)).tone, "ok");
 });
 
 test("an unwatched row states that, rather than inventing a verdict nothing acts on", () => {
-  const none = lookupCertWatch("resolver.xuezhang.example", [watch60]);
-  assert.equal(none.state, "unwatched");
+  const none = linkedCertWatch({ cert_checks: [] }, true);
   assert.equal(none.thresholdDays, 0);
   // 15 days left and nothing watching: neutral, with the row saying why.
   assert.equal(certVerdict("2026-09-19T00:00:00Z", NOW, none).tone, "ok");
@@ -290,17 +306,44 @@ test("an unwatched row states that, rather than inventing a verdict nothing acts
   assert.equal(certVerdict("2026-08-30T00:00:00Z", NOW, none).tone, "expired");
 });
 
-test("DnsView resolves the watch and links both directions", () => {
+test("a measure offers every tcp listener and ticks the ones that look like DoT or DoH", () => {
+  const dep = {
+    hostname: "DNS.roobli.org",
+    listeners: [
+      { protocol: "udp", port: 53 },
+      { protocol: "tcp", port: 53 },
+      { protocol: "udp", port: 2053 },
+      { protocol: "tcp", port: 2053 },
+      { protocol: "tcp", port: 8443 },
+    ],
+    cert_checks: [{ ...watch60, target: "dns.roobli.org:8443" }],
+  };
+  const candidates = certPortCandidates(dep);
+  assert.deepEqual(
+    candidates.map((c) => [c.port, c.suggested, c.measuredBy?.monitor_id]),
+    [
+      [53, false, undefined],
+      // Plain DNS answers on udp and tcp alike; a TLS listener is tcp alone.
+      [2053, false, undefined],
+      [8443, true, "mon_tls_dns"],
+    ],
+  );
+  assert.deepEqual(certPortCandidates({ hostname: "dns.roobli.org", listeners: [{ protocol: "udp", port: 853 }] }), []);
+});
+
+test("DnsView reads the watch through the link and offers the measure", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
-  assert.match(view, /lookupCertWatch\(dep\.hostname, certWatches\.value\)/);
-  assert.match(view, /certVerdict\(dep\.cert_not_after, new Date\(\), certWatch\(dep\)\)/);
+  assert.match(view, /linkedCertWatch\(dep, canReadMonitors\.value\)/);
+  assert.match(view, /certVerdict\(certShown\(dep\)\.notAfter, new Date\(\), certWatch\(dep\)\)/);
+  assert.doesNotMatch(view, /lookupCertWatch|tlsTargetHost/, "the page matches checks by hostname again");
   assert.doesNotMatch(view, /certExpiry\(/, "the row is judging the expiry on its own again");
-  // Watched and unwatched look different in the sheet, and both reach Monitoring.
   const sheet = view.slice(view.indexOf("<ObjectSheet"), view.indexOf("</ObjectSheet>"));
-  assert.match(sheet, /certWatch\(openDep\)\.state === 'watched'/);
+  assert.match(sheet, /certShown\(openDep\)\.source === 'measured'/, "the sheet no longer says which expiry it shows");
   assert.match(sheet, /certWatch\(openDep\)\.state === 'unwatched'/);
+  assert.match(sheet, /openMeasure\(openDep\)/);
   assert.match(sheet, /name: 'monitor-detail'/);
   assert.match(sheet, /name: 'monitoring'/);
+  assert.match(view, /api\.dns\.measureCert\(dep\.id, measurePorts\.value\)/);
   // And the create dialog's prose reference is a link the reader can follow.
   assert.match(view, /networking\.dns\.certWatchSetUp/);
 });

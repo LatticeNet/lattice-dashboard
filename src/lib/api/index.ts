@@ -31,6 +31,7 @@ import type {
   DNSDeploymentBody,
   DNSDeploymentView,
   DNSPlanResponse,
+  DNSMeasureCertResponse,
   DNSPublishResponse,
   EnrollTokenResponse,
   ExpiringResponse,
@@ -752,6 +753,10 @@ export const api = {
     plan: (id: string, acceptLockoutRisk = false) =>
       http.post<DNSPlanResponse>("/api/dns/plan", { id, accept_lockout_risk: acceptLockoutRisk }),
     publish: (id: string) => http.post<DNSPublishResponse>("/api/dns/publish", { id }),
+    // Creates a tls check per named DoT or DoH listener of an external
+    // engine, or links one already on that endpoint (design 32 S5c).
+    measureCert: (id: string, ports: number[]) =>
+      http.post<DNSMeasureCertResponse>("/api/dns/measure-cert", { id, ports }),
   },
 
   geoRouting: {

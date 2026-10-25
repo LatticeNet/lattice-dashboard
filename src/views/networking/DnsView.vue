@@ -16,6 +16,13 @@
  * published ("leaves config on a node"), so that confirm names the node and
  * what keeps running and asks for the name too; deleting a watched record
  * only stops the watch.
+ *
+ * A watched record's certificate is measured, not typed (design 32 S5c):
+ * "Measure this certificate" has the server create tls checks for the
+ * listeners the operator ticks and link them to the record, and the sheet
+ * then shows the measured expiry and says which one it shows. A CoreDNS
+ * record names the client networks it answers (S5b), which is what lets a
+ * public one forward without being an open resolver.
  */
 import { computed, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -28,6 +35,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   UploadCloud,
 } from "lucide-vue-next";
@@ -41,21 +49,25 @@ import {
   type DNSRecord,
   type DNSZone,
   type GuardLintFinding,
-  type MonitorView,
 } from "@/lib/api";
 import {
   canPlanDeployment,
   buildExternalDnsBody,
   canPublishDeployment,
   certDate,
+  certPortCandidates,
+  certShown,
   certVerdict,
   externalHostnameProblem,
   isObservedEngine,
+  linkedCertWatch,
   listenSummary,
   listenerProcesses,
-  lookupCertWatch,
   type CertWatchLookup,
 } from "./dnsExternalModel";
+import { allowedClientsText, isOpenResolverDraft, parseAllowedClients } from "./dnsAllowedClientsModel";
+import { useSaveRefusal } from "@/composables/useSaveRefusal";
+import SaveRefusal from "@/components/common/SaveRefusal.vue";
 import { ApiError } from "@/lib/api/client";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
@@ -85,6 +97,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogDescription,
@@ -115,24 +128,23 @@ const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) 
 });
 
 /**
- * The certificate watches, so this page can name the one that owns each
- * expiry instead of holding an opinion of its own.
+ * The monitor list, for the setup checklist's count of tls checks. A record's
+ * own certificate checks come with the record (cert_checks), linked on the
+ * server, so this page never finds them by matching names.
  *
- * A token without monitor:read gets no list and no claim: the row then says
- * nothing about watches rather than reporting "no certificate watch", which
- * it has no way to know.
+ * A token without monitor:read gets no checks and no claim: the row then
+ * says nothing about watches rather than reporting "no certificate watch",
+ * which it has no way to know.
  */
 const canReadMonitors = computed(() => auth.can("monitor:read"));
+const canMeasure = computed(() => auth.can("dns:admin") && auth.can("monitor:admin"));
 const monitorsQuery = useAsyncData(
   (signal) => api.monitors.list({ signal }).then((r) => unwrap(r, "monitors")),
   { pollInterval: 60000, immediate: canReadMonitors.value },
 );
-const certWatches = computed<MonitorView[] | undefined>(() =>
-  canReadMonitors.value ? monitorsQuery.data.value : undefined,
-);
 
 function certWatch(dep: DNSDeploymentView): CertWatchLookup {
-  return lookupCertWatch(dep.hostname, certWatches.value);
+  return linkedCertWatch(dep, canReadMonitors.value);
 }
 
 const deployments = computed(() => deploymentsQuery.data.value ?? []);
@@ -148,9 +160,10 @@ function nodeLabel(dep: DNSDeploymentView): string {
 
 /** The certificate line in the Reality column: how long is left, and when. */
 function certLabel(dep: DNSDeploymentView): string {
-  const expiry = certVerdict(dep.cert_not_after, new Date(), certWatch(dep));
+  const shown = certShown(dep);
+  const expiry = certVerdict(shown.notAfter, new Date(), certWatch(dep));
   if (expiry.tone === "unknown") return t("networking.dns.certUnknown");
-  const date = certDate(dep.cert_not_after);
+  const date = certDate(shown.notAfter);
   if (expiry.tone === "expired") return t("networking.dns.certExpired", { date });
   return t("networking.dns.certDays", { days: expiry.days, date });
 }
@@ -163,7 +176,7 @@ function certLabel(dep: DNSDeploymentView): string {
  * actually worth acting on.
  */
 function certToneClass(dep: DNSDeploymentView): string {
-  switch (certVerdict(dep.cert_not_after, new Date(), certWatch(dep)).tone) {
+  switch (certVerdict(certShown(dep).notAfter, new Date(), certWatch(dep)).tone) {
     case "expired":
       return "text-destructive";
     case "warn":
@@ -197,7 +210,7 @@ const sheet = useRouteOpen();
 const now = useNow({ interval: 60_000 });
 
 function certTone(dep: DNSDeploymentView) {
-  return certVerdict(dep.cert_not_after, now.value, certWatch(dep)).tone;
+  return certVerdict(certShown(dep).notAfter, now.value, certWatch(dep)).tone;
 }
 
 const counts = computed(() => {
@@ -291,7 +304,9 @@ const attention = computed<AttentionItem[]>(() => {
           tone: "warning",
           claim: t("networking.dnsPage.attention.unwatchedClaim", { hostname: dep.hostname ?? dep.name }),
           proof: t("networking.dnsPage.attention.unwatchedProof"),
-          action: { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
+          action: canMeasure.value
+            ? { label: t("networking.dns.measure.action"), run: () => openMeasure(dep) }
+            : { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
         });
       }
     }
@@ -392,6 +407,13 @@ function menuFor(dep: DNSDeploymentView): RowMenuItem[] {
       disabled: publishing.value === dep.id,
       run: () => (publishTarget.value = dep),
     },
+    {
+      key: "measure",
+      label: t("networking.dns.measure.action"),
+      icon: ShieldCheck,
+      hidden: !observed || !canMeasure.value,
+      run: () => openMeasure(dep),
+    },
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(dep) },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = dep) },
   ];
@@ -418,7 +440,10 @@ const deleteImpact = computed(() => {
   const dep = deleteTarget.value;
   if (!dep) return [];
   if (isObservedEngine(dep.engine)) {
-    return [t("networking.dnsPage.delete.observedImpact", { node: nodeLabel(dep) })];
+    const lines = [t("networking.dnsPage.delete.observedImpact", { node: nodeLabel(dep) })];
+    const checks = dep.cert_checks?.length ?? 0;
+    if (checks) lines.push(t("networking.dnsPage.delete.observedChecksImpact", { n: checks }, checks));
+    return lines;
   }
   const lines = [t("networking.dnsPage.delete.corednsImpact", { node: nodeLabel(dep) })];
   if (dep.hostname && dep.last_published_at) lines.push(t("networking.dnsPage.delete.publishedImpact", { hostname: dep.hostname }));
@@ -492,6 +517,8 @@ interface DnsForm {
   listeners: ListenerDraft[];
   /** Date input value, `YYYY-MM-DD`; sent as an instant at midnight UTC. */
   cert_not_after: string;
+  /** `coredns` only: the allowed client networks, one per line. */
+  allowed_clients: string;
   name: string;
   node_id: string;
   listen_port: string;
@@ -522,6 +549,16 @@ const editingRecord = ref<DNSDeploymentView | undefined>(undefined);
 const editingHasCredential = ref(false);
 const saving = ref(false);
 const form = reactive<DnsForm>(emptyForm());
+
+/**
+ * A refused save names the field at fault (design 32 R6), and the control
+ * marked data-field with that path takes focus with the reason under it. The
+ * server names allowed_clients and its entries; other refusals read in the
+ * footer.
+ */
+const formEl = ref<HTMLFormElement | null>(null);
+const refusals = useSaveRefusal<DNSDeploymentView>({ root: formEl, compared: [], draft: () => form });
+const refusalLabels = computed(() => ({ allowed_clients: t("networking.dns.allowedClients") }));
 
 // Snapshot of the form at open time, drives the unsaved-changes (dirty) guard.
 // The dialog carries a Cloudflare token, so an accidental Escape must not throw
@@ -560,6 +597,7 @@ function emptyForm(): DnsForm {
     engine: "coredns",
     listeners: [emptyListener()],
     cert_not_after: "",
+    allowed_clients: "",
     name: "",
     node_id: "",
     listen_port: "53",
@@ -582,6 +620,7 @@ function openCreate(engine?: DnsForm["engine"]) {
   editingHasCredential.value = false;
   Object.assign(form, emptyForm());
   if (engine) form.engine = engine;
+  refusals.clear();
   formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
@@ -594,6 +633,7 @@ function openEdit(dep: DNSDeploymentView) {
     engine: isObservedEngine(dep.engine) ? "external" : "coredns",
     listeners: dep.listeners?.length ? dep.listeners.map(listenerToDraft) : [emptyListener()],
     cert_not_after: certDateValue(dep.cert_not_after),
+    allowed_clients: allowedClientsText(dep.allowed_clients),
     name: dep.name,
     node_id: dep.node_id,
     listen_port: String(dep.listen_port ?? 53),
@@ -608,6 +648,7 @@ function openEdit(dep: DNSDeploymentView) {
     cf_api_token: "",
     ddns_profile_id: dep.ddns_profile_id ?? "",
   } satisfies DnsForm);
+  refusals.clear();
   formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
@@ -710,12 +751,19 @@ function zoneError(zone: ZoneDraft): string | undefined {
 const zoneErrors = computed(() => form.zones.map(zoneError));
 
 /**
- * A public listener with a forward zone recurses for anyone who reaches it,
- * an open resolver; the server refuses it on save and plan (design 32 D7),
- * so the form says so before submit.
+ * A public listener with a forward zone and no allowed clients recurses for
+ * anyone who reaches it, an open resolver; the server refuses it on save and
+ * plan (design 32 D7), so the form says so before submit. Naming the clients
+ * lifts it (S5b).
  */
 const openResolver = computed(
-  () => !isExternalForm.value && form.exposure === "public" && form.zones.some((zone) => zone.mode === "forward"),
+  () =>
+    !isExternalForm.value &&
+    isOpenResolverDraft({
+      exposure: form.exposure,
+      zoneModes: form.zones.map((zone) => zone.mode),
+      allowedClients: parseAllowedClients(form.allowed_clients),
+    }),
 );
 const hasZoneErrors = computed(() => zoneErrors.value.some((e) => e !== undefined));
 
@@ -753,6 +801,7 @@ function buildBody(): DNSDeploymentBody {
     enable_tcp: form.enable_tcp,
     exposure: form.exposure,
     zones,
+    allowed_clients: parseAllowedClients(form.allowed_clients),
   };
 
   if (form.hostname.trim()) {
@@ -798,9 +847,57 @@ async function submit() {
     dialogOpen.value = false;
     deploymentsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("networking.dns.toastSaveFailed"));
+    // A DNS deployment carries no version, so a save never loses a race
+    // and reread is never asked for.
+    await refusals.handle(error, {
+      fallback: t("networking.dns.toastSaveFailed"),
+      base: undefined,
+      reread: () => Promise.reject(error),
+    });
   } finally {
     saving.value = false;
+  }
+}
+
+// ── Measure this certificate (design 32 S5c) ─────────────────────────────
+const measureTarget = ref<DNSDeploymentView | undefined>(undefined);
+const measurePorts = ref<number[]>([]);
+const measuring = ref(false);
+const measureError = ref("");
+const measureCandidates = computed(() => (measureTarget.value ? certPortCandidates(measureTarget.value) : []));
+
+function openMeasure(dep: DNSDeploymentView) {
+  measureTarget.value = dep;
+  measurePorts.value = certPortCandidates(dep)
+    .filter((candidate) => candidate.suggested)
+    .map((candidate) => candidate.port);
+  measureError.value = "";
+}
+
+function toggleMeasurePort(port: number, on: boolean | "indeterminate") {
+  const rest = measurePorts.value.filter((p) => p !== port);
+  measurePorts.value = on === true ? [...rest, port].sort((a, b) => a - b) : rest;
+}
+
+function closeMeasure(open: boolean) {
+  if (!open && !measuring.value) measureTarget.value = undefined;
+}
+
+async function confirmMeasure() {
+  const dep = measureTarget.value;
+  if (!dep || measurePorts.value.length === 0) return;
+  measuring.value = true;
+  measureError.value = "";
+  try {
+    const res = await api.dns.measureCert(dep.id, measurePorts.value);
+    toast.success(t("networking.dns.measure.toast", { created: res.created.length, linked: res.linked.length }));
+    measureTarget.value = undefined;
+    void deploymentsQuery.refresh();
+    if (canReadMonitors.value) void monitorsQuery.refresh();
+  } catch (error) {
+    measureError.value = error instanceof Error ? error.message : t("networking.dns.measure.failed");
+  } finally {
+    measuring.value = false;
   }
 }
 
@@ -1094,20 +1191,31 @@ function closePlan(open: boolean) {
             <span :class="openDep.drift?.status === 'drift' ? 'text-warning-text' : ''">{{ $t(`networking.dns.drift.${openDep.drift?.status ?? 'unknown'}`) }}</span>
             <span :class="certToneClass(openDep)"> · {{ certLabel(openDep) }}</span>
           </p>
-          <RouterLink
-            v-if="certWatch(openDep).state === 'watched'"
-            :to="{ name: 'monitor-detail', params: { id: certWatch(openDep).monitor?.id } }"
-            class="block text-xs text-muted-foreground underline-offset-2 hover:underline"
-          >
-            {{ $t('networking.dns.certWatched', { days: certWatch(openDep).thresholdDays }) }}
-          </RouterLink>
-          <RouterLink
-            v-else-if="certWatch(openDep).state === 'unwatched'"
-            :to="{ name: 'monitoring' }"
-            class="block text-xs text-warning-text underline-offset-2 hover:underline"
-          >
-            {{ $t('networking.dns.certUnwatched') }}
-          </RouterLink>
+          <!-- Which expiry this is: measured by a linked check, or the date typed into the record. -->
+          <p v-if="certShown(openDep).source !== 'none'" class="text-xs text-muted-foreground" data-testid="dns-cert-source">
+            <template v-if="certShown(openDep).source === 'measured'">
+              {{ $t('networking.dns.certMeasured', { time: certShown(openDep).check?.measured_at ? formatDateTime(certShown(openDep).check!.measured_at!) : '' }) }}
+            </template>
+            <template v-else>{{ $t('networking.dns.certTyped') }}</template>
+          </p>
+          <ul v-if="openDep.cert_checks?.length" class="space-y-0.5">
+            <li v-for="check in openDep.cert_checks" :key="check.monitor_id" class="text-xs text-muted-foreground">
+              <RouterLink :to="{ name: 'monitor-detail', params: { id: check.monitor_id } }" class="underline-offset-2 hover:underline">
+                {{ check.name }}
+              </RouterLink>
+              <span> · {{ check.enabled ? $t('networking.dns.certWatched', { days: check.threshold_days }) : $t('networking.dns.certCheckPaused') }}</span>
+              <span> · {{ check.cert_not_after ? certDate(check.cert_not_after) : $t('networking.dns.certNotMeasuredYet') }}</span>
+            </li>
+          </ul>
+          <template v-if="certWatch(openDep).state === 'unwatched'">
+            <Button v-if="canMeasure" variant="outline" size="sm" type="button" @click="openMeasure(openDep)">
+              <ShieldCheck aria-hidden="true" />
+              {{ $t('networking.dns.measure.action') }}
+            </Button>
+            <RouterLink v-else :to="{ name: 'monitoring' }" class="block text-xs text-warning-text underline-offset-2 hover:underline">
+              {{ $t('networking.dns.certUnwatched') }}
+            </RouterLink>
+          </template>
           <ul v-if="driftFindings(openDep).length" class="space-y-1 rounded-md border border-border p-3">
             <li v-for="(finding, index) in driftFindings(openDep)" :key="index" class="text-xs leading-relaxed text-muted-foreground">{{ finding }}</li>
           </ul>
@@ -1164,7 +1272,7 @@ function closePlan(open: boolean) {
           </DialogDescription>
         </DialogHeader>
 
-        <form class="space-y-5" @submit.prevent="submit">
+        <form ref="formEl" class="space-y-5" @submit.prevent="submit">
           <!--
             The engine is the first choice because it decides what the rest of
             this form means. Deploying writes a Corefile and a packet filter on
@@ -1313,6 +1421,20 @@ function closePlan(open: boolean) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <!-- Allowed client networks (design 32 S5b): rendered as the acl plugin, everyone else REFUSED. -->
+          <div v-if="!isExternalForm" class="grid gap-2" data-field="allowed_clients">
+            <Label for="dns-allowed-clients">{{ $t('networking.dns.allowedClients') }}</Label>
+            <Textarea
+              id="dns-allowed-clients"
+              v-model="form.allowed_clients"
+              rows="3"
+              class="font-mono text-xs"
+              placeholder="203.0.113.0/24&#10;2001:db8::/32"
+              aria-describedby="dns-allowed-clients-hint"
+            />
+            <p id="dns-allowed-clients-hint" class="text-xs text-muted-foreground">{{ $t('networking.dns.allowedClientsHint') }}</p>
           </div>
 
           <p v-if="openResolver" class="text-xs text-destructive" role="alert">{{ $t('networking.dns.openResolverRefused') }}</p>
@@ -1467,7 +1589,8 @@ function closePlan(open: boolean) {
             </p>
           </div>
 
-          <DialogFooter>
+          <DialogFooter class="flex-wrap">
+            <SaveRefusal :refusal="refusals.refusal.value" :labels="refusalLabels" :message-id="refusals.messageId" />
             <Button type="button" variant="outline" @click="requestCloseDialog">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
@@ -1475,6 +1598,49 @@ function closePlan(open: boolean) {
             </Button>
           </DialogFooter>
         </form>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Measure this certificate -->
+    <Dialog :open="!!measureTarget" @update:open="closeMeasure">
+      <DialogScrollContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.dns.measure.title', { name: measureTarget?.name ?? '' }) }}</DialogTitle>
+          <DialogDescription>
+            {{ $t('networking.dns.measure.description', { hostname: measureTarget?.hostname ?? '' }) }}
+          </DialogDescription>
+        </DialogHeader>
+        <fieldset class="space-y-2" data-testid="dns-measure-ports">
+          <legend class="text-xs text-muted-foreground">{{ $t('networking.dns.measure.pick') }}</legend>
+          <p v-if="measureCandidates.length === 0" class="text-xs text-muted-foreground">{{ $t('networking.dns.measure.noTcp') }}</p>
+          <label
+            v-for="candidate in measureCandidates"
+            :key="candidate.port"
+            class="flex cursor-pointer items-baseline gap-2 rounded-md border border-border px-3 py-2 text-sm"
+          >
+            <Checkbox
+              :model-value="measurePorts.includes(candidate.port)"
+              class="translate-y-0.5"
+              @update:model-value="(on) => toggleMeasurePort(candidate.port, on)"
+            />
+            <span class="font-mono text-xs">{{ measureTarget?.hostname }}:{{ candidate.port }}</span>
+            <span class="text-xs text-muted-foreground">
+              <template v-if="candidate.measuredBy">{{ $t('networking.dns.measure.measuredBy', { name: candidate.measuredBy.name }) }}</template>
+              <template v-else-if="candidate.suggested">{{ $t('networking.dns.measure.suggested') }}</template>
+              <template v-else>{{ $t('networking.dns.measure.plainLikely') }}</template>
+            </span>
+          </label>
+        </fieldset>
+        <p class="text-xs text-muted-foreground">{{ $t('networking.dns.measure.after') }}</p>
+        <p v-if="measureError" role="alert" class="text-xs text-destructive">{{ measureError }}</p>
+        <DialogFooter>
+          <Button type="button" variant="outline" :disabled="measuring" @click="closeMeasure(false)">{{ $t('common.actions.cancel') }}</Button>
+          <Button type="button" :disabled="measuring || measurePorts.length === 0" @click="confirmMeasure">
+            <RefreshCw v-if="measuring" class="size-4 animate-spin" aria-hidden="true" />
+            <ShieldCheck v-else class="size-4" aria-hidden="true" />
+            {{ $t('networking.dns.measure.confirm', { n: measurePorts.length }, measurePorts.length) }}
+          </Button>
+        </DialogFooter>
       </DialogScrollContent>
     </Dialog>
 
