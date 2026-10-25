@@ -15,6 +15,7 @@ import type {
   CheckFleetMesh,
   CheckMethod,
   LatencyPair,
+  LatencyProbePlan,
   MonitorAlertPolicy,
   MonitorView,
   TargetSelector,
@@ -435,6 +436,16 @@ export function checkRows(monitors: readonly MonitorView[], definitions: readonl
   }
   if (mesh && !mesh.migrated) rows.push({ kind: "fleet", key: FLEET_MESH_KEY, mesh });
   return rows;
+}
+
+/**
+ * Whether the path set's own editor is offered (design 32 R1): only while
+ * the path set is read and not migrated. Once it is, Fleet mesh is an
+ * ordinary check definition, edited from its row like any other, and the
+ * Checks header has no "Fleet mesh" button that would open nothing.
+ */
+export function pathSetEditable(plan: Pick<LatencyProbePlan, "config"> | undefined): boolean {
+  return !!plan && !plan.config.migrated;
 }
 
 /** A row's name. */
