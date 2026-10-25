@@ -21,13 +21,15 @@
  */
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch, type Ref, type WatchSource } from "vue";
 
-import { changedFields, isVersionConflict, refusalFocusIndex, refusalOf, resolveField, type SaveRefusal } from "@/lib/saveRefusal";
+import { changedFields, isVersionConflict, refusalFocusIndex, refusalOf, resolveField, theirValues, type SaveRefusal } from "@/lib/saveRefusal";
 
 export interface SaveConflict<T> {
   /** The server's version now: what reload takes, and whose version an overwrite names. */
   latest: T;
   /** The compared paths that differ between the opened version and latest. */
   changed: string[];
+  /** latest's value of each changed path the footer can quote (theirValues). */
+  theirs: Record<string, string | boolean>;
 }
 
 export interface SaveRefusalOptions {
@@ -148,7 +150,8 @@ export function useSaveRefusal<T>(options: SaveRefusalOptions) {
       try {
         const latest = await how.reread();
         const shaped = how.shape ? how.shape(latest) : latest;
-        conflict.value = { latest, changed: changedFields(how.base, shaped, options.compared) };
+        const changed = changedFields(how.base, shaped, options.compared);
+        conflict.value = { latest, changed, theirs: theirValues(shaped, changed) };
         return "conflict";
       } catch (reread) {
         // The draft stays either way; say why the newer version is not shown.
