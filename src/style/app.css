@@ -740,8 +740,10 @@
 
    The first column is capped at 38% of the viewport so the data keeps most of
    a phone's width; `--pin-max` sets the cap on a wide screen (12rem unless a
-   table says otherwise). Below 48rem, where the middle actually scrolls, a
-   hairline marks each pinned edge so the pin reads as one.
+   table says otherwise). A table whose first column is what a row is called
+   (Nodes) raises that share with `--pin-share`. Below 48rem, where the
+   middle actually scrolls, a hairline marks each pinned edge so the pin
+   reads as one.
 
    `--pin-left` and `--pin-right` offset a pinned cell past a pinned gutter
    (DataTable's selection checkbox, its row chevron). A row that is hovered,
@@ -753,7 +755,7 @@
   position: sticky;
   left: var(--pin-left, 0);
   z-index: 10;
-  max-width: min(var(--pin-max, 12rem), 38vw);
+  max-width: min(var(--pin-max, 12rem), var(--pin-share, 38vw));
   /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
      never drawn under the next column. */
   overflow: hidden;
@@ -764,7 +766,7 @@
     /* Without a floor the table's auto layout squeezed the column to 109 px
        at 375 and names broke at every hyphen over three lines. The floor is
        the cap itself on a phone; DataTable truncates and titles the cell. */
-    min-width: min(var(--pin-min, 10rem), 38vw);
+    min-width: min(var(--pin-min, 10rem), var(--pin-share, 38vw));
   }
 }
 
