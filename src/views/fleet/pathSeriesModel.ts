@@ -629,7 +629,7 @@ export function placeGuideLabels(
 
 /** The bucket a clipped scale is set by, by rank: one bucket in twenty may stand above it. */
 const CEILING_RANK = 0.95;
-/** The scale is clipped only when its highest bucket would press the others into less than half the lane. */
+/** A value is a stall, left above the scale, only past twice the typical level: below that it would not press the rest into less than half the lane. */
 const CLIP_RATIO = 2;
 
 /**
@@ -637,12 +637,13 @@ const CLIP_RATIO = 2;
  * trigger is always on the chart) and the previous period when it is drawn.
  *
  * One stalled run must not flatten the rest: a single 1 s bucket put a 39 ms
- * line on the baseline. So when the highest value is more than twice what
- * covers the 95th percentile bucket and the guides, the scale stops there
- * and the buckets above it are marked at the top edge (aboveScale), their
- * values in the readout. It never stops below a guide, so the degraded
- * trigger is always on the chart, and a short series (under twenty buckets)
- * is never clipped, since its 95th percentile is its highest bucket.
+ * line on the baseline. So a value more than twice the typical level (the
+ * 95th percentile bucket, or a guide if that is higher) is left above the
+ * scale, which covers every other value, and the buckets above it are
+ * marked at the top edge (aboveScale), their values in the readout. It
+ * never stops below a guide, so the degraded trigger is always on the
+ * chart, and a short series (under twenty buckets) is never clipped, since
+ * its 95th percentile is its highest bucket.
  */
 export function chartCeilingMs(series: Pick<PathSeries, "points" | "baseline" | "previous">, withPrevious = false): number {
   const values: number[] = [];
@@ -655,17 +656,24 @@ export function chartCeilingMs(series: Pick<PathSeries, "points" | "baseline" | 
   for (const guide of baselineGuides(series.baseline)) floor = Math.max(floor, guide.ms);
   if (!values.length) return floor;
   values.sort((a, b) => a - b);
-  const highest = values[values.length - 1]!;
   const typical = Math.max(values[Math.ceil(values.length * CEILING_RANK) - 1]!, floor);
-  return Math.max(highest > typical * CLIP_RATIO ? typical : highest, floor);
+  // The highest value within reach of the typical level; anything past it is a stall.
+  let covered = typical;
+  for (const v of values) if (v <= typical * CLIP_RATIO && v > covered) covered = v;
+  return covered;
 }
 
-/** The buckets whose band (p95, else p50) runs past the latency scale's top: the chart marks each at the top edge. */
-export function aboveScale(points: readonly SeriesPoint[], msMax: number): number[] {
+/**
+ * The buckets that run past the latency scale's top: the band (p95, else
+ * p50), or the previous period's p50 when it is drawn, since both are drawn
+ * along the top edge once clipped. The chart marks each at the top edge.
+ */
+export function aboveScale(points: readonly SeriesPoint[], msMax: number, previous?: readonly (number | null)[]): number[] {
   const out: number[] = [];
   points.forEach((p, i) => {
     const v = p.p95Ms ?? p.p50Ms;
-    if (v !== undefined && v > msMax) out.push(i);
+    const before = previous?.[i];
+    if ((v !== undefined && v > msMax) || (before != null && before > msMax)) out.push(i);
   });
   return out;
 }

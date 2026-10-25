@@ -404,7 +404,7 @@ function drawOverlay(u: uPlot): void {
   }
   // Buckets above a clipped scale: a small wedge on the top edge over each, so a stalled run is
   // still seen without flattening the rest; the readout carries its value.
-  const above = aboveScale(points.value, lanes.value.msMax);
+  const above = aboveScale(points.value, lanes.value.msMax, previous.value);
   if (above.length) {
     const half = step.value / 2;
     const w = 3.5 * px;

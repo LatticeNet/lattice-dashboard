@@ -364,6 +364,13 @@ test("ceiling: one stalled bucket does not flatten the rest; the scale stops at 
   assert.equal(chartCeilingMs(busy), 80);
   assert.deepEqual(aboveScale(busy.points, laneLayout(chartCeilingMs(busy)).msMax), []);
 
+  // A stall in the drawn previous period is clipped and marked like one in the series.
+  const compared = seriesFromResponse(plain);
+  const previous = compared.points.map((_, i) => (i === 12 ? 980 : 38));
+  const withPrevious = chartCeilingMs({ ...compared, previous }, true);
+  assert.equal(withPrevious, 80, "the busy bucket is data and stays on the scale; the previous stall does not");
+  assert.deepEqual(aboveScale(compared.points, laneLayout(withPrevious).msMax, previous), [12]);
+
   // Under twenty buckets the 95th percentile is the highest one, so a short series is never clipped.
   const short = seriesFromResponse({ ...plain, buckets: [buckets[0]!, { ...buckets[1]!, p95_ms: 1046 }] });
   assert.equal(chartCeilingMs(short), 1046);
