@@ -7,6 +7,7 @@ import {
   BASELINE_MIN_HOURS,
   baselineGuides,
   baselinePending,
+  aboveScale,
   chartCeilingMs,
   readBaseline,
   ruleView,
@@ -341,6 +342,31 @@ test("baseline: the ceiling covers the trigger, so the guide is always on the ch
   assert.equal(chartCeilingMs(s), 128);
   const tall = seriesFromResponse(m3Series({ buckets: [{ t: 1_760_599_800, n: 5, expected: 5, fail: 0, p50_ms: 300, p95_ms: 400 }] }));
   assert.equal(chartCeilingMs(tall), 400, "a series above its trigger keeps its own ceiling");
+});
+
+test("ceiling: one stalled bucket does not flatten the rest; the scale stops at the typical range and never below the trigger", () => {
+  const t0 = 1_760_600_000 - (1_760_600_000 % 60);
+  // An hour of one-minute buckets near 39 ms, one of which stalled for a second.
+  const buckets = Array.from({ length: 60 }, (_, i) => ({ t: t0 + i * 60, n: 1, expected: 1, fail: 0, p50_ms: 39 + (i % 3), p95_ms: 40 + (i % 3) }));
+  buckets[40] = { ...buckets[40]!, p50_ms: 1012, p95_ms: 1046 };
+  const plain = { window: "1h" as const, step_seconds: 60, from: t0, to: t0 + 3600, buckets };
+  const spiky = seriesFromResponse(plain);
+  assert.equal(chartCeilingMs(spiky), 42, "the 95th percentile bucket sets the scale, not the stall");
+  assert.deepEqual(aboveScale(spiky.points, laneLayout(chartCeilingMs(spiky)).msMax), [40], "and the stalled bucket is the one marked");
+
+  const judged = seriesFromResponse({ ...m3Series(), ...plain });
+  assert.equal(chartCeilingMs(judged), 128, "never below the degraded trigger");
+  assert.deepEqual(aboveScale(judged.points, laneLayout(chartCeilingMs(judged)).msMax), [40]);
+
+  // A high bucket within twice the typical range is data, not a stall: nothing is clipped.
+  buckets[40] = { ...buckets[40]!, p50_ms: 70, p95_ms: 80 };
+  const busy = seriesFromResponse(plain);
+  assert.equal(chartCeilingMs(busy), 80);
+  assert.deepEqual(aboveScale(busy.points, laneLayout(chartCeilingMs(busy)).msMax), []);
+
+  // Under twenty buckets the 95th percentile is the highest one, so a short series is never clipped.
+  const short = seriesFromResponse({ ...plain, buckets: [buckets[0]!, { ...buckets[1]!, p95_ms: 1046 }] });
+  assert.equal(chartCeilingMs(short), 1046);
 });
 
 test("baseline: not ready under 24 hours, with no trigger and a note of how far it is", () => {

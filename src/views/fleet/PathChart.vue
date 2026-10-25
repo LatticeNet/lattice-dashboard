@@ -14,7 +14,10 @@
  * ready, two dashed guides cross the latency lane, the 7-day p50 and the
  * latency trigger, in foreground ink at reduced opacity and labelled once at
  * the right edge, beneath the series so a label never hides a bucket; the
- * scale always covers the trigger. With `compare` on, the
+ * scale always covers the trigger. One stalled bucket does not set the
+ * scale: past twice what covers the 95th percentile bucket it is clipped,
+ * the bucket drawn along the top edge under a small wedge (chartCeilingMs,
+ * aboveScale). With `compare` on, the
  * previous period's p50 is a thin dotted line in the same ink, its empty steps
  * unjoined, labelled once where the line begins, and the readout adds its value.
  *
@@ -37,6 +40,7 @@ import { resolveColor, resolveFontFamily, rgba, watchTheme, type Rgba } from "@/
 import { formatLoss, formatMs } from "./latencyModel";
 import { LOSS_FILL, type LossTone } from "./pathsModel";
 import {
+  aboveScale,
   baselineGuides,
   bucketIndexAt,
   chartCeilingMs,
@@ -54,7 +58,6 @@ import {
   stepIndex,
   visibleRange,
   LATENCY_LANE_START,
-  LOSS_LANE,
   type PathSeries,
   type SeriesPoint,
 } from "./pathSeriesModel";
@@ -150,7 +153,11 @@ function columns(): uPlot.AlignedData {
   const half = step.value / 2;
   // The previous p50 is a sixth column, null where the earlier step had no successful run, so nothing joins across it.
   const prev = points.value.map((_, i) => previous.value?.[i] ?? null);
-  return [xs.map((x) => x + half), floor, p50, p95, loss, prev] as unknown as uPlot.AlignedData;
+  // A clipped scale (chartCeilingMs) draws what is above it along the top edge, where drawOverlay marks
+  // the bucket; the readout reads the points, so it still carries the real value.
+  const top = lanes.value.msMax;
+  const clip = (col: (number | null)[]) => col.map((v) => (v === null ? null : Math.min(v, top)));
+  return [xs.map((x) => x + half), clip(floor), clip(p50), clip(p95), loss, clip(prev)] as unknown as uPlot.AlignedData;
 }
 
 /** The x values uPlot autoscales to: the first and last bucket middles. */
@@ -354,12 +361,13 @@ function drawOverlay(u: uPlot): void {
   ctx.moveTo(left, Math.round(divider) + 0.5);
   ctx.lineTo(left + width, Math.round(divider) + 0.5);
   ctx.stroke();
-  // Lane captions, quiet, at the lane's top left.
+  // The loss lane's caption, quiet, on the line of the axis's "100%" so the two read as one
+  // ("100% loss") and the 100% is not taken for a step of the latency scale above it.
   ctx.fillStyle = rgba(colors().muted);
   ctx.font = `${10 * px}px ${colors().mono}`;
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.fillText(t("fleet.monitoring.chart.lossLane"), left + 4 * px, top + height * (1 - LOSS_LANE) + 3 * px);
+  ctx.textBaseline = "middle";
+  ctx.fillText(t("fleet.monitoring.chart.lossLane"), left + 4 * px, Math.round(u.valToPos(lanes.value.lossTicks[1]!.ms, "ms", true)));
   // Min and max ticks once a bucket is wide enough to hold them (raw and 5-minute buckets).
   const bucketPx = u.valToPos(fullRange.value[0] + step.value, "x", true) - u.valToPos(fullRange.value[0], "x", true);
   // Only once buckets are far enough apart that the ticks read as marks, not as a dashed line.
@@ -393,6 +401,24 @@ function drawOverlay(u: uPlot): void {
     ctx.lineTo(left + width, y);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+  // Buckets above a clipped scale: a small wedge on the top edge over each, so a stalled run is
+  // still seen without flattening the rest; the readout carries its value.
+  const above = aboveScale(points.value, lanes.value.msMax);
+  if (above.length) {
+    const half = step.value / 2;
+    const w = 3.5 * px;
+    ctx.fillStyle = rgba(colors().ink, 0.85);
+    ctx.beginPath();
+    for (const i of above) {
+      const x = u.valToPos(points.value[i]!.t + half, "x", true);
+      if (x < left || x > left + width) continue;
+      ctx.moveTo(x - w, top + 5 * px);
+      ctx.lineTo(x + w, top + 5 * px);
+      ctx.lineTo(x, top);
+      ctx.closePath();
+    }
+    ctx.fill();
   }
   // Method changes: a rule labelled with the switch it marks ("TCP → ICMP") on a card-coloured pad.
   ctx.font = `${10 * px}px ${colors().mono}`;
