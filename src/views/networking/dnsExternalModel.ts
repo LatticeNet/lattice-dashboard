@@ -11,7 +11,7 @@
  * Everything here is pure so the difference can be asserted in a test rather
  * than eyeballed in a table cell.
  */
-import type { DNSDeploymentBody, DNSDeploymentView, DNSListener, MonitorView } from "@/lib/api";
+import type { DNSCertCheckView, DNSDeploymentBody, DNSDeploymentView, DNSListener } from "@/lib/api";
 import { TLS_DEFAULT_THRESHOLD_DAYS } from "@/views/fleet/monitorTypeModel";
 
 /** Milliseconds in a day, for the certificate countdown. */
@@ -115,69 +115,83 @@ export function certExpiry(certNotAfter: string | undefined, now: Date, threshol
   return { tone: "ok", days };
 }
 
-// ── Who owns the expiry question ──────────────────────────────────────────
+// ── Which expiry, and who judges it ──────────────────────────────────────
 //
-// The recorded cert_not_after is a date the operator typed. The thing that
-// actually fires before it arrives is a tls monitor, which dials the endpoint,
-// reads the leaf certificate and fails once fewer than threshold_days remain.
-// So this page does not get to hold an opinion of its own: it either finds the
-// watch and answers with the watch's threshold, or it says plainly that
-// nothing is watching, which is the state an amber number was hiding. An
-// observed resolver with no watch used to look exactly like a watched one.
+// The record carries a date the operator typed, which nothing reads off the
+// wire. "Measure this certificate" (design 32 S5c) has the server create tls
+// checks for the record's DoT and DoH listeners and link them to it; those
+// dial the endpoint, read the leaf certificate and fail once fewer than
+// threshold_days remain. The server answers which expiry to show, measured or
+// typed (cert_expiry), and lists the linked checks (cert_checks). This page
+// finds a record's checks through that link only: matching a hostname against
+// monitor targets used to call any tls check on the same name this record's
+// watch, whichever port or record it belonged to.
 
-/** The fields of a monitor this page needs. */
-export type CertWatchMonitor = Pick<MonitorView, "id" | "name" | "type" | "target" | "threshold_days" | "enabled">;
+/** Where the shown expiry comes from. */
+export type CertSource = "measured" | "typed" | "none";
+
+export interface CertShown {
+  /** The not-after to show, "" when there is none. */
+  notAfter: string;
+  source: CertSource;
+  /** The linked check that measured it, when this session can read it. */
+  check?: DNSCertCheckView;
+}
+
+/**
+ * The expiry the sheet shows: what a linked check measured over what the
+ * operator typed. The server makes the choice; the typed field is read
+ * directly only when the answer carries no choice at all.
+ */
+export function certShown(dep: Pick<DNSDeploymentView, "cert_expiry" | "cert_not_after" | "cert_checks">): CertShown {
+  const expiry = dep.cert_expiry;
+  if (expiry?.source === "measured" && certDate(expiry.not_after)) {
+    return {
+      notAfter: expiry.not_after,
+      source: "measured",
+      check: dep.cert_checks?.find((check) => check.monitor_id === expiry.monitor_id),
+    };
+  }
+  const typed = expiry?.source === "typed" ? expiry.not_after : dep.cert_not_after;
+  if (typed && certDate(typed)) return { notAfter: typed, source: "typed" };
+  return { notAfter: "", source: "none" };
+}
 
 export interface CertWatchLookup {
-  /** `unknown` when the monitor list could not be read, which is not the same claim as "nothing watches this". */
+  /** `unknown` when this session cannot read checks, which is not the same claim as "nothing watches this". */
   state: "watched" | "unwatched" | "unknown";
-  monitor?: CertWatchMonitor;
+  /** The linked check whose threshold judges the expiry. */
+  check?: DNSCertCheckView;
   /** The days-left threshold the verdict is measured against; 0 when nothing watches. */
   thresholdDays: number;
 }
 
 /**
- * The host a tls target names. The probe takes host:port and nothing else, so
- * the port is dropped and the host compared case-insensitively, the way DNS
- * itself compares names.
+ * The linked check that judges this record's expiry: the one that measured
+ * it, or else the first enabled one, which has not read the endpoint yet.
+ * A paused check judges nothing. Without monitor:read the page cannot tell,
+ * and says nothing rather than "unwatched".
  */
-export function tlsTargetHost(target: string | undefined): string {
-  const value = (target ?? "").trim().toLowerCase();
-  const at = value.lastIndexOf(":");
-  return (at > 0 ? value.slice(0, at) : value).replace(/^\[|\]$/g, "");
-}
-
-/**
- * The certificate watch pointed at this hostname.
- *
- * `monitors` undefined means the list was not read: a token without
- * monitor:read cannot see whether a watch exists, and answering "nothing
- * watches this" on its behalf would be a claim the page cannot support.
- */
-export function lookupCertWatch(
-  hostname: string | undefined,
-  monitors: CertWatchMonitor[] | undefined,
+export function linkedCertWatch(
+  dep: Pick<DNSDeploymentView, "cert_checks" | "cert_expiry">,
+  monitorsReadable: boolean,
 ): CertWatchLookup {
-  const name = (hostname ?? "").trim().toLowerCase();
-  if (!monitors || !name) return { state: "unknown", thresholdDays: 0 };
-  const monitor = monitors.find(
-    (candidate) =>
-      candidate.type === "tls" && candidate.enabled !== false && tlsTargetHost(candidate.target) === name,
-  );
-  if (!monitor) return { state: "unwatched", thresholdDays: 0 };
-  const threshold = monitor.threshold_days;
+  if (!monitorsReadable) return { state: "unknown", thresholdDays: 0 };
+  const enabled = (dep.cert_checks ?? []).filter((check) => check.enabled);
+  const check = enabled.find((candidate) => candidate.monitor_id === dep.cert_expiry?.monitor_id) ?? enabled[0];
+  if (!check) return { state: "unwatched", thresholdDays: 0 };
   return {
     state: "watched",
-    monitor,
-    // The server applies its own default when the field is absent, so mirror
-    // that rather than treating a missing threshold as no threshold.
-    thresholdDays: Number.isFinite(threshold) && (threshold ?? 0) > 0 ? (threshold as number) : TLS_DEFAULT_THRESHOLD_DAYS,
+    check,
+    // The server stores its default on create; mirror it for a check that
+    // somehow carries none rather than treating that as no threshold.
+    thresholdDays: check.threshold_days > 0 ? check.threshold_days : TLS_DEFAULT_THRESHOLD_DAYS,
   };
 }
 
 /**
- * The countdown as this page is entitled to state it: at the watch's own
- * threshold when there is a watch, and with no threshold at all when there is
+ * The countdown as this page is entitled to state it: at the linked check's
+ * own threshold when there is one, and with no threshold at all when there is
  * not, so an unwatched row reads neutral and says so instead of inventing an
  * amber that nothing behind it will act on. An expiry already in the past is
  * still called out, because that is a fact and not a judgement.
@@ -188,6 +202,56 @@ export function certVerdict(
   watch: CertWatchLookup,
 ): CertExpiry {
   return certExpiry(certNotAfter, now, watch.thresholdDays);
+}
+
+// ── Measure this certificate ──────────────────────────────────────────────
+
+/** Why a record cannot be measured, or undefined when it can. */
+export type MeasureBlock = "no_hostname" | "address";
+
+/**
+ * A certificate is held to the name the resolver answers at, never to an
+ * address, and the server refuses a record without one. A save requires a
+ * hostname and refuses an address, so this only catches a record stored
+ * some other way; the action is disabled with the reason rather than offered
+ * and refused.
+ */
+export function measureBlock(dep: Pick<DNSDeploymentView, "hostname">): MeasureBlock | undefined {
+  const host = (dep.hostname ?? "").trim();
+  if (!host) return "no_hostname";
+  if (host.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return "address";
+  return undefined;
+}
+
+export interface CertPortCandidate {
+  port: number;
+  /** Ticked when the dialog opens: the listener looks like DoT or DoH. */
+  suggested: boolean;
+  /** The linked check already on hostname:port. */
+  measuredBy?: DNSCertCheckView;
+}
+
+/**
+ * The listeners a measure can name: every recorded tcp listener, by port.
+ *
+ * The record says which ports the daemon holds, not which of them speak TLS,
+ * so the operator picks. The dialog starts from the ones that look like DoT
+ * or DoH: not 53, and with no udp listener on the same port, since plain DNS
+ * answers on both (the production dnsproxy holds 2053 on both and serves DoH
+ * on 8443 alone).
+ */
+export function certPortCandidates(
+  dep: Pick<DNSDeploymentView, "listeners" | "hostname" | "cert_checks">,
+): CertPortCandidate[] {
+  const listeners = dep.listeners ?? [];
+  const udp = new Set(listeners.filter((l) => l.protocol === "udp").map((l) => l.port));
+  const host = (dep.hostname ?? "").trim().toLowerCase();
+  const ports = [...new Set(listeners.filter((l) => l.protocol === "tcp").map((l) => l.port))].sort((a, b) => a - b);
+  return ports.map((port) => ({
+    port,
+    suggested: port !== 53 && !udp.has(port),
+    measuredBy: dep.cert_checks?.find((check) => check.target.trim().toLowerCase() === `${host}:${port}`),
+  }));
 }
 
 // ── The observed body ─────────────────────────────────────────────────────
@@ -262,8 +326,8 @@ export type ExternalHostnameProblem = "empty" | "not_fqdn";
 /**
  * The hostname an observed record answers at.
  *
- * The server refuses anything without a dot, and this is the only handle a
- * certificate watch can be pointed at, so the rule is worth stating twice.
+ * The server refuses anything without a dot, and this is the name a measured
+ * certificate is dialled at, so the rule is worth stating twice.
  * It returns which rule was broken rather than a boolean, because a red border
  * over a hint that only restates what the field is for tells the operator
  * nothing about what to type instead.
