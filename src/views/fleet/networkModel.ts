@@ -38,6 +38,23 @@ export function roomy(viewWidth: number): boolean {
   return viewWidth >= ROOMY_W;
 }
 
+/**
+ * The list's layout for the view's width. From ROOMY_W, the table with every
+ * figure column. From COMPACT_W, the table keeps the columns rows are
+ * compared by (target, source, state, p50, loss and the last run) and leaves
+ * p95, jitter and availability to the path sheet: a phone's list stretched
+ * across a desk window puts each row's figures a screen away from its name.
+ * Narrower, the rows are grouped by target, one line per source.
+ */
+export type ListLayout = "table" | "compact" | "stacked";
+
+export const COMPACT_W = 720;
+
+export function listLayout(viewWidth: number): ListLayout {
+  if (viewWidth >= ROOMY_W) return "table";
+  return viewWidth >= COMPACT_W ? "compact" : "stacked";
+}
+
 export interface Screen {
   /** The view itself is ROOMY_W wide (the window less the sidebar and the gutters). */
   roomy: boolean;

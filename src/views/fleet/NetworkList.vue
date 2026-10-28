@@ -13,20 +13,22 @@
  * jitter, loss, availability, the last run, the method and the check's name
  * (design 32 R3). A figure column no path of the matrix
  * has (a server from before design 29 keeps no jitter) is not shown. In a
- * view narrower than the table needs (networkModel.ROOMY_W) the rows become a
- * list grouped by target, one line per source, the figures in a second line.
+ * view narrower than the table needs (networkModel.listLayout) the table keeps
+ * target, source, state, p50, loss and the last run, its name columns sharing
+ * what the figures leave; narrower still, on a phone, the rows become a list
+ * grouped by target, one line per source, the figures in a second line.
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { formatRelativeTime } from "@/lib/format";
+import { formatAge, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { RouteOpen } from "@/composables/useRouteOpen";
 
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 
 import { formatLoss, formatMs } from "./latencyModel";
-import { LIST_GROUP_ORDER, formatAvailability, listGroup, regionGroups, type ListGroup } from "./networkModel";
+import { LIST_GROUP_ORDER, formatAvailability, listGroup, regionGroups, type ListGroup, type ListLayout } from "./networkModel";
 import { LOSS_TEXT, availability, displayState, lossTone, measuresNow, targetLabel, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
 
@@ -42,8 +44,8 @@ const props = defineProps<{
   failureOf: (monitorId: string, source: string) => string | undefined;
   /** The rows answer an earlier query: dimmed and inert. */
   stale?: boolean;
-  /** The view has the table's width; narrower, the rows are grouped by target. */
-  table: boolean;
+  /** The table with every figure column, the table of the compared columns, or the rows grouped by target. */
+  layout: ListLayout;
 }>();
 
 const emit = defineEmits<{
@@ -52,7 +54,7 @@ const emit = defineEmits<{
   open: [key: string, el: HTMLElement];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { displayLabel, reasonShort, whyText, groupLabel, methodName, evidenceText } = usePathsCopy();
 
 const has = (pick: (p: PathItem) => number | undefined) => props.all.some((p) => pick(p) !== undefined);
@@ -60,19 +62,31 @@ const has = (pick: (p: PathItem) => number | undefined) => props.all.some((p) =>
 /*
  * Every column has its width (its cells truncate inside it), so typing a
  * query never moves a column: the table spreads its spare width the same way
- * whatever the rows hold. The figure columns fit "1.20 s" and "99.9%".
+ * whatever the rows hold. The figure columns fit "1.20 s" and "99.9%". In the
+ * compact table the two name columns have no width of their own (max-w-0
+ * keeps a long name from widening them): they share what the fixed columns
+ * leave, and a name wraps to a second line rather than losing its end, since
+ * fleet names share their front ("[OpenJobs-Data]-TiDB-1" and "-2"). The
+ * last run is short there ("53s").
  */
 const FIGURE = "w-19";
+const compact = computed(() => props.layout === "compact");
+/** How a cell's text fits: the full table's columns are fixed and truncate; the compact table's names fill theirs and wrap. */
+const cap = computed(() =>
+  compact.value
+    ? { name: "line-clamp-2 break-words", detail: "block truncate", source: "line-clamp-2 break-words", check: "", why: "line-clamp-2 break-words" }
+    : { name: "block max-w-52 truncate", detail: "block max-w-52 truncate", source: "block max-w-42 truncate", check: "max-w-42", why: "block max-w-44 truncate" },
+);
 const columns = computed<DataTableColumn<PathItem>[]>(() => [
-  { key: "target", label: t("fleet.monitoring.network.list.target"), class: "w-58", sortable: true, value: (p) => targetLabel(p) },
-  { key: "source", label: t("fleet.monitoring.network.list.source"), class: "w-48", sortable: true, value: (p) => p.sourceName },
-  { key: "state", label: t("fleet.monitoring.network.list.state"), class: "w-50", sortable: true, value: (p) => STATE_ORDER[displayState(p)] },
+  { key: "target", label: t("fleet.monitoring.network.list.target"), class: compact.value ? "max-w-0" : "w-58", sortable: true, value: (p) => targetLabel(p) },
+  { key: "source", label: t("fleet.monitoring.network.list.source"), class: compact.value ? "max-w-0" : "w-48", sortable: true, value: (p) => p.sourceName },
+  { key: "state", label: t("fleet.monitoring.network.list.state"), class: compact.value ? "w-32" : "w-50", sortable: true, value: (p) => STATE_ORDER[displayState(p)] },
   { key: "p50", label: "p50", align: "right", class: FIGURE, sortable: true, value: (p) => (measuresNow(p) ? p.p50Ms : undefined) },
-  ...(has((p) => p.p95Ms) ? [{ key: "p95", label: "p95", align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.p95Ms : undefined) }] : []),
-  ...(has((p) => p.jitterMs) ? [{ key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.jitterMs : undefined) }] : []),
+  ...(!compact.value && has((p) => p.p95Ms) ? [{ key: "p95", label: "p95", align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.p95Ms : undefined) }] : []),
+  ...(!compact.value && has((p) => p.jitterMs) ? [{ key: "jitter", label: t("fleet.monitoring.paths.stats.jitter"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => (measuresNow(p) ? p.jitterMs : undefined) }] : []),
   { key: "loss", label: t("fleet.monitoring.paths.stats.loss"), align: "right", class: FIGURE, sortable: true, value: (p) => (measuresNow(p) && p.samples > 0 ? p.loss : undefined) },
-  ...(has(availability) ? [{ key: "availability", label: t("fleet.monitoring.paths.stats.availability"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => availability(p) }] : []),
-  { key: "last", label: t("fleet.monitoring.network.list.last"), align: "right", class: "w-26", sortable: true, value: (p) => p.lastAt },
+  ...(!compact.value && has(availability) ? [{ key: "availability", label: t("fleet.monitoring.paths.stats.availability"), align: "right" as const, class: FIGURE, sortable: true, value: (p: PathItem) => availability(p) }] : []),
+  { key: "last", label: t("fleet.monitoring.network.list.last"), align: "right", class: compact.value ? "w-16" : "w-26", sortable: true, value: (p) => p.lastAt },
 ]);
 
 /** Worst first when sorted ascending, as the list's own order is. */
@@ -112,6 +126,7 @@ function rowLabel(p: PathItem): string {
 }
 
 const lastRun = (p: PathItem) => (p.lastAt !== undefined ? formatRelativeTime(p.lastAt) : t("fleet.monitoring.paths.sheet.noRun"));
+const lastRunShort = (p: PathItem) => (p.lastAt !== undefined ? formatAge(Date.now() - p.lastAt, locale.value) : t("fleet.monitoring.paths.sheet.noRun"));
 const lossClass = (p: PathItem) => ((p.loss ?? 0) > 0 ? LOSS_TEXT[lossTone(displayState(p))] : "text-muted-foreground");
 
 /** The phone's second line: the figures a row has, joined. */
@@ -143,8 +158,9 @@ const groupCounts = computed(() => {
 <template>
   <div :class="cn(stale && 'opacity-50')" :inert="stale || undefined">
     <DataTable
-      v-if="table"
+      v-if="layout !== 'stacked'"
       data-testid="network-list"
+      :data-layout="layout"
       :columns="columns"
       :rows="rows"
       :row-key="(p) => p.id"
@@ -167,13 +183,13 @@ const groupCounts = computed(() => {
         <template v-if="groupCounts.get(group.key)?.degraded"><span class="text-muted-foreground" aria-hidden="true">·</span><span class="font-mono text-warning-text tabular">{{ $t('fleet.monitoring.paths.proof.degraded', { n: groupCounts.get(group.key)!.degraded }) }}</span></template>
       </template>
       <template #cell-target="{ row }">
-        <span class="block max-w-52 truncate font-medium" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
-        <span class="block max-w-52 truncate font-mono text-xs text-muted-foreground" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
+        <span :class="cn('font-medium', cap.name)" :title="targetLabel(row)">{{ targetLabel(row) }}</span>
+        <span :class="cn('font-mono text-xs text-muted-foreground', cap.detail)" :title="row.targetNode ? row.country : row.target">{{ row.targetNode ? row.country : row.target }}</span>
       </template>
       <!-- The source, and what it measures with: the method and the check's name. -->
       <template #cell-source="{ row }">
-        <span class="block max-w-42 truncate" :title="row.sourceName">{{ row.sourceName }}</span>
-        <span class="flex max-w-42 min-w-0 items-center gap-1.5 text-xs text-muted-foreground" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
+        <span :class="cap.source" :title="row.sourceName">{{ row.sourceName }}</span>
+        <span :class="cn('flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground', cap.check)" :title="`${methodName(row.method)} · ${checkLabel(row)}`">
           <span class="shrink-0 font-mono text-[10px] uppercase">{{ row.method }}</span>
           <span class="truncate">{{ checkLabel(row) }}</span>
         </span>
@@ -183,7 +199,7 @@ const groupCounts = computed(() => {
           <span :class="cn('size-2 shrink-0 rounded-full', DOT[displayState(row)])" aria-hidden="true" />
           <span :class="cn('whitespace-nowrap', STATE_INK[displayState(row)])">{{ stateWords(row).word }}</span>
         </span>
-        <span v-if="stateWords(row).why" :class="cn('block max-w-44 truncate ps-4 text-xs', displayState(row) === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')" :title="stateWords(row).title || undefined">{{ stateWords(row).why }}</span>
+        <span v-if="stateWords(row).why" :class="cn('ps-4 text-xs', cap.why, displayState(row) === 'degraded' ? 'text-warning-text' : 'text-muted-foreground')" :title="stateWords(row).title || undefined">{{ stateWords(row).why }}</span>
       </template>
       <template #cell-p50="{ row }">
         <span :class="cn('whitespace-nowrap font-mono tabular', STATE_INK[displayState(row)])">{{ measuresNow(row) ? formatMs(row.p50Ms) : '' }}</span>
@@ -201,11 +217,11 @@ const groupCounts = computed(() => {
         <span class="whitespace-nowrap font-mono text-muted-foreground tabular">{{ formatAvailability(availability(row)) }}</span>
       </template>
       <template #cell-last="{ row }">
-        <span class="whitespace-nowrap font-mono text-xs text-muted-foreground tabular" :title="row.lastAt ? new Date(row.lastAt).toISOString() : undefined">{{ lastRun(row) }}</span>
+        <span class="whitespace-nowrap font-mono text-xs text-muted-foreground tabular" :title="row.lastAt ? new Date(row.lastAt).toISOString() : undefined">{{ compact ? lastRunShort(row) : lastRun(row) }}</span>
       </template>
     </DataTable>
 
-    <!-- Narrower than the table: grouped by target, one line per source, reasons in words (a phone has no hover). -->
+    <!-- A phone: grouped by target, one line per source, reasons in words (a phone has no hover). -->
     <div v-else class="space-y-4" data-testid="network-list">
       <section v-for="group in groups" :key="group.group" :aria-label="groupLabel(group.group)">
         <h3 class="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
