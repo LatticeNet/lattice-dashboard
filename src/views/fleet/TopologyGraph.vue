@@ -7,7 +7,8 @@
  * control plane is an HTML button over it, so text stays crisp and every box
  * takes focus. Hovering or focusing anything lights it and everything one
  * edge away and dims the rest; a card says the numbers and when they were
- * heard. Edges answer the pointer through a 14 px transparent stroke.
+ * heard. Every edge ends in an arrowhead at the end it points to. Edges
+ * answer the pointer through a 14 px transparent stroke.
  *
  * Every edge is also a button for the keyboard (design 32 D2), labelled with
  * what its card says. The edges are one tab stop between the sources and the
@@ -37,6 +38,7 @@ import { usePathsCopy } from "./pathsCopy";
 import { LOSS_TEXT, displayState, lossTone } from "./pathsModel";
 import {
   CONTROL_PLANE,
+  arrowHead,
   edgeStyle,
   edgesOf,
   endMatched,
@@ -289,14 +291,6 @@ function edgeWidth(le: LayoutEdge): number {
 /** A line the query does not keep takes the muted tone; the state's tone otherwise. */
 function edgeColor(le: LayoutEdge): string {
   return edgeMatched(le) ? edgeStyle(le.edge).color : "--muted-foreground";
-}
-
-/** Chains and addresses end in an arrow; a path's direction to a node is the layout's (source left). */
-function arrow(le: LayoutEdge): string | undefined {
-  if (le.edge.kind === "path" && le.toColumn !== "address") return undefined;
-  const { x, y, dir } = le.end;
-  const back = x - dir * 7;
-  return `M${x} ${y} L${back} ${y - 4} L${back} ${y + 4} Z`;
 }
 
 /** The ring around the line whose path is open, or that the keyboard is on. */
@@ -673,7 +667,7 @@ function onEdgeKey(le: LayoutEdge, event: KeyboardEvent): void {
               :stroke-dasharray="dash(le)"
               style="stroke: var(--card)"
             />
-            <path v-if="arrow(le)" :d="arrow(le)" :style="{ fill: `var(${edgeColor(le)})` }" />
+            <path :d="arrowHead(le.end)" :style="{ fill: `var(${edgeColor(le)})` }" />
             <path
               :d="le.d"
               fill="none"

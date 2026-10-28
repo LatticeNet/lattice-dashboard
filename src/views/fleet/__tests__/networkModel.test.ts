@@ -7,7 +7,7 @@ import { GOLDEN_MONITORS, GOLDEN_PATHS_1H, GOLDEN_PATH_SET } from "@/testing/m3G
 import enFleet from "../../../i18n/locales/en/fleet.ts";
 import zhFleet from "../../../i18n/locales/zh-CN/fleet.ts";
 
-import { LIST_GROUP_ORDER, ROOMY_W, defaultPresentation, formatAvailability, formatPresentation, listGroup, listOrder, parsePresentation, presentation, regionGroups, roomy } from "../networkModel.ts";
+import { COMPACT_W, LIST_GROUP_ORDER, ROOMY_W, defaultPresentation, formatAvailability, formatPresentation, listGroup, listLayout, listOrder, parsePresentation, presentation, regionGroups, roomy } from "../networkModel.ts";
 import { availability, buildPathsMatrix, countPaths, displayState, everyPath, measuresNow, pathsQuerySchema, reachBySource, type PathsMatrix } from "../pathsModel.ts";
 import { ROW_MARK_W, ROW_SUMMARY_EXTRA_W, buildTopology, layoutTopology } from "../topologyModel.ts";
 
@@ -47,6 +47,16 @@ test("the view opens in the graph with a mouse in a roomy view, and in the list 
   assert.equal(parsePresentation(["graph"]), "graph");
   assert.equal(parsePresentation("table"), "auto");
   assert.equal(parsePresentation(undefined), "auto");
+});
+
+test("the list is the full table in a roomy view, a table of the compared columns in a narrower one, and grouped by target on a phone", () => {
+  assert.equal(listLayout(ROOMY_W), "table");
+  assert.equal(listLayout(ROOMY_W - 1), "compact");
+  assert.equal(listLayout(790), "compact", "a desk window with the sidebar open keeps a table");
+  assert.equal(listLayout(COMPACT_W), "compact");
+  assert.equal(listLayout(COMPACT_W - 1), "stacked");
+  assert.equal(listLayout(375), "stacked");
+  assert.equal(listLayout(0), "stacked", "before the view is measured");
 });
 
 test("a roomy view fits the graph's columns: four sources, their summaries and marks, and the address terminals, with no sideways scroll", () => {

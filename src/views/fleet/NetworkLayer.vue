@@ -57,7 +57,7 @@ import NodePathList from "./NodePathList.vue";
 import PathSheet from "./PathSheet.vue";
 import TopologyGraph from "./TopologyGraph.vue";
 import TopologySourcePicker from "./TopologySourcePicker.vue";
-import { formatPresentation, listOrder, parsePresentation, presentation as presentationFor, roomy, type Presentation } from "./networkModel";
+import { formatPresentation, listLayout, listOrder, parsePresentation, presentation as presentationFor, roomy, type Presentation } from "./networkModel";
 import { NODE_PATHS_SHOWN, monitoringQuery, nodePaths } from "./nodePathsModel";
 import { PATHS_QUERY_EXAMPLES, everyPath, pathsQuerySchema, queryNamesUnmeasured, type PathItem } from "./pathsModel";
 import { usePathsCopy } from "./pathsCopy";
@@ -445,7 +445,7 @@ const STEP = "text-xs font-medium text-muted-foreground";
           :query-sorted="listQuery.sorted.value"
           :failure-of="failureOf"
           :stale="listQuery.staleRows.value"
-          :table="screen.roomy"
+          :layout="listLayout(viewWidth)"
           @drop-query-sort="queryText = withoutSorts(queryText)"
           @open="openPath"
         />
