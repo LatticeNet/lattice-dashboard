@@ -22,6 +22,7 @@ import {
   CONTROL_PLANE,
   COLLAPSE_AT,
   FAN_MIN_W,
+  INTO_LEFT,
   LEFT_W,
   ROW_H,
   ROW_MARK_W,
@@ -29,6 +30,7 @@ import {
   SOURCES_TOP,
   TOP_LANE,
   addressEndpoint,
+  arrowHead,
   buildTopology,
   chainState,
   edgeStyle,
@@ -924,6 +926,50 @@ test("a chain out of a source rides below the path to the same row", () => {
   const path = a.edges.find((e) => e.edge.id === "path:sh>hk")!;
   const chain = a.edges.find((e) => e.edge.id === "chain:line-sh")!;
   assert.equal(chain.end.y, path.end.y + 6);
+});
+
+test("every line ends in an arrowhead at one of its two ends, pointing along it", () => {
+  const sh: LineChainView = { source_line_uuid: "line-sh", source_node_id: "sh", status: "converged", current: { target_node_id: "hk", target_line_uuid: "line-hk", artifact_digest: "e", status: "converged" }, attempt: null };
+  const a = layoutTopology(buildTopology(input({ chains: [...CHAINS, sh], matrix: matrixOf([...PATHS, ADDRESS_CHECK()]) })), { width: 1200 });
+  assert.deepEqual(new Set(a.edges.map((e) => e.toColumn)), new Set(["row", "address"]));
+  for (const le of a.edges) {
+    const points = [...le.d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map((m) => `${m[1]} ${m[2]}`);
+    const tip = `${le.end.x} ${le.end.y}`;
+    assert.ok(points[0] === tip || points[points.length - 1] === tip, `${le.key} ends at its arrow: ${le.d}`);
+    const head = arrowHead(le.end);
+    assert.ok(head.startsWith(`M${tip} L${le.end.x - le.end.dir * 7} `), `${le.key} points ${le.end.dir > 0 ? "right" : "left"}: ${head}`);
+  }
+});
+
+test("a chain from a row into a source lands below the source's middle, where its own lines leave", () => {
+  const hk: LineChainView = { source_line_uuid: "line-hk-sh", source_node_id: "hk", status: "converged", current: { target_node_id: "sh", target_line_uuid: "line-sh", artifact_digest: "f", status: "converged" }, attempt: null };
+  const a = layoutTopology(buildTopology(input({ chains: [hk] })), { width: 1200 });
+  const sh = a.sources.find((s) => s.node.id === "sh")!.box;
+  const chain = a.edges.find((e) => e.edge.id === "chain:line-hk-sh")!;
+  assert.equal(chain.toColumn, "left");
+  assert.deepEqual(chain.end, { x: LEFT_W, y: sh.y + sh.h / 2 + INTO_LEFT, dir: -1 });
+});
+
+test("two sources that measure each other draw two arcs, each with its arrow at the source it measures", () => {
+  const sources = [{ node_id: "sh", name: "cd-hs-sh" }, { node_id: "hk", name: "cd-hk-hkt" }];
+  const p = plan({ config: { ...plan().config, sources: ["sh", "hk"] } });
+  const paths = [...PATHS, probe("hk", "sh", { state: "down", loss: 1 })];
+  const a = layoutTopology(buildTopology(input({ plan: p, matrix: matrixOf(paths, sources), chains: [], layer: "paths" })), { width: 1200 });
+  assert.deepEqual(a.sources.map((s) => s.node.id), ["sh", "hk"]);
+  const box = (id: string) => a.sources.find((s) => s.node.id === id)!.box;
+  const down = a.edges.find((e) => e.edge.id === "path:sh>hk")!;
+  const up = a.edges.find((e) => e.edge.id === "path:hk>sh")!;
+  for (const [le, target] of [[down, "hk"], [up, "sh"]] as const) {
+    assert.equal(le.toColumn, "left");
+    assert.deepEqual(le.end, { x: LEFT_W, y: box(target).y + box(target).h / 2 + INTO_LEFT, dir: -1 }, `${le.key} points at ${target}, below where its own lines leave`);
+  }
+  for (const [le, source] of [[down, "sh"], [up, "hk"]] as const) assert.ok(le.d.startsWith(`M${LEFT_W} ${box(source).y + box(source).h / 2} `), `${le.key} leaves ${source}'s middle`);
+  // How far right a curve's control points sit; the curve itself reaches three quarters of that.
+  const reach = (d: string) => Math.max(...[...d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]))) - LEFT_W;
+  for (const le of [down, up]) assert.ok(reach(le.d) * 0.75 < a.rowsX - LEFT_W, `${le.key} clears the tall column`);
+  // Drawn over the fans, so the fans never cover them or take their pointer.
+  const lastFan = a.edges.findLastIndex((e) => e.toColumn !== "left");
+  for (const le of [down, up]) assert.ok(a.edges.indexOf(le) > lastFan, `${le.key} is drawn after every fan line`);
 });
 
 test("chains are drawn as two rails, so shape and not only hue tells them from paths", () => {

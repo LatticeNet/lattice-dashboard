@@ -887,7 +887,7 @@ export interface LayoutEdge {
   bundle: TopoEdge[];
   key: string;
   d: string;
-  /** Where the line ends, and which way it points there (1 right, -1 left), for an arrowhead. */
+  /** Where the line ends, and which way it points there (1 right, -1 left): its arrowhead (arrowHead). */
   end: { x: number; y: number; dir: 1 | -1 };
   /** The box or row it starts from (an anchorOf key), so the keyboard reaches it right after that box. */
   fromKey: string;
@@ -925,9 +925,28 @@ function bezier(x1: number, y1: number, x2: number, y2: number): string {
   return `M${r1(x1)} ${r1(y1)} C${r1(x1 + dx)} ${r1(y1)} ${r1(x2 - dx)} ${r1(y2)} ${r1(x2)} ${r1(y2)}`;
 }
 
+/**
+ * A line into a box of the left column lands this far below the box's
+ * middle, where the box's own lines leave from: its arrowhead reads as
+ * arriving instead of hiding in the fan, and two sources that measure each
+ * other draw two arcs, one inside the other, never one over the other.
+ */
+export const INTO_LEFT = 14;
+
 function arc(x: number, y1: number, y2: number): string {
   const bulge = 14 + Math.min(64, Math.abs(y2 - y1) * 0.18);
   return `M${r1(x)} ${r1(y1)} C${r1(x + bulge)} ${r1(y1)} ${r1(x + bulge)} ${r1(y2)} ${r1(x)} ${r1(y2)}`;
+}
+
+/**
+ * Every line ends in an arrowhead at the end it points to: a path at what it
+ * measures, a chain at its exit. Placement alone (sources left) says nothing
+ * when a source measures another source, or when a line runs between two
+ * rows of the tall column.
+ */
+export function arrowHead(end: LayoutEdge["end"]): string {
+  const back = end.x - end.dir * 7;
+  return `M${r1(end.x)} ${r1(end.y)} L${r1(back)} ${r1(end.y - 4)} L${r1(back)} ${r1(end.y + 4)} Z`;
 }
 
 /**
@@ -1092,19 +1111,21 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
       d = bezier(from.xr, from.y, to.xl, to.y);
       end = { x: to.xl, y: to.y, dir: 1 };
     } else if (from.kind === "row" && to.kind === "left") {
-      d = bezier(to.xr, to.y, from.xl, from.y);
-      end = { x: to.xr, y: to.y, dir: -1 };
+      d = bezier(to.xr, to.y + INTO_LEFT, from.xl, from.y);
+      end = { x: to.xr, y: to.y + INTO_LEFT, dir: -1 };
     } else if (from.kind === "left" && to.kind === "left") {
-      d = arc(from.xr, from.y, to.y);
-      end = { x: from.xr, y: to.y, dir: -1 };
+      d = arc(from.xr, from.y, to.y + INTO_LEFT);
+      end = { x: from.xr, y: to.y + INTO_LEFT, dir: -1 };
     } else {
       d = bezier(from.xr, from.y + lift, to.xl, to.y + lift);
       end = { x: to.xl, y: to.y + lift, dir: 1 };
     }
     edges.push({ edge: worst, bundle: list, key, d, end, fromKey, toColumn: to.kind });
   }
-  // Worst drawn last, so a red line is never under a green one.
-  edges.sort((a, b) => b.edge.severity - a.edge.severity || a.key.localeCompare(b.key));
+  // Lines into the left column go last: few and short, they land among the
+  // sources' fans, which would otherwise cover them and take their pointer.
+  // Within each group the worst is drawn last, so a red line is never under a green one.
+  edges.sort((a, b) => Number(a.toColumn === "left") - Number(b.toColumn === "left") || b.edge.severity - a.edge.severity || a.key.localeCompare(b.key));
 
   const lastSource = sources[sources.length - 1];
   const lastAddress = addresses[addresses.length - 1];
